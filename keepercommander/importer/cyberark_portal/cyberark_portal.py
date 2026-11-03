@@ -15,7 +15,7 @@ from prompt_toolkit import HTML, print_formatted_text, prompt
 from tabulate import tabulate
 
 
-from ..importer import BaseImporter, Folder, PathDelimiter, Record, RecordField, SharedFolder
+from ..importer import BaseImporter, EmptyFolder, Folder, PathDelimiter, Record, RecordField, SharedFolder
 import secrets
 import string
 
@@ -765,6 +765,16 @@ class CyberArkPortalImporter(BaseImporter):
                     nsf_folder = SharedFolder()
                     nsf_folder.path = fname.replace(PathDelimiter, 2 * PathDelimiter)
                     yield nsf_folder
+
+        used_folder_ids = {id(f) for owners in folder_index.values() for f in owners}
+        for folder in folders:
+            fname = self._folder_display_name(folder)
+            if fname and id(folder) not in used_folder_ids:
+                empty = EmptyFolder()
+                empty_folder = Folder()
+                empty_folder.path = fname.replace(PathDelimiter, 2 * PathDelimiter)
+                empty.folders.append(empty_folder)
+                yield empty
 
         if len(apps) > 0:
             print_formatted_text(

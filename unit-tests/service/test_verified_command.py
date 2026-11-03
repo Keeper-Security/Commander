@@ -220,6 +220,7 @@ class TestServiceModeCommandPolicy(TestCase):
             'export --format=json --folder "Team Vault"',
             'export --format=json --folder=FOLDER_UID --owned-only',
             'export --owned-only --format=json --folder=FOLDER_UID',
+            'export --format=json --include-empty-folders',
         ):
             with self.subTest(cmd=cmd):
                 self.assertIsNone(check(_tokens(cmd)))

@@ -35,7 +35,7 @@ from urllib.parse import urlparse, parse_qs
 
 from .encryption_reader import EncryptionReader
 from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
-                       BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
+                       BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder, EmptyFolder as ImportEmptyFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE, TWO_FACTOR_CODE)
@@ -299,6 +299,47 @@ def _byte_length(value):
     return 0
 
 
+def find_empty_folders(params, exported_folder_uids, folder_filter=None, include_shared=False):
+    # type: (KeeperParams, Set[str], Optional[Set[str]], bool) -> List[str]
+    """Return uids of the folders that need an explicit entry in an export.
+
+    A folder qualifies when none of the exported records is in it and no folder below it is already exported
+    (a folder's parents are re-created from its path on import). It is judged by the records actually exported,
+    not by the folder's content, so folders whose records were filtered out (--owned-only) or skipped qualify.
+    Shared folders are included only when *include_shared* is set, i.e. the format has no shared folder section.
+    """
+    types = {BaseFolderNode.UserFolderType, BaseFolderNode.SharedFolderFolderType,
+             BaseFolderNode.NestedShareFolderType}
+    if include_shared:
+        types.add(BaseFolderNode.SharedFolderType)
+
+    def ancestors(uid):
+        seen = set()
+        folder = params.folder_cache.get(uid)
+        while folder is not None and folder.parent_uid and folder.parent_uid not in seen:
+            seen.add(folder.parent_uid)
+            folder = params.folder_cache.get(folder.parent_uid)
+        return seen
+
+    def depth(uid):
+        return len(ancestors(uid))
+
+    covered = set()     # type: Set[str]
+    for uid in exported_folder_uids:
+        covered.update(ancestors(uid))
+
+    candidates = [uid for uid, f in params.folder_cache.items()
+                  if f.type in types and uid not in exported_folder_uids
+                  and (not folder_filter or uid in folder_filter)]
+    result = []
+    for uid in sorted(candidates, key=depth, reverse=True):     # deepest first, so a leaf covers its parents
+        if uid in covered:
+            continue
+        result.append(uid)
+        covered.update(ancestors(uid))
+    return result
+
+
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
@@ -402,6 +443,7 @@ def export(params, file_format, filename, **kwargs):
         record_list = params.record_cache
     service_mode_record_count = 0
     service_mode_input_bytes = 0
+    exported_folder_uids = set()    # type: Set[str]
     for record_uid in record_list:
         if record_filter or folder_path:
             if record_uid not in record_filter:
@@ -503,6 +545,7 @@ def export(params, file_format, filename, **kwargs):
                     if rec.folders is None:
                         rec.folders = []
                     rec.folders.append(export_folder)
+                    exported_folder_uids.add(folder_uid)
 
             to_export.append(rec)
         # elif record_version == 4:
@@ -517,6 +560,17 @@ def export(params, file_format, filename, **kwargs):
         #         to_export.append(file)
 
     rec_count = len(to_export) - sf_count
+
+    if kwargs.get('include_empty_folders'):
+        if exporter.has_empty_folders():
+            for folder_uid in find_empty_folders(params, exported_folder_uids, folder_filter,
+                                                 include_shared=not exporter.has_shared_folders()):
+                empty = ImportEmptyFolder()
+                empty.folders.append(get_import_folder(params, folder_uid, None))
+                to_export.append(empty)
+        else:
+            logging.warning('Export to %s format does not support --include-empty-folders. Empty folders are '
+                            'not exported.', file_format)
 
     args = {}
     file_password = kwargs.get('file_password')
@@ -843,6 +897,7 @@ def _import(params, file_format, filename, **kwargs):
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
     folder_depth = kwargs.get('folder_depth')
+    include_empty_folders = kwargs.get('include_empty_folders') is True
     cyberark_skip = {
         x.strip().lower()
         for x in str(kwargs.get('skip') or '').split(',')
@@ -872,6 +927,7 @@ def _import(params, file_format, filename, **kwargs):
 
     folders = []        # type: List[ImportSharedFolder]
     records = []        # type: List[ImportRecord]
+    empty_folders = []  # type: List[ImportEmptyFolder]
     files = []          # type: List[ImportFile]
 
     filter_folder_lower = filter_folder.lower() if isinstance(filter_folder, str) else ''
@@ -882,8 +938,12 @@ def _import(params, file_format, filename, **kwargs):
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
-                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user, kdbx_password=kdbx_password, kdbx_key_file=kdbx_key_file):
-        if isinstance(x, ImportRecord):
+                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
+                              kdbx_password=kdbx_password, kdbx_key_file=kdbx_key_file):
+        if isinstance(x, ImportEmptyFolder) and not include_empty_folders:
+            continue
+        if isinstance(x, (ImportRecord, ImportEmptyFolder)):
+
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
                     continue
@@ -926,6 +986,10 @@ def _import(params, file_format, filename, **kwargs):
                             f.path = PathDelimiter.join([import_into, f.path])
                         else:
                             f.path = import_into
+
+            if isinstance(x, ImportEmptyFolder):
+                empty_folders.append(x)
+                continue
 
             if record_type and not x.type:
                 x.type = record_type
@@ -989,9 +1053,9 @@ def _import(params, file_format, filename, **kwargs):
 
     if use_nsf:
         from .nsf_import import ensure_nsf_record_folders, flatten_record_folder_paths
-        flatten_record_folder_paths(records)
+        flatten_record_folder_paths(records + empty_folders)
         default_nsf = import_into if (import_into and not nsf_base_parent) else None
-        ensure_nsf_record_folders(records, folders, default_nsf)
+        ensure_nsf_record_folders(records + empty_folders, folders, default_nsf)
 
     # Importers with verbose summaries also emit a clear message when the target
     # folder(s) already exist in Keeper.
@@ -1147,10 +1211,10 @@ def _import(params, file_format, filename, **kwargs):
     if use_nsf:
         from .nsf_import import prepare_nsf_folders
         if not dry_run:
-            _created, folder_mapping = prepare_nsf_folders(params, folders, records, nsf_base_parent,
+            _created, folder_mapping = prepare_nsf_folders(params, folders, records + empty_folders, nsf_base_parent,
                                                             folder_depth=folder_depth)
     else:
-        folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
+        folder_add = prepare_folder_add(params, folders, records + empty_folders, manage_users, manage_records, can_edit, can_share)
         if folder_add:
             if not dry_run:
                 fol_rs, _ = execute_import_folder_record(params, folder_add, None)
