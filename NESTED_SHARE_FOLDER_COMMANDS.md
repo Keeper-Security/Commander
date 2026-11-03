@@ -298,7 +298,7 @@ nsf-record-update -r rec123 -r rec456 -t "Shared Title"
 
 **Command:** `nsf-convert-record`
 
-**Detail:** Permanently convert up to 100 Classic records per request to Nested Share Records. Results are reported per record. Records already known to be Nested Share Records are skipped.
+**Detail:** Permanently convert up to 100 Classic records per request to Nested Share Records. Results are reported per record. Records already known to be Nested Share Records are skipped. PAM record types cannot be converted; selected PAM records are listed and skipped while other selected records continue.
 
 **Parameters:**
 
@@ -311,6 +311,8 @@ One or more Classic record UIDs, titles, or paths
 `-f`, `--force` Skip the confirmation prompt
 
 **Important:** Conversion cannot be rolled back. Direct user shares are retained. Classic shared-folder membership and additional Classic folder placements are not retained.
+
+PAM record types (record types beginning with `pam`, including PAM machine, user, database, directory, and remote-browser records) cannot be converted. They are reported and left in Classic form.
 
 **Examples:**
 
@@ -330,7 +332,9 @@ nsf-convert-record abc123recorduid --folder "Projects/Archive" --force
 
 **Command:** `nsf-convert-folder`
 
-**Detail:** Convert a Classic folder and its descendants into a Nested Share Folder tree, converting contained Classic records while retaining their record UIDs. Classic Shared Folder user/team permissions are mapped to NSF roles. Folder and record application shares are migrated where present.
+**Detail:** Convert a Classic folder and its descendants into a Nested Share Folder tree, converting supported Classic records while retaining their record UIDs. Classic Shared Folder user/team permissions are mapped to NSF roles. Folder and record application shares are migrated where present.
+
+PAM record types (record types beginning with `pam`, including PAM machine, user, database, directory, and remote-browser records) cannot be converted. Each PAM record is listed and skipped while supported records continue. Skipped PAM records remain in the Classic source tree, so that tree is retained even with `--force`.
 
 When converting under an existing NSF destination (`--folder`), the converted root inherits the destination's permissions. For a Classic Shared Folder root, its mapped Classic grants are added alongside that inherited access. Conversion at the vault root does not add destination permissions. Separate Classic Shared Folder boundaries within a selected tree retain their own mapped access rather than inheriting permissions across the Classic boundary.
 
@@ -355,11 +359,11 @@ Classic folder UID, title, or path
 
 `--dry-run` Preview the source tree, record count, destination, and depth flattening without changing the vault.
 
-`-f`, `--force` Skip conversion and post-success Classic-deletion prompts. The Classic source is still retained if any conversion step fails.
+`-f`, `--force` Skip prompts and delete the Classic source only after full success and when no PAM records were skipped.
 
 **Depth handling:** Folders within the allowed depth keep their hierarchy. Each folder beyond the limit is promoted to the deepest allowed level as its own folder; its records remain associated with that folder. Duplicate folder names are allowed and handled using source-to-target folder UID mappings. The depth limit is the current NSF limit.
 
-**Deletion:** After a fully successful conversion, the command asks whether to delete the Classic source tree. Use `--force` to skip that prompt and delete after success. Partial conversions never delete the Classic source.
+**Deletion:** After a fully successful conversion, the command asks whether to delete the Classic source tree. Use `--force` to skip prompts and delete after success. Partial conversions and conversions that skipped PAM records never delete the Classic source.
 
 **Important:** A record that also appears outside the selected Classic subtree prevents conversion. Convert the enclosing tree or resolve the extra placement first so the command does not silently lose that placement.
 
