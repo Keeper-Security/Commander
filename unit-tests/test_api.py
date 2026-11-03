@@ -185,6 +185,43 @@ class TestPBKDF2AuthenticationValidation:
         assert enforcement.MasterPasswordReentryEnforcer._validate_master_or_alternate_password(params) is False
         assert endpoints == ['authentication/get_salt_and_iterations']
 
+    def test_reentry_uses_cached_account_iterations_instead_of_server_floor(self, monkeypatch):
+        params = KeeperParams()
+        params.user = 'user@example.com'
+        params.session_token = 'test-session'
+        params.settings = {}
+        params.salt = b'0123456789abcdef'
+        params.iterations = 1_100_000
+        endpoints = []
+        derived_iterations = []
+
+        def fake_derive_keyhash_v1(_password, _salt, iterations):
+            derived_iterations.append(iterations)
+            return b'test-auth-hash'
+
+        def fake_communicate_rest(_params, request, endpoint, **_kwargs):
+            endpoints.append(endpoint)
+            if endpoint == 'authentication/get_salt_and_iterations':
+                # If queried, this is a downgrade from the established account count.
+                salt = APIRequest_pb2.Salt()
+                salt.salt = params.salt
+                salt.iterations = 1_000_000
+                return salt
+            if endpoint == 'authentication/validate_master_password':
+                response = APIRequest_pb2.MasterPasswordReentryResponse()
+                response.status = APIRequest_pb2.MP_SUCCESS
+                assert request.pbkdf2Password
+                return response
+            pytest.fail(f'Unexpected endpoint: {endpoint}')
+
+        monkeypatch.setattr(enforcement.api, 'communicate_rest', fake_communicate_rest)
+        monkeypatch.setattr(enforcement.getpass, 'getpass', lambda prompt='': 'test-password')
+        monkeypatch.setattr(enforcement.crypto, 'derive_keyhash_v1', fake_derive_keyhash_v1)
+
+        assert enforcement.MasterPasswordReentryEnforcer._validate_master_or_alternate_password(params) is True
+        assert derived_iterations == [1_100_000]
+        assert endpoints == ['authentication/validate_master_password']
+
     def test_alternate_password_derivation_rejects_weak_parameters(self):
         params = KeeperParams()
         params.password = 'test-password'
