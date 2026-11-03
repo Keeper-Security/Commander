@@ -50,10 +50,10 @@ This will prompt for:
 
 ### Import Specific Folders
 
-Import secrets from specific folders only:
+Import secrets from a single folder (matched by folder name, case-insensitive):
 
 ```bash
-keeper> import --format=thycotic --filter-folder=finance,hr https://<tenant>.secretservercloud.com
+keeper> import --format=thycotic --filter-folder=finance https://<tenant>.secretservercloud.com
 ```
 
 ### Interactive Folder Selection
@@ -97,8 +97,10 @@ keeper> import --format=thycotic --add-users --add-teams --dry-run https://<tena
 
 Import secret permissions as Keeper shared records:
 
+**Prerequisite**: The Thycotic users must already exist in Keeper before permissions can be applied. If they don't, provision them first (see [Import with User Migration](#import-with-user-migration)).
+
 ```bash
-keeper> import --format=thycotic --add-users https://<tenant>.secretservercloud.com
+keeper> import --format=thycotic https://<tenant>.secretservercloud.com
 keeper> download-membership --source=thycotic shared_folder_membership.json
 keeper> apply-membership shared_folder_membership.json
 ```
@@ -188,7 +190,7 @@ Features:
 
 #### Worker Pool for Permission Loading
 
-The import uses a configurable worker pool for parallel permission fetches:
+Reading permissions from Delinea (`download-membership`) can use a configurable worker pool for parallel fetches. The import itself does not use the worker pool.
 
 ```bash
 keeper> download-membership --source=thycotic --workers=4 memberships.json
@@ -210,8 +212,8 @@ Efficient permission loading:
 #### Rate Limit Handling
 
 Automatic retry on rate limits:
-- Respects `Retry-After` header (capped at 300s)
-- Uses exponential backoff (5s base) if no `Retry-After`
+- Exponential backoff (5s base: 5s, 10s, 20s) is always applied
+- If a `Retry-After` header is present (capped at 300s), the longer of `Retry-After` and the backoff is used
 - Maximum 3 retry attempts per request
 
 ## Error Handling
