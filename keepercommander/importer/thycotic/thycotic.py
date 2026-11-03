@@ -28,7 +28,7 @@ import requests
 from urllib.parse import urlparse, urlunparse
 from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
-from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, Attachment, Permission,
+from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, EmptyFolder, Attachment, Permission,
                         RecordField, BytesAttachment, Team, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ...params import KeeperParams
 from ... import record_types, vault, api
@@ -380,6 +380,22 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 self._send_keep_alive_if_needed(params)
 
         self._send_keep_alive_if_needed(params)
+        parent_ids = {x.get('parentFolderId') for x in folders.values()}
+        secret_folder_ids = {s.get('folderId') for s in secrets}
+        # With --secret-ids only some secrets are loaded, so a folder cannot be judged empty from them.
+        for folder_id, folder in ({} if debug_ids else folders).items():
+            # leaf folders only: parents are re-created from the path
+            if folder_id in parent_ids:
+                continue
+            if folder_id in secret_folder_ids:
+                continue
+            if folder.get('folderPath'):
+                empty = EmptyFolder()
+                empty_folder = Folder()
+                empty_folder.path = folder['folderPath']
+                empty.folders.append(empty_folder)
+                yield empty
+
         for secret in secrets:
             record = Record()
             record.title = secret.get('name', '')

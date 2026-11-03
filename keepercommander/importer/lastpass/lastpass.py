@@ -19,7 +19,7 @@ from typing import Optional, List
 
 from ...params import KeeperParams
 from ..importer import (
-    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Permission, BaseDownloadMembership,
+    BaseImporter, Record, Folder, EmptyFolder, RecordField, RecordReferences, SharedFolder, Permission, BaseDownloadMembership,
     replace_email_domain, FIELD_TYPE_ONE_TIME_CODE)
 from .account import Account
 from .exceptions import LastPassUnknownError
@@ -198,6 +198,18 @@ class LastPassImporter(BaseImporter):
                     is_secure_note = True
                     record.login_url = None
                 elif record.login_url == 'http://group':
+                    # a group placeholder entry: the only trace of a folder that has no records
+                    group = account.group
+                    if isinstance(group, bytes):
+                        group = group.decode('utf-8', 'ignore')
+                    if group or account.shared_folder:
+                        empty = EmptyFolder()
+                        fol = Folder()
+                        if account.shared_folder:
+                            fol.domain = account.shared_folder.name
+                        fol.path = group
+                        empty.folders.append(fol)
+                        yield empty
                     continue
 
             record.type = 'login'

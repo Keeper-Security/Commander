@@ -97,6 +97,9 @@ import_parser.add_argument('--folder-depth', dest='folder_depth', action='store'
                            help='NSF only: maximum resulting folder depth (default 5); folders beyond this depth '
                                 'are attached directly at the deepest allowed level, keeping their own name and '
                                 'records - names are never merged or renamed')
+import_parser.add_argument('--include-empty-folders', dest='include_empty_folders', action='store_true',
+                           help='create folders that contain no records (classic and --nsf). '
+                                'Requires an export made with --include-empty-folders (json, csv, keepass)')
 import_parser.add_argument('--output', dest='output', action='store',
                            help='NSF only: write a report of the resulting Keeper folder structure (original path '
                                 '-> new path -> folder UID) to CSV file; use --output=table to print a table. '
@@ -153,6 +156,8 @@ export_parser.add_argument('--zip', dest='zip_archive', action='store_true',
                            help='Create ZIP archive for file attachments. JSON only')
 export_parser.add_argument('--owned-only', dest='owned_only', action='store_true',
                            help='Only export owned records')
+export_parser.add_argument('--include-empty-folders', dest='include_empty_folders', action='store_true',
+                           help='Also export folders that contain no records (classic and Nested Share Folders). json, csv, keepass')
 export_parser.add_argument('--save-in-vault', dest='save_in_vault', action='store_true',
                            help='Stores exports file as a record attachment. KeePass only')
 export_parser.add_argument('--force', dest='force', action='store_true', help='Suppress user interaction. Assume "yes"')
@@ -421,7 +426,7 @@ class RecordExportCommand(ImporterCommand):
                 raise CommandError(
                     'export',
                     'Service Mode permits only JSON export to the API response. '
-                    'Use export --format=json with optional --folder and --owned-only; '
+                    'Use export --format=json with optional --folder, --owned-only and --include-empty-folders; '
                     'do not specify an output filename or other options.',
                 )
             kwargs['_service_mode_record_limit'] = imp_exp.SERVICE_MODE_EXPORT_MAX_RECORDS
