@@ -26,8 +26,9 @@ from ..record_edit import RecordEditMixin, record_fields_description
 from ...enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ...error import CommandError
 from ... import nested_share_folder as _nsf, vault, vault_extensions
+from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
 from .helpers import (
-    resolve_folder_uid, command_error_handler, check_result,
+    resolve_folder_uid, resolve_record_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
     ensure_nested_share_record, ensure_nested_share_folder,
     ROOT_FOLDER_UID,
@@ -134,9 +135,13 @@ class NestedShareRecordAddCommand(Command, RecordEditMixin):
     def _resolve_folder(params, folder_input):
         if not folder_input:
             return None
-        uid = resolve_folder_uid(params, folder_input)
+        uid = resolve_folder_uid(params, folder_input, 'nsf-record-add')
         if uid is None:
-            raise CommandError('nsf-record-add', f'No such folder: {folder_input}')
+            raise CommandError(
+                'nsf-record-add',
+                f'Cannot resolve "{folder_input}" by name. Use the object UID; '
+                'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                'folder names require UID lookup.')
         ensure_nested_share_folder(params, uid, 'nsf-record-add', identifier=folder_input)
         return uid
 
@@ -254,7 +259,8 @@ class NestedShareRecordUpdateCommand(Command, RecordEditMixin):
                     self.errors.clear()
                     self._manual_password_values = []
                     self._generated_password_values = []
-                    record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+                    record_uid = resolve_record_uid(
+                        params, identifier, 'nsf-record-update')
                     if not record_uid:
                         raise CommandError('nsf-record-update',
                                            f"Record '{identifier}' not found")
@@ -385,12 +391,16 @@ class NestedShareRecordLnCommand(Command):
         if not src or not dst:
             self.get_parser().print_help()
             return
-        record_uid = _nsf.resolve_nested_share_record_uid(params, src)
+        record_uid = resolve_record_uid(params, src, 'nsf-ln')
         if not record_uid:
             raise CommandError('nsf-ln', f"Record '{src}' not found")
-        folder_uid = resolve_folder_uid(params, dst)
+        folder_uid = resolve_folder_uid(params, dst, 'nsf-ln')
         if not folder_uid:
-            raise CommandError('nsf-ln', f"Folder '{dst}' not found")
+            raise CommandError(
+                'nsf-ln',
+                f'Cannot resolve "{dst}" by name. Use the object UID; '
+                'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                'folder names require UID lookup.')
         ensure_nested_share_record(params, record_uid, 'nsf-ln', identifier=src)
         ensure_nested_share_folder(params, folder_uid, 'nsf-ln', identifier=dst)
         with command_error_handler('nsf-ln'):
@@ -496,14 +506,17 @@ class NestedShareRecordShortcutListCommand(Command):
                 raise CommandError('nsf-shortcut list', f'Record UID {target} does not have shortcuts')
             return {target}
 
-        lower = target.casefold()
-        for uid in nsf_records:
-            if cls._record_title(uid, nsf_record_data).casefold() == lower:
-                if uid not in records:
-                    raise CommandError('nsf-shortcut list', f'Record "{target}" does not have shortcuts')
-                return {uid}
+        resolved_record = resolve_record_uid(params, target, 'nsf-shortcut list')
+        if resolved_record in nsf_records:
+            if resolved_record not in records:
+                raise CommandError('nsf-shortcut list', f'Record "{target}" does not have shortcuts')
+            return {resolved_record}
 
-        resolved_folder = _nsf.resolve_folder_identifier(params, target)
+        try:
+            resolved_folder = _nsf.resolve_folder_identifier(
+                params, target, raise_on_ambiguous=True)
+        except FolderIdentifierAmbiguousError as e:
+            raise CommandError('nsf-shortcut list', str(e)) from e
         if resolved_folder:
             return {r for r in records if resolved_folder in records[r]}
 
@@ -528,7 +541,7 @@ class NestedShareRecordShortcutKeepCommand(Command):
         nsf_folders = getattr(params, 'nested_share_folders', {})
 
         nsf_record_data = getattr(params, 'nested_share_record_data', {})
-        record_uid = self._resolve_record(target, nsf_records, nsf_record_data)
+        record_uid = self._resolve_record(params, target, nsf_records, nsf_record_data)
         keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), nsf_folders)
 
         records = NestedShareRecordShortcutCommand.get_record_shortcuts(params)
@@ -573,28 +586,24 @@ class NestedShareRecordShortcutKeepCommand(Command):
                      target, keep_name, len(folders_to_remove))
 
     @staticmethod
-    def _resolve_record(target, nsf_records, nsf_record_data=None):
+    def _resolve_record(params, target, nsf_records, nsf_record_data=None):
         if target in nsf_records:
             return target
-        lower = target.casefold()
-        if nsf_record_data:
-            for uid in nsf_records:
-                rd = nsf_record_data.get(uid) or {}
-                dj = rd.get('data_json') or {}
-                if (dj.get('title') or '').casefold() == lower:
-                    return uid
-
-        for uid, rec in nsf_records.items():
-            if rec.get('title', '').casefold() == lower:
-                return uid
+        resolved_record = resolve_record_uid(params, target, 'nsf-shortcut keep')
+        if resolved_record in nsf_records:
+            return resolved_record
         raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in Nested Share Folder')
 
     @staticmethod
     def _resolve_keep_folder(params, folder_arg, nsf_folders):
         if folder_arg:
-            uid = _nsf.resolve_folder_identifier(params, folder_arg)
+            uid = resolve_folder_uid(params, folder_arg, 'nsf-shortcut keep')
             if not uid:
-                raise CommandError('nsf-shortcut keep', f'Folder "{folder_arg}" not found')
+                raise CommandError(
+                    'nsf-shortcut keep',
+                    f'Cannot resolve "{folder_arg}" by name. Use the object UID; '
+                    'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                    'folder names require UID lookup.')
             ensure_nested_share_folder(params, uid, 'nsf-shortcut keep',
                                        identifier=folder_arg)
             return uid
@@ -629,9 +638,13 @@ class NestedShareRecordRemoveCommand(Command):
 
         folder_uid = None
         if folder_arg:
-            folder_uid = _nsf.resolve_folder_identifier(params, folder_arg)
+            folder_uid = resolve_folder_uid(params, folder_arg, 'nsf-rm')
             if not folder_uid:
-                raise CommandError('nsf-rm', f"Folder '{folder_arg}' not found")
+                raise CommandError(
+                    'nsf-rm',
+                    f'Cannot resolve "{folder_arg}" by name. Use the object UID; '
+                    'run nsf-list to find folder UIDs. Shared-in and ambiguous '
+                    'folder names require UID lookup.')
             ensure_nested_share_folder(params, folder_uid, 'nsf-rm',
                                        identifier=folder_arg)
 
@@ -645,7 +658,7 @@ class NestedShareRecordRemoveCommand(Command):
     def _build_removals(self, params, record_args, folder_uid, operation):
         removals = []
         for identifier in record_args:
-            record_uid = _nsf.resolve_nested_share_record_uid(params, identifier)
+            record_uid = resolve_record_uid(params, identifier, 'nsf-rm')
             if not record_uid:
                 raise CommandError('nsf-rm', f"Record '{identifier}' not found")
             ensure_nested_share_record(params, record_uid, 'nsf-rm',

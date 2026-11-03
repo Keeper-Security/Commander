@@ -82,3 +82,72 @@ def test_subfolder_try_resolve_path(input_, expected_folder, expected_final):
     actual_folder, actual_final = subfolder.try_resolve_path(global_params, input_)
     assert actual_folder is expected_folder
     assert actual_final == expected_final
+
+
+def test_subfolder_try_resolve_path_rejects_ambiguous_folder_name():
+    first_uid = 'b' * 22
+    second_uid = 'c' * 22
+    first = BFN(type='user_folder', uid=first_uid, parent_uid=None,
+                name='Work', subfolders=[])
+    second = BFN(type='shared_folder', uid=second_uid, parent_uid=None,
+                 name='Work', subfolders=[])
+    root = BFN(type='/', uid=None, parent_uid=None, name='root',
+               subfolders=[first_uid, second_uid])
+    params = Mock()
+    params.folder_cache = {
+        first_uid: first,
+        second_uid: second,
+    }
+    params.root_folder = root
+    params.current_folder = ''
+
+    assert subfolder.try_resolve_path(params, 'Work') is None
+    with pytest.raises(subfolder.FolderPathAmbiguousError):
+        subfolder.try_resolve_path(params, 'Work', raise_on_ambiguous=True)
+
+    folders, pattern = subfolder.try_resolve_path(
+        params, 'Work', find_all_matches=True)
+    assert pattern == ''
+    assert {folder.uid for folder in folders} == {first_uid, second_uid}
+
+
+def test_subfolder_try_resolve_path_rejects_case_variant_folder_shadowing():
+    first_uid = 'b' * 22
+    second_uid = 'c' * 22
+    first = BFN(type='user_folder', uid=first_uid, parent_uid=None,
+                name='Work', subfolders=[])
+    second = BFN(type='shared_folder', uid=second_uid, parent_uid=None,
+                 name='work', subfolders=[])
+    root = BFN(type='/', uid=None, parent_uid=None, name='root',
+               subfolders=[first_uid, second_uid])
+    params = Mock()
+    params.folder_cache = {
+        first_uid: first,
+        second_uid: second,
+    }
+    params.root_folder = root
+    params.current_folder = ''
+
+    exact_folder, exact_tail = subfolder.try_resolve_path(params, 'Work')
+    assert exact_folder is first
+    assert exact_tail == ''
+    lower_folder, lower_tail = subfolder.try_resolve_path(params, 'work')
+    assert lower_folder is second
+    assert lower_tail == ''
+    assert subfolder.try_resolve_path(params, 'WORK') is None
+    with pytest.raises(subfolder.FolderPathAmbiguousError):
+        subfolder.try_resolve_path(params, 'WORK', raise_on_ambiguous=True)
+
+
+def test_ambiguous_identifier_message_uses_namespace_specific_listing_command():
+    classic = subfolder.ambiguous_identifier_message('Work')
+    assert 'run ls -l -f to find folder UIDs' in classic
+    assert 'nsf-list' not in classic
+
+    classic_record = subfolder.ambiguous_identifier_message(
+        'Shared Login', object_type='record')
+    assert 'run list to find record UIDs' in classic_record
+    assert 'nsf-list' not in classic_record
+
+    nsf = subfolder.ambiguous_identifier_message('Work', namespace='nsf')
+    assert 'run nsf-list to find object UIDs' in nsf
