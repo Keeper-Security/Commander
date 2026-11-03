@@ -229,6 +229,36 @@ class TestCommandHelpers(TestCase):
 
         self.assertEqual(resolve_folder_identifier(params, 'Shared'), shared_uid)
 
+    def test_classic_folder_name_precedes_same_named_nsf_folder(self):
+        from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
+        from keepercommander.subfolder import (
+            NestedShareFolderNode, RootFolderNode, UserFolderNode,
+        )
+
+        classic_uid, classic_obj = _make_folder(name='Work')
+        nsf_uid, nsf_obj = _make_folder(name='Work')
+        classic_obj['owner_username'] = 'victim@example.com'
+        nsf_obj['owner_username'] = 'attacker@example.com'
+
+        root = RootFolderNode()
+        classic = UserFolderNode()
+        classic.uid = classic_uid
+        classic.name = 'Work'
+        nsf = NestedShareFolderNode()
+        nsf.uid = nsf_uid
+        nsf.name = 'Work'
+        root.subfolders = [classic_uid, nsf_uid]
+
+        params = _make_params(
+            user='victim@example.com',
+            root_folder=root,
+            current_folder='',
+            nested_share_folders={nsf_uid: nsf_obj},
+            folder_cache={classic_uid: classic, nsf_uid: nsf},
+        )
+
+        self.assertEqual(resolve_folder_identifier(params, 'Work'), classic_uid)
+
     def test_duplicate_owned_nsf_folder_name_is_ambiguous(self):
         from keepercommander.nested_share_folder.folder_api import resolve_folder_identifier
 

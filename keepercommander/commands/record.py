@@ -297,6 +297,51 @@ class RecordGetUidCommand(Command):
         return get_info_parser
 
     @staticmethod
+    def _resolve_path_target(params, identifier):
+        """Resolve an exact classic folder or record path.
+
+        Keep the existing UID and title-substring lookup behavior, but allow
+        ``get Folder/Subfolder`` and ``get Folder/Record`` to use the same
+        path syntax as the other vault commands.
+        """
+        if not identifier:
+            return None
+
+        resolved = try_resolve_path(
+            params, identifier, find_all_matches=True)
+        if not resolved:
+            return None
+
+        folders, record_name = resolved
+        if not folders:
+            return None
+        if len(folders) > 1:
+            raise CommandError(
+                'get',
+                'Multiple folders match "{0}". Use a folder UID instead.'.format(identifier)
+            )
+
+        folder = folders[0]
+        if not record_name:
+            return folder.uid
+
+        folder_uid = folder.uid or ''
+        matching_records = []
+        for record_uid in params.subfolder_record_cache.get(folder_uid, ()):
+            rec = vault.KeeperRecord.load(params, record_uid)
+            if rec and rec.title and rec.title.casefold() == record_name.casefold():
+                matching_records.append(rec)
+
+        if len(matching_records) == 1:
+            return matching_records[0].record_uid
+        if len(matching_records) > 1:
+            raise CommandError(
+                'get',
+                'Multiple records match "{0}". Use a record UID instead.'.format(identifier)
+            )
+        return None
+
+    @staticmethod
     def _is_classic_shared_folder_owner(user, owner_username, owner_account_uid):
         """Return True if *user* matches the classic shared folder owner from sync-down."""
         if not user:
@@ -867,6 +912,21 @@ class RecordGetUidCommand(Command):
 
                 direct_match = True
                 return
+
+        # Resolve exact paths before the legacy title-substring search.
+        if not direct_match:
+            path_uid = self._resolve_path_target(params, uid)
+            if path_uid and path_uid != uid:
+                return self.execute(
+                    params,
+                    uid=path_uid,
+                    format=fmt,
+                    unmask=kwargs.get('unmask'),
+                    legacy=kwargs.get('legacy'),
+                    include_dag=kwargs.get('include_dag'),
+                    show_inherited=kwargs.get('show_inherited'),
+                    show_denied=kwargs.get('show_denied')
+                )
 
         # If we didn't find a direct match by UID, try searching by title
         if not direct_match:

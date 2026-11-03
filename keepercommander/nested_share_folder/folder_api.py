@@ -16,7 +16,7 @@ from ..proto import folder_pb2, tla_pb2
 from ..error import KeeperApiError
 from ..subfolder import (
     try_resolve_path, FolderPathAmbiguousError,
-    ambiguous_identifier_message,
+    ambiguous_identifier_message, BaseFolderNode,
 )
 
 from .common import (
@@ -207,6 +207,34 @@ def resolve_folder_identifier(params, folder_identifier, raise_on_ambiguous=Fals
                     return folder.uid
         return None
 
+    # Resolve the classic namespace before matching a flat NSF name.  NSF
+    # nodes may also be mirrored into folder_cache, so exclude those nodes
+    # from this lookup and compare only against classic folders.  This keeps
+    # an attacker-owned NSF folder named "Work" from shadowing a classic
+    # folder named "Work".
+    folder_cache = getattr(params, 'folder_cache', {})
+    if isinstance(folder_cache, dict) and folder_cache:
+        try:
+            rs = try_resolve_path(params, folder_identifier, find_all_matches=True)
+        except FolderPathAmbiguousError as e:
+            if raise_on_ambiguous:
+                raise FolderIdentifierAmbiguousError(folder_identifier) from e
+            logging.warning(str(FolderIdentifierAmbiguousError(folder_identifier)))
+            return None
+        if rs is not None:
+            folders, pattern = rs
+            classic_folders = [
+                folder for folder in folders
+                if getattr(folder, 'type', None) != BaseFolderNode.NestedShareFolderType
+            ]
+            if len(classic_folders) > 1:
+                if raise_on_ambiguous:
+                    raise FolderIdentifierAmbiguousError(folder_identifier)
+                logging.warning(str(FolderIdentifierAmbiguousError(folder_identifier)))
+                return None
+            if classic_folders and not pattern:
+                return classic_folders[0].uid
+
     matching = _matching_nsf_folder_uids(nsf_folders, folder_identifier)
     selected = _select_nsf_folder_uid(params, nsf_folders, matching)
     if selected is _AMBIGUOUS_RESOLUTION:
@@ -217,7 +245,6 @@ def resolve_folder_identifier(params, folder_identifier, raise_on_ambiguous=Fals
     if selected:
         return selected
 
-    folder_cache = getattr(params, 'folder_cache', {})
     if isinstance(folder_cache, dict) and folder_cache:
         try:
             rs = try_resolve_path(
