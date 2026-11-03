@@ -1,15 +1,23 @@
 """Tests for Classic folder subtree conversion planning."""
 
+from contextlib import redirect_stdout
+import io
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
 from keepercommander.commands.nested_share_folder.conversion_commands import (
+    NestedShareConvertCommand,
     NestedShareFolderConvertCommand,
     _collect_classic_subtree,
     _folder_plan,
+    _pam_record_details,
     _read_applications,
     _scope_accessors,
+)
+from keepercommander.commands.nested_share_folder.parsers import (
+    nested_share_convert_parser,
+    nested_share_folder_convert_parser,
 )
 from keepercommander.commands.ksm import KSMCommand
 from keepercommander.error import CommandError
@@ -425,6 +433,150 @@ class TestClassicFolderConversionTargetCreation(TestCase):
             params.nested_share_folders[target_uids[first_uid]]['color'], 'blue')
 
 
+class TestPamRecordConversionRestrictions(TestCase):
+
+    def test_pam_detection_uses_typed_record_type_and_captures_title(self):
+        pam_uid, regular_uid = _uid(), _uid()
+        params = SimpleNamespace(
+            record_cache={
+                pam_uid: {
+                    'record_uid': pam_uid,
+                    'version': 3,
+                    'record_key_unencrypted': utils.generate_aes_key(),
+                    'data_unencrypted': b'{"type":"pamRemoteBrowser","title":"Browser"}',
+                },
+                regular_uid: {
+                    'record_uid': regular_uid,
+                    'version': 3,
+                    'record_key_unencrypted': utils.generate_aes_key(),
+                    'data_unencrypted': b'{"type":"login","title":"Login"}',
+                },
+            },
+        )
+
+        self.assertEqual(
+            _pam_record_details(params, pam_uid),
+            {
+                'record_uid': pam_uid,
+                'record_type': 'pamRemoteBrowser',
+                'title': 'Browser',
+            })
+        self.assertIsNone(_pam_record_details(params, regular_uid))
+
+    def test_folder_collection_skips_all_pam_record_types(self):
+        folder_uid = _uid()
+        pam_types = (
+            'pamMachine', 'pamUser', 'pamDatabase', 'pamDirectory',
+            'pamRemoteBrowser', 'pamAwsConfiguration',
+        )
+        pam_uids = [_uid() for _ in pam_types]
+        regular_uid = _uid()
+        record_uids = pam_uids + [regular_uid]
+        params = SimpleNamespace(
+            nested_share_records={},
+            record_cache={uid: {} for uid in record_uids},
+        )
+        types_by_uid = dict(zip(pam_uids, pam_types))
+        types_by_uid[regular_uid] = 'login'
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_record_type',
+                side_effect=lambda _params, uid: types_by_uid[uid]):
+            converted_uids, placements, skipped = (
+                NestedShareFolderConvertCommand._collect_records(
+                    params, {folder_uid: object()},
+                    {folder_uid: record_uids}))
+
+        self.assertEqual(converted_uids, [regular_uid])
+        self.assertEqual(placements, {regular_uid: [folder_uid]})
+        self.assertEqual(
+            [record['record_type'] for record in skipped], list(pam_types))
+        self.assertEqual(
+            [record['record_uid'] for record in skipped], pam_uids)
+
+    def test_folder_preview_lists_each_skipped_pam_record(self):
+        folder_uid = _uid()
+        folder = UserFolderNode()
+        folder.uid, folder.name = folder_uid, 'PAM Folder'
+        skipped = [
+            {'record_uid': _uid(), 'record_type': 'pamMachine', 'title': 'Machine'},
+            {'record_uid': _uid(), 'record_type': 'pamUser', 'title': 'User'},
+        ]
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            NestedShareFolderConvertCommand._print_preview(
+                {folder_uid: folder}, {folder_uid: []}, folder, None, 5, [],
+                {folder_uid: 1}, {folder_uid: 1}, skipped)
+
+        self.assertIn('PAM records skipped: 2', output.getvalue())
+        self.assertIn('Machine', output.getvalue())
+        self.assertIn('pamMachine', output.getvalue())
+        self.assertIn('User', output.getvalue())
+        self.assertIn('pamUser', output.getvalue())
+        self.assertIn('source tree will be retained', output.getvalue())
+
+    def test_record_command_skips_pam_but_converts_selected_classic_records(self):
+        pam_uid, regular_uid = _uid(), _uid()
+        params = SimpleNamespace(
+            record_cache={pam_uid: {}, regular_uid: {}},
+            nested_share_records={},
+            sync_data=False,
+        )
+        types_by_uid = {pam_uid: 'pamMachine', regular_uid: 'login'}
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_record_type',
+                side_effect=lambda _params, uid: types_by_uid[uid]), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 '_nsf.convert_records_v3',
+                 return_value=[{
+                     'record_uid': regular_uid,
+                     'status': 'SUCCESS',
+                     'success': True,
+                 }]) as convert_records:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                NestedShareConvertCommand().execute(
+                    params, records=[pam_uid, regular_uid], force=True)
+
+        convert_records.assert_called_once_with(
+            params, record_uids=[regular_uid], folder_uid=None)
+        self.assertIn(pam_uid, output.getvalue())
+        self.assertIn('pamMachine', output.getvalue())
+
+    def test_record_command_does_not_call_conversion_for_only_pam_records(self):
+        pam_uid = _uid()
+        params = SimpleNamespace(
+            record_cache={pam_uid: {}},
+            nested_share_records={},
+            sync_data=False,
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_record_type',
+                return_value='pamUser'), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 '_nsf.convert_records_v3') as convert_records:
+            output = io.StringIO()
+            with redirect_stdout(output):
+                NestedShareConvertCommand().execute(
+                    params, records=[pam_uid], force=True)
+
+        convert_records.assert_not_called()
+        self.assertIn(pam_uid, output.getvalue())
+        self.assertIn('pamUser', output.getvalue())
+
+    def test_conversion_help_explains_pam_records_are_skipped(self):
+        self.assertIn('PAM', nested_share_convert_parser.format_help())
+        self.assertIn('PAM', nested_share_folder_convert_parser.format_help())
+
+
 class TestClassicFolderConversionExecution(TestCase):
 
     def _params(self):
@@ -445,7 +597,7 @@ class TestClassicFolderConversionExecution(TestCase):
         return params, folder_uid, record_uid, target_uid
 
     def _run_command(self, params, folder_uid, record_uid, target_uid, *,
-                     force=False, converted=True):
+                     force=False, converted=True, record_type=''):
         def create_tree(*args, **kwargs):
             params.nested_share_folders[target_uid] = {
                 'name': 'Private',
@@ -455,7 +607,7 @@ class TestClassicFolderConversionExecution(TestCase):
             return {folder_uid: target_uid}
 
         def convert_records(_params, record_uids, _placements, _target_uids):
-            if converted:
+            if converted and record_uid in record_uids:
                 params.nested_share_records[record_uid] = {}
                 return set(record_uids)
             return set()
@@ -463,6 +615,9 @@ class TestClassicFolderConversionExecution(TestCase):
         with patch(
                 'keepercommander.commands.nested_share_folder.conversion_commands.'
                 '_read_applications', return_value={}), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 '_record_type', return_value=record_type), \
              patch.object(NestedShareFolderConvertCommand, '_print_preview'), \
              patch.object(
                  NestedShareFolderConvertCommand, '_create_target_tree',
@@ -515,6 +670,17 @@ class TestClassicFolderConversionExecution(TestCase):
 
         user_choice.assert_not_called()
         delete_source.assert_not_called()
+
+    def test_force_retains_classic_source_when_pam_records_are_skipped(self):
+        params, folder_uid, record_uid, target_uid = self._params()
+
+        user_choice, delete_source = self._run_command(
+            params, folder_uid, record_uid, target_uid,
+            force=True, record_type='pamMachine')
+
+        user_choice.assert_not_called()
+        delete_source.assert_not_called()
+        self.assertNotIn(record_uid, params.nested_share_records)
 
     def test_missing_additional_placement_result_is_a_conversion_failure(self):
         source_uids = [_uid(), _uid()]
