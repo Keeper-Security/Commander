@@ -36,7 +36,7 @@ from ..params import KeeperParams
 from ..proto import record_pb2, folder_pb2, enterprise_pb2
 from ..record import get_totp_code
 from ..subfolder import try_resolve_path, get_folder_path, find_folders, find_all_folders, BaseFolderNode, \
-    get_folder_uids
+    get_folder_uids, ambiguous_identifier_message
 from ..team import Team
 
 def handle_empty_result(fmt, message, filename=None):
@@ -316,10 +316,7 @@ class RecordGetUidCommand(Command):
         if not folders:
             return None
         if len(folders) > 1:
-            raise CommandError(
-                'get',
-                'Multiple folders match "{0}". Use a folder UID instead.'.format(identifier)
-            )
+            raise CommandError('get', ambiguous_identifier_message(identifier))
 
         folder = folders[0]
         if not record_name:
@@ -335,10 +332,7 @@ class RecordGetUidCommand(Command):
         if len(matching_records) == 1:
             return matching_records[0].record_uid
         if len(matching_records) > 1:
-            raise CommandError(
-                'get',
-                'Multiple records match "{0}". Use a record UID instead.'.format(identifier)
-            )
+            raise CommandError('get', ambiguous_identifier_message(identifier))
         return None
 
     @staticmethod

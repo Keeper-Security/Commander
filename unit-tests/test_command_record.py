@@ -500,7 +500,8 @@ class TestRecord(TestCase):
         parent_path = record.get_folder_path(params, parent.uid)
         with self.assertRaises(CommandError) as context:
             cmd._resolve_path_target(params, parent_path + '/Nested')
-        self.assertIn('Multiple folders match', context.exception.message)
+        self.assertIn(f'Cannot resolve "{parent_path}/Nested" by name',
+                      context.exception.message)
 
     def test_get_team_uid(self):
         params = get_synced_params()
