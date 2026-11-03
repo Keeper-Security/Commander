@@ -14,7 +14,7 @@ import logging
 
 import sys
 
-from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, EmptyFolder, RecordField, TWO_FACTOR_CODE,
+from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, EmptyFolder, ensure_file_format, RecordField, TWO_FACTOR_CODE,
                         FIELD_TYPE_ONE_TIME_CODE)
 from ...recordv3 import RecordV3
 from ... import record_types
@@ -46,6 +46,7 @@ class KeeperCsvImporter(BaseFileImporter):
         return False
 
     def do_import(self, filename, **kwargs):
+        ensure_file_format(filename, 'csv')
         with open(filename, "r", encoding='utf-8-sig') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:

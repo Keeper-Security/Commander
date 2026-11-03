@@ -22,9 +22,10 @@ from contextlib import contextmanager
 
 from .. import imp_exp
 from ..importer import (BaseFileImporter, BaseExporter, Record, RecordField, RecordSchemaField, RecordReferences,
-                        Folder, SharedFolder, EmptyFolder, Permission, Team, Attachment,
+                        Folder, SharedFolder, EmptyFolder, Permission, ensure_file_format, Team, Attachment,
                         BaseDownloadMembership, BaseDownloadRecordType, RecordType, RecordTypeField)
 from ... import api, utils, record_types
+from ...error import CommandError
 from ...proto import enterprise_pb2
 
 
@@ -179,9 +180,13 @@ class KeeperJsonImporter(BaseFileImporter, KeeperJsonMixin):
                     export = json.loads(zf.read('export.json'))
                     logging.info("Extracted JSON from archive")
             else:
-                with open(filename, "r", encoding='utf-8') as jf:
-                    export = json.load(jf)
-                    logging.info("Extracted JSON from file")
+                try:
+                    with open(filename, "r", encoding='utf-8') as jf:
+                        export = json.load(jf)
+                        logging.info("Extracted JSON from file")
+                except ValueError as ve:     # not JSON: tell the user if it is another known format
+                    ensure_file_format(filename, 'json')
+                    raise CommandError('import', f'File "{filename}" is not valid JSON: {ve}') from ve
 
         records = None
         folders = None

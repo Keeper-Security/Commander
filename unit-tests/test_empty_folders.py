@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest import TestCase, mock, skipUnless
 
 from data_vault import get_synced_params
+from keepercommander.error import CommandError
 from keepercommander.importer import importer, imp_exp
 from keepercommander.importer.bitwarden.bitwarden import BitwardenImporter
 from keepercommander.importer.csv.csv import KeeperCsvExporter, KeeperCsvImporter, EMPTY_FOLDER_MARKER
@@ -248,3 +249,41 @@ class TestImportFlag(TempFileMixin, TestCase):
     def test_empty_folders_created_with_flag(self):
         items = self.run_import(include_empty_folders=True)
         self.assertEqual([type(x).__name__ for x in items], ['Record', 'EmptyFolder'])
+
+
+class TestFileFormatValidation(TempFileMixin, TestCase):
+    def write(self, suffix, text):
+        path = self.tmp(suffix)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(text)
+        return path
+
+    def test_json_format_given_csv_file(self):
+        path = self.write('.csv', 'EF Test,,,,,,,$empty_folder,true\n')
+        with self.assertRaises(CommandError) as cm:
+            list(KeeperJsonImporter().do_import(path))
+        self.assertEqual(cm.exception.message, 'Error: Invalid file format.\n'
+                         'The specified format is JSON, but the provided file is CSV.\n'
+                         'Please use --format csv for this file.')
+
+    def test_csv_format_given_json_file(self):
+        path = self.write('.json', '{"records": []}')
+        with self.assertRaises(CommandError) as cm:
+            list(KeeperCsvImporter().do_import(path))
+        self.assertEqual(cm.exception.message, 'Error: Invalid file format.\n'
+                         'The specified format is CSV, but the provided file is JSON.\n'
+                         'Please use --format json for this file.')
+
+    def test_unrecognized_invalid_json_reports_parse_error(self):
+        path = self.write('.json', 'not json at all')
+        with self.assertRaises(CommandError) as cm:
+            list(KeeperJsonImporter().do_import(path))
+        self.assertIn('is not valid JSON', cm.exception.message)
+
+    def test_matching_formats_are_accepted(self):
+        self.assertEqual(list(KeeperJsonImporter().do_import(self.write('.json', '{"records": []}'))), [])
+        self.assertEqual(len(list(KeeperCsvImporter().do_import(self.write('.csv', 'a,b,c,d,e,f\n')))), 1)
+
+    def test_csv_starting_with_bracket_is_still_csv(self):
+        rs = list(KeeperCsvImporter().do_import(self.write('.csv', ',[x],,,,\n')))
+        self.assertEqual(len(rs), 1)

@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import os.path
+import zipfile
 from contextlib import contextmanager
 from typing import List, Optional, Union, Dict, Iterable, Type, Any
 
@@ -417,6 +418,42 @@ class BaseImporter(abc.ABC):
             if f.type == field_type and f.label == fl:
                 return field_label
         return fl
+
+
+def detect_file_format(path):   # type: (str) -> Optional[str]
+    """Best-effort guess of an import file's real format: 'json', 'csv', 'zip', or None when unsure."""
+    try:
+        if zipfile.is_zipfile(path):
+            return 'zip'
+        with open(path, 'rb') as f:
+            head = f.read(65536)
+    except OSError:
+        return None
+    text = head.decode('utf-8-sig', errors='ignore').lstrip()
+    if not text:
+        return None
+    if text[0] in '{[':
+        try:
+            with open(path, 'r', encoding='utf-8-sig') as f:
+                json.load(f)
+            return 'json'
+        except (ValueError, OSError):
+            pass
+    first_line = text.partition('\n')[0]
+    if path.lower().endswith('.csv') or ',' in first_line:
+        return 'csv'
+    return None
+
+
+def ensure_file_format(path, expected):     # type: (str, str) -> None
+    """Raise a clear error when *path* is recognizably a different format than the one requested with --format."""
+    actual = detect_file_format(path)
+    if actual == 'zip':     # Commander's zip export is a JSON export with attachments
+        actual = 'json'
+    if actual and actual != expected:
+        raise CommandError('', f'Error: Invalid file format.\n'
+                               f'The specified format is {expected.upper()}, but the provided file is {actual.upper()}.\n'
+                               f'Please use --format {actual} for this file.')
 
 
 class BaseFileImporter(BaseImporter, abc.ABC):
