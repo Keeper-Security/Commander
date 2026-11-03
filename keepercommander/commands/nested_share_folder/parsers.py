@@ -404,7 +404,8 @@ nested_share_convert_parser = _make_parser(
 nested_share_convert_parser.add_argument(
     'records', nargs='+', metavar='RECORD',
     help='Classic record UID(s), title(s), or path(s) to convert '
-         '(maximum 100 Classic records per request)')
+         '(maximum 100 Classic records per request); PAM record types cannot be '
+         'converted and are skipped')
 nested_share_convert_parser.add_argument(
     '--folder', dest='folder_uid', metavar='FOLDER',
     help='Existing Nested Share Folder UID/name/path. '
@@ -415,16 +416,19 @@ nested_share_convert_parser.add_argument(
 
 nested_share_folder_convert_parser = _make_parser(
     'nsf-convert-folder',
-    'Convert a Classic folder subtree to Nested Share Folders and Records.')
+    'Convert a Classic folder subtree to Nested Share Folders and Records. '
+    'PAM record types cannot be converted and are skipped.')
 nested_share_folder_convert_parser.add_argument(
     'source', metavar='CLASSIC_FOLDER',
-    help='Classic folder UID, title, or path to convert, including its descendants')
+    help='Classic folder UID, title, or path to convert, including descendants; '
+         'PAM records are skipped')
 nested_share_folder_convert_parser.add_argument(
     '--folder', dest='folder_uid', metavar='DESTINATION',
     help='Existing Nested Share Folder UID, name, or path. Omit for Vault (root).')
 nested_share_folder_convert_parser.add_argument(
     '-f', '--force', dest='force', action='store_true',
-    help='Skip prompts and delete the Classic source only after successful conversion')
+    help='Skip prompts and delete the Classic source only after successful conversion '
+         'when no PAM records were skipped')
 nested_share_folder_convert_parser.add_argument(
     '--dry-run', dest='dry_run', action='store_true',
     help='Preview the folder, record, and depth mapping without changing the vault')

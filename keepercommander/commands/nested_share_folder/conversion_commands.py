@@ -6,7 +6,7 @@ import logging
 
 from ..base import Command, RecordMixin, user_choice
 from ... import nested_share_folder as _nsf
-from ... import sync_down, utils
+from ... import sync_down, utils, vault
 from ...display import bcolors
 from ...error import CommandError
 from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
@@ -20,6 +20,7 @@ from .helpers import (
     NSF_APP_INFO_BATCH_SIZE,
     NSF_FOLDER_BATCH_SIZE,
     NSF_FOLDER_RECORD_BATCH_SIZE,
+    PAM_RECORD_TYPE_PREFIX,
     ROOT_FOLDER_UID,
     _folder_depth,
     command_error_handler,
@@ -93,6 +94,37 @@ def _record_title(params, record_uid):
     return title
 
 
+def _record_type(params, record_uid):
+    record = vault.KeeperRecord.load(params, record_uid)
+    return getattr(record, 'record_type', '') if record else ''
+
+
+def _pam_record_details(params, record_uid, record_type=None):
+    record_type = str(
+        record_type if record_type is not None else _record_type(params, record_uid) or '')
+    if not record_type.casefold().startswith(PAM_RECORD_TYPE_PREFIX):
+        return None
+    return {
+        'record_uid': record_uid,
+        'record_type': record_type,
+        'title': _record_title(params, record_uid),
+    }
+
+
+def _print_skipped_pam_records(records):
+    if not records:
+        return
+    print(
+        f'\n{bcolors.WARNING}Warning: PAM records cannot be converted and will be '
+        f'skipped; supported records will continue.{bcolors.ENDC}')
+    for record in records:
+        title = record.get('title')
+        label = f'{json.dumps(title, ensure_ascii=False)} ' if title else ''
+        print(
+            f"  {label}({record['record_uid']}) "
+            f"[{record['record_type']}]")
+
+
 def _resolve_target_folder(params, folder_input):
     """Resolve a Nested Share Folder; omitted/root means the caller's root."""
     if not folder_input or folder_input.casefold() in ('root', ROOT_FOLDER_UID.casefold()):
@@ -127,6 +159,7 @@ class NestedShareConvertCommand(Command):
 
         record_uids = []
         already_nested_share_uids = []
+        skipped_pam_records = []
         nested_share_records = getattr(params, 'nested_share_records', {}) or {}
         seen_record_uids = set()
         for identifier in identifiers:
@@ -141,8 +174,14 @@ class NestedShareConvertCommand(Command):
             seen_record_uids.add(record_uid)
             if record_uid in nested_share_records:
                 already_nested_share_uids.append(record_uid)
-            else:
-                record_uids.append(record_uid)
+                continue
+            pam_record = _pam_record_details(params, record_uid)
+            if pam_record:
+                skipped_pam_records.append(pam_record)
+                continue
+            record_uids.append(record_uid)
+
+        _print_skipped_pam_records(skipped_pam_records)
 
         if len(record_uids) > _nsf.MAX_CONVERT_RECORDS:
             raise CommandError(
@@ -560,8 +599,12 @@ class NestedShareFolderConvertCommand(Command):
         available_depth, target_levels, target_parent_sources = _folder_plan(
             parents, depths, destination_depth)
 
-        source_record_uids, placements = self._collect_records(
+        source_record_uids, placements, skipped_pam_records = self._collect_records(
             params, nodes, records_by_folder)
+        records_to_convert_by_folder = {uid: [] for uid in nodes}
+        for record_uid, folder_uids in placements.items():
+            for folder_uid in folder_uids:
+                records_to_convert_by_folder[folder_uid].append(record_uid)
         external_placements = self._external_placements(
             params, source_record_uids, set(nodes))
         if external_placements:
@@ -586,8 +629,9 @@ class NestedShareFolderConvertCommand(Command):
 
         self._validate_folder_keys(params, destination_uid)
         self._print_preview(
-            nodes, records_by_folder, source_node, destination_uid,
-            available_depth, source_record_uids, depths, target_levels)
+            nodes, records_to_convert_by_folder, source_node, destination_uid,
+            available_depth, source_record_uids, depths, target_levels,
+            skipped_pam_records)
 
         if kwargs.get('dry_run'):
             return
@@ -680,6 +724,11 @@ class NestedShareFolderConvertCommand(Command):
             logging.warning(
                 'Folder conversion was partial. The Classic source tree was not deleted.')
             return
+        if skipped_pam_records:
+            logging.warning(
+                'Skipped %d PAM record(s); they remain in the Classic source tree, '
+                'which was retained.', len(skipped_pam_records))
+            return
 
         if not kwargs.get('force'):
             if user_choice(
@@ -734,6 +783,7 @@ class NestedShareFolderConvertCommand(Command):
         record_cache = getattr(params, 'record_cache', {}) or {}
         records = set()
         placements = {}
+        skipped_pam_records = {}
         for folder_uid in nodes:
             for record_uid in records_by_folder.get(folder_uid) or []:
                 if record_uid in nested_records:
@@ -745,6 +795,10 @@ class NestedShareFolderConvertCommand(Command):
                         'nsf-convert-folder',
                         f'Record {record_uid} is missing from the Classic record cache; '
                         'run sync-down and retry.')
+                pam_record = _pam_record_details(params, record_uid)
+                if pam_record:
+                    skipped_pam_records.setdefault(record_uid, pam_record)
+                    continue
                 owner_info = (getattr(params, 'record_owner_cache', {}) or {}).get(record_uid)
                 if owner_info is not None and getattr(owner_info, 'owner', None) is False:
                     raise CommandError(
@@ -756,7 +810,7 @@ class NestedShareFolderConvertCommand(Command):
         ordered_records = sorted(records)
         for record_uid in placements:
             placements[record_uid] = list(dict.fromkeys(placements[record_uid]))
-        return ordered_records, placements
+        return ordered_records, placements, list(skipped_pam_records.values())
 
     @staticmethod
     def _external_placements(params, records, selected_folder_uids):
@@ -811,7 +865,8 @@ class NestedShareFolderConvertCommand(Command):
 
     @staticmethod
     def _print_preview(nodes, records_by_folder, source_node, destination_uid,
-                       available_depth, record_uids, source_depths, target_levels):
+                       available_depth, record_uids, source_depths, target_levels,
+                       skipped_pam_records):
         destination = destination_uid or 'Vault (root)'
         print(
             f'\n{bcolors.WARNING}Warning: Folder conversion is permanent. '
@@ -820,7 +875,14 @@ class NestedShareFolderConvertCommand(Command):
             f'{bcolors.ENDC}')
         print(f'Source: {_classic_folder_label(source_node)}')
         print(f'Destination: {destination}')
-        print(f'Folders: {len(nodes)}; unique records: {len(record_uids)}')
+        print(
+            f'Folders: {len(nodes)}; records to convert: {len(record_uids)}; '
+            f'PAM records skipped: {len(skipped_pam_records)}')
+        _print_skipped_pam_records(skipped_pam_records)
+        if skipped_pam_records:
+            print(
+                'The Classic source tree will be retained so skipped PAM records '
+                'remain in their Classic folders.')
         overflow = sum(
             1 for depth in source_depths.values() if depth > available_depth)
         if overflow:
