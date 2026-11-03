@@ -34,7 +34,8 @@ class RecordIdentifierAmbiguousError(ValueError):
     """Raised when a record title identifies multiple records."""
 
     def __init__(self, identifier):
-        super().__init__(ambiguous_identifier_message(identifier))
+        super().__init__(ambiguous_identifier_message(
+            identifier, namespace='nsf', object_type='record'))
 
 
 # ══════════════════════════════════════════════════════════════════════════

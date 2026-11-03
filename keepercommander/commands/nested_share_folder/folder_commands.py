@@ -211,7 +211,9 @@ class NestedShareFolderMkdirCommand(Command):
         matches = owned_matches if owned_matches else matching_uids
         if len(matches) > 1:
             raise CommandError(
-                'nsf-mkdir', ambiguous_identifier_message(folder_name))
+                'nsf-mkdir',
+                ambiguous_identifier_message(
+                    folder_name, namespace='nsf', object_type='folder'))
         if matches:
             return matches[0]
         return None

@@ -339,3 +339,16 @@ class TestFolder(TestCase):
             cmd.execute(params, src=root_record_uid, dst='Invalid Folder')
         with self.assertRaises(CommandError):
             cmd.execute(params, src=user_folder.uid, dst=user_folder.uid)
+
+    def test_link_uses_link_command_name_for_resolution_errors(self):
+        from keepercommander.subfolder import FolderPathAmbiguousError
+
+        params = get_synced_params()
+        cmd = folder.FolderLinkCommand()
+        with mock.patch(
+                'keepercommander.commands.folder.try_resolve_path',
+                side_effect=FolderPathAmbiguousError('Duplicate')):
+            with self.assertRaises(CommandError) as ctx:
+                cmd.execute(params, src='record', dst='Duplicate')
+
+        self.assertTrue(str(ctx.exception).startswith('ln: Cannot resolve "Duplicate"'))

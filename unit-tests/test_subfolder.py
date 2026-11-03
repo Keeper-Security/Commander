@@ -137,3 +137,17 @@ def test_subfolder_try_resolve_path_rejects_case_variant_folder_shadowing():
     assert subfolder.try_resolve_path(params, 'WORK') is None
     with pytest.raises(subfolder.FolderPathAmbiguousError):
         subfolder.try_resolve_path(params, 'WORK', raise_on_ambiguous=True)
+
+
+def test_ambiguous_identifier_message_uses_namespace_specific_listing_command():
+    classic = subfolder.ambiguous_identifier_message('Work')
+    assert 'run ls -l -f to find folder UIDs' in classic
+    assert 'nsf-list' not in classic
+
+    classic_record = subfolder.ambiguous_identifier_message(
+        'Shared Login', object_type='record')
+    assert 'run list to find record UIDs' in classic_record
+    assert 'nsf-list' not in classic_record
+
+    nsf = subfolder.ambiguous_identifier_message('Work', namespace='nsf')
+    assert 'run nsf-list to find object UIDs' in nsf

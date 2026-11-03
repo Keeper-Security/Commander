@@ -332,7 +332,10 @@ class RecordGetUidCommand(Command):
         if len(matching_records) == 1:
             return matching_records[0].record_uid
         if len(matching_records) > 1:
-            raise CommandError('get', ambiguous_identifier_message(identifier))
+            raise CommandError(
+                'get',
+                ambiguous_identifier_message(
+                    identifier, namespace='classic', object_type='record'))
         return None
 
     @staticmethod

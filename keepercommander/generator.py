@@ -13,6 +13,7 @@ import difflib
 import hashlib
 import logging
 import os
+import re
 import secrets
 import string
 from secrets import choice
@@ -415,7 +416,14 @@ class KeeperPassphraseGenerator(PasswordGenerator):
         self.separator = _normalize_passphrase_separator(separator)
         self.capitalize = capitalize
         self.append_number = append_number
-        self._vocabulary = _load_wordlist(word_list_file)
+        # Passphrase policy validation requires each generated word to contain
+        # at least three ASCII letters.  The bundled EFF list also contains a
+        # few hyphenated entries, which would always produce a validation
+        # warning when selected.
+        self._vocabulary = [
+            word for word in _load_wordlist(word_list_file)
+            if re.fullmatch(r'[A-Za-z]{3,}', word)
+        ]
 
     def generate(self):
         if not self._vocabulary:

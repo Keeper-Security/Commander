@@ -406,7 +406,8 @@ class NestedShareRecordPermissionCommand(Command):
         if len(matches) > 1:
             raise CommandError(
                 'nsf-record-permission',
-                ambiguous_identifier_message(folder_name))
+                ambiguous_identifier_message(
+                    folder_name, namespace='nsf', object_type='folder'))
         raise CommandError('nsf-record-permission', f'Folder "{folder_name}" not found')
 
     @staticmethod

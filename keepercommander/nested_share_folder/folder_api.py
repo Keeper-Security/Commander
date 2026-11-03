@@ -160,7 +160,8 @@ class FolderIdentifierAmbiguousError(ValueError):
     """Raised when a folder name/path identifies multiple folders."""
 
     def __init__(self, identifier):
-        super().__init__(ambiguous_identifier_message(identifier))
+        super().__init__(ambiguous_identifier_message(
+            identifier, namespace='nsf', object_type='folder'))
 
 
 def resolve_folder_identifier(params, folder_identifier, raise_on_ambiguous=False):

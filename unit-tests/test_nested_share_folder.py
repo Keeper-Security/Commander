@@ -1928,6 +1928,7 @@ class TestLegacyToNestedShareFolderGuards(TestCase):
         cmd = FolderLinkCommand()
         with self.assertRaises(CommandError) as ctx:
             cmd.execute(params, src=legacy_ruid, dst=nsf_fuid)
+        self.assertTrue(str(ctx.exception).startswith('ln:'))
         self.assertIn('nested share folder', str(ctx.exception).lower())
         mock_communicate.assert_not_called()
 
