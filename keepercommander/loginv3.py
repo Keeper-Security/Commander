@@ -284,7 +284,10 @@ class LoginV3Flow:
 
                 salt = api.get_correct_salt(resp.salt)
                 salt_bytes = salt.salt
-                salt_iterations = salt.iterations
+                salt_iterations = utils.validate_pbkdf2_parameters(
+                    salt_bytes, salt.iterations,
+                    minimum_iterations=utils.get_minimum_pbkdf2_iterations(params.enforcements),
+                    purpose='master password')
                 need_account_recovery = False
                 verify_password_response = None
                 should_cancel = False
@@ -447,11 +450,21 @@ class LoginV3Flow:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_PASSWORD:
+            if len(resp.encryptedDataKey) != 100:
+                raise ValueError('Invalid encrypted data key parameters.')
+            encryption_params_iterations = int.from_bytes(resp.encryptedDataKey[1:4], byteorder='big', signed=False)
+            if encryption_params_iterations != params.iterations:
+                raise ValueError(
+                    'Master password KDF parameters do not match the encrypted data key parameters.')
             decrypted_data_key = \
                 utils.decrypt_encryption_params(resp.encryptedDataKey, params.password)
             login_type_message = bcolors.UNDERLINE + "Master Password"
 
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_ALTERNATE:
+            utils.validate_pbkdf2_parameters(
+                params.salt, params.iterations,
+                minimum_iterations=utils.get_minimum_pbkdf2_iterations(params.enforcements),
+                purpose='alternate master password')
             decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
             decrypted_data_key = crypto.decrypt_aes_v2(resp.encryptedDataKey, decryption_key)
             login_type_message = bcolors.UNDERLINE + "Master Password"
@@ -796,6 +809,8 @@ class LoginV3Flow:
             if not answer:
                 return
             recovery_phrase = answer.lower()
+            utils.validate_pbkdf2_parameters(
+                rs.salt, rs.iterations, purpose='account recovery answer')
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
         elif backup_type == APIRequest_pb2.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
@@ -1082,8 +1097,11 @@ class LoginV3API:
 
     @staticmethod
     def change_master_password(params, password, iterations=0):  # type: (KeeperParams, str, int) -> None
-        iterations = max(iterations, params.iterations, constants.PBKDF2_ITERATIONS)
         auth_salt = os.urandom(16)
+        minimum_iterations = utils.get_minimum_pbkdf2_iterations(params.enforcements)
+        iterations = max(iterations, params.iterations, minimum_iterations)
+        iterations = utils.validate_pbkdf2_parameters(
+            auth_salt, iterations, minimum_iterations=minimum_iterations, purpose='new master password')
         auth_verifier = utils.create_auth_verifier(password, auth_salt, iterations)
         data_salt = os.urandom(16)
         encryption_params = utils.create_encryption_params(password, data_salt, iterations, params.data_key)

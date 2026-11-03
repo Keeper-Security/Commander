@@ -499,6 +499,8 @@ If you do not accept this change by {0}, you will be locked out of your account.
 """
 
 PBKDF2_ITERATIONS = 1_000_000
+# Encryption parameters store the iteration count in an unsigned 3-byte field.
+MAX_PBKDF2_ITERATIONS = (1 << 24) - 1
 
 RMD_BENCHMARK_MAPPING = {
         "SB_CREATE_AT_LEAST_TWO_KEEPER_ADMINISTRATORS":

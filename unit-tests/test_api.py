@@ -1,9 +1,13 @@
 from unittest import TestCase, mock
 from collections import namedtuple
 
+import pytest
+
 from data_vault import VaultEnvironment, get_synced_params, get_connected_params
 from helper import KeeperApiHelper
-from keepercommander import api, generator
+from keepercommander import api, enforcement, generator, loginv3
+from keepercommander.params import KeeperParams
+from keepercommander.proto import APIRequest_pb2
 
 vault_env = VaultEnvironment()
 
@@ -134,3 +138,107 @@ class TestSearch(TestCase):
         }
         with mock.patch('builtins.print'), mock.patch('builtins.input', return_value='decline'):
             self.assertFalse(api.accept_account_transfer_consent(params))
+
+
+class TestPBKDF2AuthenticationValidation:
+    @pytest.mark.parametrize(('salt_bytes', 'iterations', 'message'), [
+        (b'', 1, 'salt'),
+        (bytes(16), 1, 'below the required minimum'),
+    ])
+    def test_login_rejects_weak_server_parameters_before_prompt(
+            self, monkeypatch, salt_bytes, iterations, message):
+        response = APIRequest_pb2.LoginResponse()
+        response.loginState = APIRequest_pb2.REQUIRES_AUTH_HASH
+        salt = response.salt.add()
+        salt.salt = salt_bytes
+        salt.iterations = iterations
+
+        monkeypatch.setattr(loginv3.LoginV3API, 'get_device_id', lambda *args, **kwargs: b'device')
+        monkeypatch.setattr(loginv3.LoginV3API, 'startLoginMessage', lambda *args, **kwargs: response)
+
+        class NoPasswordPrompt:
+            def on_password(self, _step):
+                pytest.fail('Commander prompted before validating the server KDF parameters')
+
+        with pytest.raises(ValueError, match=message):
+            loginv3.LoginV3Flow(login_ui=NoPasswordPrompt()).login(KeeperParams())
+
+    def test_reentry_rejects_weak_server_parameters_before_sending_hash(self, monkeypatch):
+        params = KeeperParams()
+        params.user = 'user@example.com'
+        params.session_token = 'test-session'
+        params.settings = {}
+        endpoints = []
+
+        def fake_communicate_rest(_params, _request, endpoint, **_kwargs):
+            endpoints.append(endpoint)
+            if endpoint == 'authentication/get_salt_and_iterations':
+                salt = APIRequest_pb2.Salt()
+                salt.salt = bytes(16)
+                salt.iterations = 1
+                return salt
+            pytest.fail(f'Unexpected endpoint: {endpoint}')
+
+        monkeypatch.setattr(enforcement.api, 'communicate_rest', fake_communicate_rest)
+        monkeypatch.setattr(enforcement.getpass, 'getpass', lambda prompt='': 'test-password')
+
+        assert enforcement.MasterPasswordReentryEnforcer._validate_master_or_alternate_password(params) is False
+        assert endpoints == ['authentication/get_salt_and_iterations']
+
+    def test_alternate_password_derivation_rejects_weak_parameters(self):
+        params = KeeperParams()
+        params.password = 'test-password'
+        params.salt = bytes(16)
+        params.iterations = 1
+        response = APIRequest_pb2.LoginResponse()
+        response.encryptedDataKeyType = APIRequest_pb2.BY_ALTERNATE
+
+        with pytest.raises(ValueError, match='below the required minimum'):
+            loginv3.LoginV3Flow.get_data_key(params, response)
+
+    def test_account_recovery_rejects_weak_answer_before_sending_hash(self, monkeypatch):
+        params = KeeperParams()
+        endpoints = []
+
+        def fake_communicate_rest(_params, _request, endpoint, **_kwargs):
+            endpoints.append(endpoint)
+            if endpoint == 'authentication/account_recovery_verify_code':
+                response = APIRequest_pb2.AccountRecoveryVerifyCodeResponse()
+                response.backupKeyType = APIRequest_pb2.BKT_SEC_ANSWER
+                response.securityQuestion = 'Test question'
+                response.salt = bytes(16)
+                response.iterations = 1
+                return response
+            return None
+
+        monkeypatch.setattr(loginv3.api, 'communicate_rest', fake_communicate_rest)
+        monkeypatch.setattr('builtins.input', lambda _prompt='': 'test-code')
+        monkeypatch.setattr(loginv3.getpass, 'getpass', lambda **_kwargs: 'test-answer')
+
+        with pytest.raises(ValueError, match='below the required minimum'):
+            loginv3.LoginV3Flow().handle_account_recovery(params, b'login-token')
+        assert endpoints == [
+            'authentication/master_password_recovery_verification_v2',
+            'authentication/account_recovery_verify_code',
+        ]
+
+    @pytest.mark.parametrize('payload', [b'', bytes(99)])
+    def test_login_rejects_malformed_encryption_params(self, payload):
+        params = KeeperParams()
+        params.iterations = 1_000_000
+        response = APIRequest_pb2.LoginResponse()
+        response.encryptedDataKeyType = APIRequest_pb2.BY_PASSWORD
+        response.encryptedDataKey = payload
+
+        with pytest.raises(ValueError, match='Invalid encrypted data key parameters'):
+            loginv3.LoginV3Flow.get_data_key(params, response)
+
+    def test_login_rejects_encryption_iteration_mismatch(self):
+        params = KeeperParams()
+        params.iterations = 1_000_000
+        response = APIRequest_pb2.LoginResponse()
+        response.encryptedDataKeyType = APIRequest_pb2.BY_PASSWORD
+        response.encryptedDataKey = b'\x01' + (1_000_001).to_bytes(3, byteorder='big') + bytes(96)
+
+        with pytest.raises(ValueError, match='do not match'):
+            loginv3.LoginV3Flow.get_data_key(params, response)

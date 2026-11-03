@@ -326,6 +326,10 @@ class MasterPasswordReentryEnforcer:
                 return False
             
             try:
+                iterations = utils.validate_pbkdf2_parameters(
+                    salt, iterations,
+                    minimum_iterations=utils.get_minimum_pbkdf2_iterations(params.enforcements),
+                    purpose='master password re-entry')
                 # Create authentication hash
                 auth_hash = crypto.derive_keyhash_v1(master_password, salt, iterations)
                 

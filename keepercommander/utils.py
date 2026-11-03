@@ -26,11 +26,49 @@ from pathlib import Path
 import sys
 
 from . import crypto
-from .constants import EMAIL_PATTERN
+from .constants import EMAIL_PATTERN, PBKDF2_ITERATIONS, MAX_PBKDF2_ITERATIONS
 import zxcvbn as _zxcvbn
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
+
+
+def get_minimum_pbkdf2_iterations(enforcements=None):
+    # type: (Optional[dict]) -> int
+    """Get the local PBKDF2 floor, raised by an account-level enforcement when available."""
+    minimum = PBKDF2_ITERATIONS
+    if isinstance(enforcements, dict):
+        longs = enforcements.get('longs')
+        if isinstance(longs, list):
+            value = next((x.get('value') for x in longs
+                          if isinstance(x, dict) and x.get('key') == 'minimum_pbkdf2_iterations'), None)
+            if isinstance(value, int) and not isinstance(value, bool):
+                minimum = max(minimum, value)
+            elif isinstance(value, str) and value.strip().isdigit():
+                minimum = max(minimum, int(value.strip()))
+    return minimum
+
+
+def validate_pbkdf2_parameters(salt, iterations, minimum_iterations=None, purpose='PBKDF2'):
+    # type: (bytes, int, Optional[int], str) -> int
+    """Validate PBKDF2 parameters before deriving a key or serializing them."""
+    if not isinstance(salt, bytes) or len(salt) < 16:
+        raise ValueError(f'Invalid {purpose} salt: expected at least 16 bytes.')
+
+    if isinstance(iterations, bool) or not isinstance(iterations, int):
+        raise ValueError(f'Invalid {purpose} iteration count.')
+
+    minimum_iterations = max(PBKDF2_ITERATIONS, minimum_iterations or 0)
+    if iterations < minimum_iterations:
+        raise ValueError(
+            f'Invalid {purpose} iteration count: {iterations} is below the required minimum '
+            f'of {minimum_iterations}.')
+    if iterations > MAX_PBKDF2_ITERATIONS:
+        raise ValueError(
+            f'Invalid {purpose} iteration count: {iterations} exceeds the supported maximum '
+            f'of {MAX_PBKDF2_ITERATIONS}.')
+    return iterations
+
 
 def get_logger():
     return logging.getLogger('keeper')

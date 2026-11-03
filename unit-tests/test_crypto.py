@@ -3,7 +3,7 @@ from unittest import TestCase
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from keepercommander import crypto, utils
+from keepercommander import constants, crypto, utils
 
 
 class TestCrypto(TestCase):
@@ -167,6 +167,43 @@ class TestCrypto(TestCase):
         self.assertEqual(utils.master_password_score('c3>^sxuKZ[Ndyo(OBE14'), 100)  # zxcvbn score 4 -> Strong
         self.assertEqual(utils.master_password_score('AAAbbbCCC11'), 75)      # zxcvbn score 3 -> Medium
         self.assertEqual(utils.master_password_score('password'), 25)         # zxcvbn score 0 -> Weak
+
+    def test_validate_pbkdf2_parameters(self):
+        salt = bytes(16)
+        self.assertEqual(
+            utils.validate_pbkdf2_parameters(salt, constants.PBKDF2_ITERATIONS),
+            constants.PBKDF2_ITERATIONS)
+        self.assertEqual(
+            utils.validate_pbkdf2_parameters(salt, constants.MAX_PBKDF2_ITERATIONS),
+            constants.MAX_PBKDF2_ITERATIONS)
+
+        for invalid_salt, iterations in (
+                (b'', 1),
+                (bytes(15), constants.PBKDF2_ITERATIONS),
+                (salt, 1),
+                (salt, constants.MAX_PBKDF2_ITERATIONS + 1),
+                (salt, True)):
+            with self.subTest(salt_length=len(invalid_salt), iterations=iterations):
+                with self.assertRaises(ValueError):
+                    utils.validate_pbkdf2_parameters(invalid_salt, iterations)
+
+    def test_validate_pbkdf2_parameters_applies_account_minimum(self):
+        minimum = constants.PBKDF2_ITERATIONS + 1
+        enforcements = {
+            'longs': [{'key': 'minimum_pbkdf2_iterations', 'value': minimum}]
+        }
+        self.assertEqual(utils.get_minimum_pbkdf2_iterations(enforcements), minimum)
+        with self.assertRaisesRegex(ValueError, 'required minimum'):
+            utils.validate_pbkdf2_parameters(
+                bytes(16), constants.PBKDF2_ITERATIONS, minimum_iterations=minimum)
+
+    def test_decrypt_encryption_params_keeps_support_for_legacy_kdf_metadata(self):
+        password = 'recovery-password'
+        salt = bytes(16)
+        data_key = utils.generate_aes_key()
+        encryption_params = utils.create_encryption_params(password, salt, 1, data_key)
+
+        self.assertEqual(utils.decrypt_encryption_params(encryption_params, password), data_key)
 
 
 _test_random_data = \

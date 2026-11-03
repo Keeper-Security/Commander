@@ -2,10 +2,14 @@ from unittest import TestCase, mock, skip
 
 import datetime
 
+import pytest
+
 from data_enterprise import EnterpriseEnvironment
 from data_vault import get_synced_params, get_user_params, get_connected_params, VaultEnvironment
 from helper import KeeperApiHelper
 from keepercommander.commands import utils
+from keepercommander.params import KeeperParams
+from keepercommander.proto import APIRequest_pb2
 
 
 vault_env = VaultEnvironment()
@@ -124,3 +128,24 @@ class TestRegister(TestCase):
             m_transfer.assert_called()
             self.assertNotIn('share_account_to', params.settings)
             self.assertNotIn('must_perform_account_share_by', params.settings)
+
+
+def test_password_change_rejects_weak_current_parameters(monkeypatch):
+    params = KeeperParams()
+    params.user = 'user@example.com'
+    params.settings = {}
+    params.enforcements = None
+    endpoints = []
+
+    def fake_communicate_rest(_params, _request, endpoint, **_kwargs):
+        endpoints.append(endpoint)
+        salt = APIRequest_pb2.Salt()
+        salt.salt = bytes(16)
+        salt.iterations = 1
+        return salt
+
+    monkeypatch.setattr('keepercommander.commands.utils.api.communicate_rest', fake_communicate_rest)
+
+    with pytest.raises(ValueError, match='below the required minimum'):
+        utils.ResetPasswordCommand().execute(params, current_password='test-password')
+    assert endpoints == ['authentication/get_salt_and_iterations']

@@ -2396,6 +2396,10 @@ class ResetPasswordCommand(Command):
                 logging.info('Changing Master Password for \"%s\"', params.user)
 
         if current_salt:
+            utils.validate_pbkdf2_parameters(
+                current_salt.salt, current_salt.iterations,
+                minimum_iterations=utils.get_minimum_pbkdf2_iterations(params.enforcements),
+                purpose='current master password')
             auth_hash = crypto.derive_keyhash_v1(current_password, current_salt.salt, current_salt.iterations)
             rq = APIRequest_pb2.MasterPasswordReentryRequest()
             rq.pbkdf2Password = utils.base64_url_encode(auth_hash)
@@ -2461,9 +2465,13 @@ class ResetPasswordCommand(Command):
                 params.breach_watch.delete_euids(params, euids)
 
         iterations = current_salt.iterations if current_salt else constants.PBKDF2_ITERATIONS
-        iterations = max(iterations, constants.PBKDF2_ITERATIONS)
-
         auth_salt = crypto.get_random_bytes(16)
+        minimum_iterations = utils.get_minimum_pbkdf2_iterations(params.enforcements)
+        iterations = max(iterations, minimum_iterations)
+        iterations = utils.validate_pbkdf2_parameters(
+            auth_salt, iterations, minimum_iterations=minimum_iterations,
+            purpose='new master password')
+
         if is_sso_user:
             ap_rq = APIRequest_pb2.UserAuthRequest()
             ap_rq.uid = current_salt.uid if current_salt else crypto.get_random_bytes(16)
