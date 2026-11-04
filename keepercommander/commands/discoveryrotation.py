@@ -4111,7 +4111,13 @@ class PAMGatewayActionRotateCommand(Command):
         resource_uid = None
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
-        config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
+        # The rotation settings name the PAM Configuration this user rotates under; the web vault and the
+        # gateway use it too. The graph lookup is only a fallback: a user linked to more than one
+        # configuration (an admin on resources in several of them, or a link left behind by a move) gets
+        # every one of them back, in the order the links were created.
+        config_uid = utils.base64_url_encode(ri.configurationUid) if ri.configurationUid else None
+        if not config_uid:
+            config_uid = get_config_uid(params, encrypted_session_token, encrypted_transmission_key, record_uid)
         if not config_uid:
             # Still try it the old way
             # Configuration on the UI is "Rotation Setting"
@@ -4144,9 +4150,12 @@ class PAMGatewayActionRotateCommand(Command):
             logging.debug('Skipping per-config rotation gate (lookup failed): %s', _e)
 
         if not resource_uid:
-            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, record.record_uid,
-                                transmission_key=transmission_key)
+            tmp_dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, config_uid,
+                                is_config=True, transmission_key=transmission_key)
             resource_uid = tmp_dag.get_resource_uid(record_uid)
+            if not resource_uid and ri.resourceUid:
+                # Same fallback as the web vault: the resource named in the rotation settings
+                resource_uid = utils.base64_url_encode(ri.resourceUid)
             if not resource_uid:
                 # NOOP records don't need resource_uid
                 is_noop = False
