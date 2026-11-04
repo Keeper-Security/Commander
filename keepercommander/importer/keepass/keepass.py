@@ -27,6 +27,7 @@ from pykeepass.entry import Entry
 
 from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
     Record, Folder, SharedFolder, EmptyFolder, BytesAttachment, RecordField
+from .. import imp_exp
 from ... import utils
 from ...display import bcolors
 from ...utils import parse_totp_uri
@@ -346,6 +347,9 @@ class KeepassExporter(BaseExporter, XmlUtils):
                 efs.append(x)
             elif isinstance(x, SharedFolder):
                 sfs.append(x)
+
+        imp_exp.KeeperV3Attachment.prefetch_urls(
+            a for r in rs if r.attachments for a in r.attachments if a.size < self.max_size)
 
         with create_database(filename, password=password, keyfile=keyfile) as kdb:
             root = kdb.root_group

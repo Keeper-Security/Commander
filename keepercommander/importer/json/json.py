@@ -479,6 +479,7 @@ class KeeperJsonExporter(BaseExporter):
                 total = len(atta)
                 if total > 0:
                     logging.info('Downloading attachments...')
+                    imp_exp.KeeperV3Attachment.prefetch_urls(atta.values())
                     i = 1
                     for file_uid, at in atta.items():
                         logging.info(f'{i:>3} of {total:3} {at.name}')

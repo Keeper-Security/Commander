@@ -3315,8 +3315,34 @@ class KeeperV3Attachment(KeeperBaseAttachment):
     def __init__(self, params, file_uid):
         super().__init__(params)
         self.file_uid = file_uid
+        self._url = None
+        self._success_status_code = None
 
-    def open(self):
+    def _set_download(self, file):
+        self._url = file.url
+        self._success_status_code = file.success_status_code
+        self.is_gcm = file.fileKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM
+
+    @classmethod
+    def prefetch_urls(cls, attachments, batch_size=100):
+        params = None
+        by_uid = {}    # type: Dict[bytes, List[KeeperV3Attachment]]
+        for a in attachments:
+            if isinstance(a, cls) and a._url is None:
+                params = a.params
+                by_uid.setdefault(utils.base64_url_decode(a.file_uid), []).append(a)
+        uids = list(by_uid)
+        for i in range(0, len(uids), batch_size):
+            rq = record_pb2.FilesGetRequest()
+            rq.for_thumbnails = False
+            rq.record_uids.extend(uids[i:i + batch_size])
+            rs = api.communicate_rest(params, rq, 'vault/files_download', rs_type=record_pb2.FilesGetResponse)
+            for file in rs.files:
+                if file.status == record_pb2.FG_SUCCESS:
+                    for a in by_uid.get(file.record_uid, []):
+                        a._set_download(file)
+
+    def _request_download(self):
         rq = record_pb2.FilesGetRequest()
         rq.record_uids.append(utils.base64_url_decode(self.file_uid))
         rq.for_thumbnails = False
@@ -3324,9 +3350,17 @@ class KeeperV3Attachment(KeeperBaseAttachment):
         file = rs.files[0]
         if file.status != record_pb2.FG_SUCCESS:
             raise KeeperApiError('access_denied', 'Attachment: access denied')
-        self.is_gcm = file.fileKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM
-        url = file.url
-        rs_http = requests.get(url, proxies=self.params.rest_context.proxies, stream=True)
-        if rs_http.status_code != file.success_status_code:
+        self._set_download(file)
+
+    def open(self):
+        prefetched = self._url is not None
+        if not prefetched:
+            self._request_download()
+        rs_http = requests.get(self._url, proxies=self.params.rest_context.proxies, stream=True)
+        if rs_http.status_code != self._success_status_code and prefetched:
+            # prefetched signed URL may have expired during a long export
+            self._request_download()
+            rs_http = requests.get(self._url, proxies=self.params.rest_context.proxies, stream=True)
+        if rs_http.status_code != self._success_status_code:
             raise KeeperApiError('file_not_found', 'Attachment: file not found')
         return self.set_stream(rs_http.raw, for_encrypt=False)
