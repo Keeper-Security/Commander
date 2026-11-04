@@ -1,5 +1,6 @@
 import unittest
 from unittest import mock
+from keepercommander.importer.importer import Record
 from keepercommander.importer.thycotic.thycotic import ThycoticImporter, ThycoticMixin
 
 L1, L2, L3, L4 = 'Test_Folder_l1', r'Test_Folder_l1\Test_Folder_l2', \
@@ -288,7 +289,8 @@ class ImportFolderSelectionTests(unittest.TestCase):
             auth.thycotic_secret.side_effect = secret
             kwargs = {} if filter_folder is None else {'filter_folder': filter_folder}
             try:
-                records = list(ThycoticImporter().do_import('user@thycotic.example', **kwargs))
+                records = [x for x in ThycoticImporter().do_import('user@thycotic.example', **kwargs)
+                           if isinstance(x, Record)]
             finally:
                 self.last_endpoints = [call.args[0] for call in auth.thycotic_search.call_args_list]
         return records, mocked_input
