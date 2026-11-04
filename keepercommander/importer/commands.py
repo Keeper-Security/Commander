@@ -783,8 +783,8 @@ class DownloadRecordTypeCommand(EnterpriseCommand):
 class LoadRecordTypeCommand(EnterpriseCommand):
     def get_parser(self):
         return load_record_type_parser
-        
-    
+
+
 
     def execute(self, params, **kwargs):
         file_name = kwargs.get('name') or 'record_types.json'
