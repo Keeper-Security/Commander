@@ -245,6 +245,38 @@ My Vault
         self.assertEqual(result['status'], 'warning')
         self.assertEqual(result['status_code'], 400)
 
+    def test_nsf_convert_folder_actual_incomplete_output_is_not_successful(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert-folder "Private" --force',
+            'Warning: Folder conversion is permanent.\n'
+            'Conversion incomplete. The Classic source tree was retained.',
+        )
+
+        self.assertEqual(result['status'], 'warning')
+        self.assertEqual(result['status_code'], 400)
+
+    def test_nsf_convert_folder_actual_partial_output_is_partial_success(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert-folder "Private" --force',
+            'Warning: Folder conversion is permanent.\n'
+            'Classic record R1 converted to a Nested Share Record.\n'
+            'Conversion incomplete. The Classic source tree was retained.',
+        )
+
+        self.assertEqual(result['status'], 'partial_success')
+        self.assertEqual(result['status_code'], 207)
+
+    def test_nsf_convert_folder_completed_but_source_retained_is_success(self):
+        result = KeeperResponseParser.parse_response(
+            'nsf-convert-folder "Private"',
+            'Warning: Folder conversion is permanent.\n'
+            '✓ Conversion complete\n'
+            'Keeping the Classic source tree.',
+        )
+
+        self.assertEqual(result['status'], 'success')
+        self.assertNotIn('status_code', result)
+
     def test_parse_mkdir_command(self):
         """Test parsing of 'mkdir' command output"""
 

@@ -1370,6 +1370,7 @@ class KeeperResponseParser:
                 'conversion result for classic record',
                 'conversion endpoint returned',
                 'folder conversion was partial',
+                'conversion incomplete',
                 'could not preserve record placement',
                 'could not preserve application record share',
             )
@@ -1378,6 +1379,7 @@ class KeeperResponseParser:
             phrase in lowered_response
             for phrase in (
                 'converted to a nested share record',
+                'conversion complete',
                 'classic source tree retained',
                 'classic source folder tree deleted',
             )
