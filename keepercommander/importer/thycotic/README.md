@@ -15,23 +15,36 @@ Commander supports importing secrets from Thycotic Secret Server (now known as D
 - **Error Handling**: Comprehensive error reporting and skipped records summary
 - **Group Lookup**: Handles missing groups and complex group hierarchies
 
-## Requirements
-
-The following Python packages are required:
-
-```bash
-pip3 install requests
-```
-
-For user migration and team features:
-
-```bash
-pip3 install tabulate
-```
-
 ## Installation
 
-These are already included in the base `requirements.txt` for Commander.
+Thycotic import uses the same Python dependencies as Commander (`requests`, and `tabulate` when using team listing features). Install Commander from the [repository root README](../../../README.md#linux--python-using-pip) (pip package or source with `requirements.txt`).
+
+## Starting Commander
+
+Commands below are run from the **Keeper Commander interactive shell**, not from your OS shell directly.
+
+1. Install and log in to Commander (see [Starting Commander](../../../README.md#starting-commander)).
+2. Launch the shell:
+
+```bash
+keeper shell
+```
+
+3. At the vault prompt (for example `My Vault>`), run `import`, `download-membership`, and related commands.
+
+For a list of all Commander commands: `keeper help`.
+
+## Environment variables (optional)
+
+You can pre-set Delinea connection details instead of typing them at prompts. Environment variables are used when the import command does not supply a URL or when `download-membership` / other Thycotic plugins connect without inline credentials:
+
+| Variable | Description |
+|----------|-------------|
+| `KEEPER_THYCOTIC_URL` | Secret Server base URL or tenant (for example `https://tenant.secretservercloud.com/` or `tenant`) |
+| `KEEPER_THYCOTIC_USER` | Delinea username |
+| `KEEPER_THYCOTIC_PASSWORD` | Delinea password |
+
+If variables are unset, Commander prompts for URL, username, and password. Two-factor authentication still prompts interactively for a **Time-based One-Time Password (TOTP)** code when required.
 
 ## Usage
 
@@ -40,28 +53,31 @@ These are already included in the base `requirements.txt` for Commander.
 Import all secrets from Thycotic Secret Server:
 
 ```bash
-keeper> import --format=thycotic https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic https://<tenant>.secretservercloud.com
 ```
 
 This will prompt for:
-- **Username**: Your Thycotic username
-- **Password**: Your Thycotic password
-- **2FA Code**: TOTP code if two-factor authentication is enabled
+
+- **Username**: Your Thycotic username (unless `KEEPER_THYCOTIC_USER` is set)
+- **Password**: Your Thycotic password (unless `KEEPER_THYCOTIC_PASSWORD` is set)
+- **TOTP code**: If two-factor authentication is enabled
 
 ### Import Specific Folders
 
-Import secrets from a single folder (matched by folder name, case-insensitive):
+Import secrets from **one** folder, matched by **folder name** (case-insensitive). This flag does not accept a comma-separated list of multiple folders.
 
 ```bash
-keeper> import --format=thycotic --filter-folder=finance https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic --filter-folder=finance https://<tenant>.secretservercloud.com
 ```
+
+Use [interactive folder selection](#interactive-folder-selection) or run separate imports if you need multiple folders.
 
 ### Interactive Folder Selection
 
 Browse and select folders interactively:
 
 ```bash
-keeper> import --format=thycotic https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic https://<tenant>.secretservercloud.com
 # Then choose folders from the interactive menu
 ```
 
@@ -70,13 +86,13 @@ keeper> import --format=thycotic https://<tenant>.secretservercloud.com
 Provision Thycotic users as Keeper enterprise users before importing secrets:
 
 ```bash
-keeper> import --format=thycotic --add-users https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic --add-users https://<tenant>.secretservercloud.com
 ```
 
-**Dry Run Mode**: Preview users to be created without actually creating them:
+**Dry run**: Preview users to be created without creating them. This step only lists users; it does **not** read secret values and does **not** perform Delinea checkout.
 
 ```bash
-keeper> import --format=thycotic --add-users --dry-run https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic --add-users --dry-run https://<tenant>.secretservercloud.com
 ```
 
 ### Import with Team Creation
@@ -84,33 +100,35 @@ keeper> import --format=thycotic --add-users --dry-run https://<tenant>.secretse
 Create Keeper teams based on Thycotic groups and assign users:
 
 ```bash
-keeper> import --format=thycotic --add-users --add-teams https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic --add-users --add-teams https://<tenant>.secretservercloud.com
 ```
 
-**Dry Run Mode**: Preview teams and user assignments without creating them:
+**Dry run**: Preview teams and user assignments without creating them:
 
 ```bash
-keeper> import --format=thycotic --add-users --add-teams --dry-run https://<tenant>.secretservercloud.com
+My Vault> import --format=thycotic --add-users --add-teams --dry-run https://<tenant>.secretservercloud.com
 ```
 
 ### Import with Secret-Level Permissions
 
 Import secret permissions as Keeper shared records:
 
-**Prerequisite**: The Thycotic users must already exist in Keeper before permissions can be applied. If they don't, provision them first (see [Import with User Migration](#import-with-user-migration)).
+**Prerequisite**: Thycotic users must already exist in Keeper before permissions can be applied. Provision them first (see [Import with User Migration](#import-with-user-migration)).
 
 ```bash
-keeper> import --format=thycotic https://<tenant>.secretservercloud.com
-keeper> download-membership --source=thycotic shared_folder_membership.json
-keeper> apply-membership shared_folder_membership.json
+My Vault> import --format=thycotic https://<tenant>.secretservercloud.com
+My Vault> download-membership --source=thycotic shared_folder_membership.json
+My Vault> apply-membership shared_folder_membership.json
 ```
 
-Or download membership and apply permissions separately with worker pool:
+Download membership and apply permissions separately (parallel permission reads; see [Worker pool for permission loading](#worker-pool-for-permission-loading)):
 
 ```bash
-keeper> download-membership --source=thycotic --workers=4 shared_folder_membership.json
-keeper> apply-membership --full-sync shared_folder_membership.json
+My Vault> download-membership --source=thycotic --workers=4 shared_folder_membership.json
+My Vault> apply-membership --full-sync shared_folder_membership.json
 ```
+
+When `--workers` is omitted, **`download-membership` defaults to 4 workers** (valid range 1–16).
 
 ### Advanced Options
 
@@ -118,10 +136,13 @@ keeper> apply-membership --full-sync shared_folder_membership.json
 |--------|-------------|
 | `--secret-ids` | Comma-separated list of specific secret IDs to import |
 | `--folder` | Import into a separate Keeper folder |
-| `--show-skipped` | Display records that could not be imported |
+| `--show-skipped` | Display records that could not be imported (always enabled for Thycotic imports) |
 | `--add-users` | Provision Thycotic users as Keeper enterprise users |
 | `--add-teams` | Create Keeper teams based on Thycotic groups and assign users |
 | `--dry-run` | Preview changes without making them |
+| `--old-domain` / `--new-domain` | Rewrite email domains in permission data |
+
+The `import` command does **not** define `--verbose` or `--debug`. For detailed API traces, configure Python logging (for example `logging.DEBUG` on the `keepercommander` logger) before starting Commander.
 
 ## Features in Detail
 
@@ -130,16 +151,18 @@ keeper> apply-membership --full-sync shared_folder_membership.json
 Thycotic Secret Server restricts access to certain secrets. To import restricted secrets:
 
 1. Your Thycotic user account must have the **"View Restricted Secret"** permission
-2. The import automatically attempts to:
-   - First read the secret normally
-   - If that fails, retry with checkout parameters (`autoCheckout`, `autoCheckIn`, `autoComment`)
+2. During **secret import** (not during `--add-users` dry run), Commander reads each secret as follows:
+   - Try a normal `GET` of the secret (and sensitive fields)
+   - If that fails, **retry the same request with checkout query parameters** (`autoCheckout`, `autoCheckIn`, `autoComment`) so Delinea checks the secret out for the API read, then checks it back in
 
-This is handled transparently - no additional configuration is required.
+This checkout behavior applies only when loading secret content for import. It is not used for membership export or user provisioning previews.
 
+No extra flags are required on the import command.
 
 ### User Migration
 
 Use `--add-users` flag to:
+
 1. Fetch Thycotic users from the tenant
 2. Create matching Keeper enterprise users (pre-activated)
 3. Then proceed with secret import
@@ -147,6 +170,7 @@ Use `--add-users` flag to:
 Users are matched by email address. Existing Keeper users are skipped.
 
 Features:
+
 - Automatic email extraction from multiple sources
 - Name fallback to username if not available
 - Inactive user handling
@@ -155,11 +179,13 @@ Features:
 ### Team Creation
 
 Use `--add-teams` flag to:
+
 1. Create Keeper teams from Thycotic groups
 2. Assign users to teams based on group membership
 3. Handle nested groups and complex hierarchies
 
 Features:
+
 - Automatic team naming from group names
 - User assignment based on group membership
 - Duplicate prevention (case-insensitive)
@@ -174,12 +200,14 @@ Create shared records with proper permissions mapping:
 3. Run `apply-membership` to create shared records with proper permissions
 
 Supported permissions:
+
 - View
 - Manage Records
 - Manage Users
 - Transfer Records (owner only)
 
 Features:
+
 - Folder path normalization (both `/` and `\` separators)
 - Record deduplication in multiple folders
 - User detail caching for efficiency
@@ -190,21 +218,24 @@ Features:
 
 #### Worker Pool for Permission Loading
 
-Reading permissions from Delinea (`download-membership`) can use a configurable worker pool for parallel fetches. The import itself does not use the worker pool.
+Reading permissions from Delinea (`download-membership`) can use a configurable worker pool for parallel fetches. The **`import` command does not use this worker pool**—only membership download (and related permission bulk loading in that flow).
 
 ```bash
-keeper> download-membership --source=thycotic --workers=4 memberships.json
+My Vault> download-membership --source=thycotic --workers=4 memberships.json
 ```
 
-- **Default**: 4 workers
-- **Range**: 1-16 workers
-- **Worker=1**: Single-threaded (no parallelization)
-- **Queue Limit**: At most `workers * 2` requests queued at a time
-- **Results Order**: Preserved in output
+- **Default**: 4 workers when `--workers` is omitted
+- **Range**: 1–16 workers
+- **`--workers=1`**: Sequential (no parallelization)
+- **Queue limit**: At most `workers * 2` requests queued at a time
+- **Results order**: Preserved in output
+
+See also [Import with Secret-Level Permissions](#import-with-secret-level-permissions) for a typical `--workers` example.
 
 #### Bulk Permission Endpoint
 
 Efficient permission loading:
+
 - One bulk GET to `/v1/secret-permissions` (no secretId filter)
 - Groups results by secretId
 - Falls back to per-secret requests if bulk call fails
@@ -212,8 +243,9 @@ Efficient permission loading:
 #### Rate Limit Handling
 
 Automatic retry on rate limits:
-- Exponential backoff (5s base: 5s, 10s, 20s) is always applied
-- If a `Retry-After` header is present (capped at 300s), the longer of `Retry-After` and the backoff is used
+
+- Exponential backoff (5s base: 5s, 10s, 20s) is **always** applied on HTTP 429
+- If a `Retry-After` header is present (capped at 300s), the wait uses the **longer** of `Retry-After` and the current backoff delay
 - Maximum 3 retry attempts per request
 
 ## Error Handling
@@ -235,6 +267,7 @@ Use `--show-skipped` to display error tables after import completes.
 ### Connection Errors
 
 If you see connection timeouts:
+
 - Verify Thycotic URL is accessible from your network
 - Check firewall/proxy settings
 - Verify authentication credentials
@@ -243,6 +276,7 @@ If you see connection timeouts:
 ### Permission Denied
 
 Ensure your Thycotic user has:
+
 - "View Secret" permission on secrets to import
 - "View Restricted Secret" permission for restricted secrets
 - "View Group" permission if using `--add-users` or `--add-teams`
@@ -251,6 +285,7 @@ Ensure your Thycotic user has:
 ### 2FA Failures
 
 If TOTP authentication fails:
+
 - Ensure your authenticator app is synchronized with server time
 - Verify the TOTP code is entered within 30 seconds
 - Re-run the import command if the code expires
@@ -258,6 +293,7 @@ If TOTP authentication fails:
 ### Rate Limiting
 
 If you see "HTTP 429" errors:
+
 - Import is automatically retrying with backoff
 - Consider reducing `--workers` if downloading memberships
 - Spread imports across multiple runs if needed
@@ -265,11 +301,10 @@ If you see "HTTP 429" errors:
 ### Missing Groups
 
 If groups don't appear in team creation:
+
 - Verify the Thycotic user has "View Group" permission
 - Check that groups contain members
 - Review error logs for specific missing groups
-
-
 
 ## Performance Notes
 
@@ -280,7 +315,7 @@ If groups don't appear in team creation:
   - Network latency to Thycotic server
   - File attachment sizes
   - Whether restricted secrets require retry with checkout
-  - Worker pool size (for membership download)
+  - Worker pool size (for membership download only; default 4)
 - Large imports may take several minutes
 - The import process logs progress every 10 secrets
 - Permission loading uses bulk endpoints for efficiency
@@ -309,4 +344,3 @@ The import uses the following Thycotic Secret Server API endpoints:
 - `GET /api/v1/secrets/{id}` - Get secret (with checkout parameters if needed)
 - `GET /api/v1/secrets/{id}/fields/{slug}` - Get secret field (with checkout parameters if needed)
 - `GET /api/v1/secret-permissions` - Get permissions (bulk or per-secret)
-
