@@ -1540,9 +1540,10 @@ def _import(params, file_format, filename, **kwargs):
             upload_v3_attachments(params, v3_atts)
 
     if use_nsf and declared_nsf_folders and not dry_run:
-        from .nsf_import import apply_nsf_folder_permissions
+        from .nsf_import import apply_nsf_folder_permissions, apply_nsf_record_permissions
         apply_nsf_folder_permissions(
             params, declared_nsf_folders, manage_users, manage_records, can_edit, can_share)
+        apply_nsf_record_permissions(params, records, dry_run=dry_run)
 
     if hasattr(importer, 'cleanup') and callable(importer.cleanup):
         importer.cleanup()

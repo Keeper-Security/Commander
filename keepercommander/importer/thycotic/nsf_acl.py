@@ -26,10 +26,10 @@ def thycotic_roles_to_nsf_role(folder_access_role_name, secret_access_role_name)
     Returns:
         NSF role name or None if no grant is warranted.
     """
-    if not folder_access_role_name or not secret_access_role_name:
+    if not secret_access_role_name:
         return None
 
-    folder_role = folder_access_role_name.lower()
+    folder_role = folder_access_role_name.lower() if folder_access_role_name else ''
     secret_role = secret_access_role_name.lower()
 
     # Owner folder + (Owner or Edit) secret → full-manager
@@ -43,6 +43,18 @@ def thycotic_roles_to_nsf_role(folder_access_role_name, secret_access_role_name)
     # Owner or Edit folder + View secret → viewer (lossy, log warning)
     if folder_role in ('owner', 'edit') and secret_role == 'view':
         return 'viewer'
+
+    # View folder + View secret → viewer
+    if folder_role == 'view' and secret_role == 'view':
+        return 'viewer'
+
+    # View folder + Edit/Owner secret → use secret role
+    if folder_role == 'view' and secret_role in ('edit', 'owner'):
+        return thycotic_secret_role_to_nsf_role(secret_access_role_name)
+
+    # No folder access (None or empty) + any secret role → use secret role
+    if not folder_role:
+        return thycotic_secret_role_to_nsf_role(secret_access_role_name)
 
     # Any folder + List secret → requestor
     if secret_role == 'list':

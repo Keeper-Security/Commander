@@ -61,7 +61,7 @@ class TestThycoticNsfAclRoleMappings(unittest.TestCase):
         role = thycotic_roles_to_nsf_role('Owner', None)
         self.assertIsNone(role)
 
-        role = thycotic_roles_to_nsf_role(None, 'Owner')
+        role = thycotic_roles_to_nsf_role('Owner', '')
         self.assertIsNone(role)
 
     def test_case_insensitive(self):
@@ -71,6 +71,37 @@ class TestThycoticNsfAclRoleMappings(unittest.TestCase):
 
         role = thycotic_roles_to_nsf_role('OWNER', 'OWNER')
         self.assertEqual(role, 'full-manager')
+
+    def test_view_folder_view_secret(self):
+        """View folder + View secret → viewer."""
+        role = thycotic_roles_to_nsf_role('View', 'View')
+        self.assertEqual(role, 'viewer')
+
+    def test_view_folder_edit_secret(self):
+        """View folder + Edit secret → content-manager."""
+        role = thycotic_roles_to_nsf_role('View', 'Edit')
+        self.assertEqual(role, 'content-manager')
+
+    def test_view_folder_owner_secret(self):
+        """View folder + Owner secret → full-manager."""
+        role = thycotic_roles_to_nsf_role('View', 'Owner')
+        self.assertEqual(role, 'full-manager')
+
+    def test_no_folder_access_with_secret(self):
+        """No folder access role but has secret role → use secret role."""
+        role = thycotic_roles_to_nsf_role(None, 'View')
+        self.assertEqual(role, 'viewer')
+
+        role = thycotic_roles_to_nsf_role('', 'Owner')
+        self.assertEqual(role, 'full-manager')
+
+    def test_no_secret_access_returns_none(self):
+        """No secret access (None or empty) → None."""
+        role = thycotic_roles_to_nsf_role('Owner', None)
+        self.assertIsNone(role)
+
+        role = thycotic_roles_to_nsf_role('Owner', '')
+        self.assertIsNone(role)
 
 
 class TestThycoticSecretRoleMappings(unittest.TestCase):
@@ -187,6 +218,55 @@ class TestSecretAclDiff(unittest.TestCase):
         deltas = diff_secret_acl(folder_roles, secret_roles)
         self.assertEqual(len(deltas), 2)
         self.assertIn(('user1@example.com', 'content-manager'), deltas)
+        self.assertIn(('user3@example.com', 'viewer'), deltas)
+
+
+class TestSecretAclOverrides(unittest.TestCase):
+    """Test secret-level ACL override scenarios."""
+
+    def test_secret_viewer_folder_content_manager(self):
+        """Folder grants content-manager, secret grants viewer → delta."""
+        folder_roles = {'user@example.com': 'content-manager'}
+        secret_roles = {'user@example.com': 'viewer'}
+
+        deltas = diff_secret_acl(folder_roles, secret_roles)
+        self.assertEqual(len(deltas), 1)
+        self.assertIn(('user@example.com', 'viewer'), deltas)
+
+    def test_secret_content_manager_folder_viewer(self):
+        """Folder grants viewer, secret grants content-manager → delta."""
+        folder_roles = {'user@example.com': 'viewer'}
+        secret_roles = {'user@example.com': 'content-manager'}
+
+        deltas = diff_secret_acl(folder_roles, secret_roles)
+        self.assertEqual(len(deltas), 1)
+        self.assertIn(('user@example.com', 'content-manager'), deltas)
+
+    def test_secret_full_manager_folder_viewer(self):
+        """Folder grants viewer, secret grants full-manager → delta."""
+        folder_roles = {'user@example.com': 'viewer'}
+        secret_roles = {'user@example.com': 'full-manager'}
+
+        deltas = diff_secret_acl(folder_roles, secret_roles)
+        self.assertEqual(len(deltas), 1)
+        self.assertIn(('user@example.com', 'full-manager'), deltas)
+
+    def test_mixed_deltas_and_matches(self):
+        """Some users match, some differ."""
+        folder_roles = {
+            'user1@example.com': 'viewer',
+            'user2@example.com': 'content-manager',
+            'user3@example.com': 'full-manager',
+        }
+        secret_roles = {
+            'user1@example.com': 'viewer',  # match, no delta
+            'user2@example.com': 'full-manager',  # differ, delta
+            'user3@example.com': 'viewer',  # differ, delta
+        }
+
+        deltas = diff_secret_acl(folder_roles, secret_roles)
+        self.assertEqual(len(deltas), 2)
+        self.assertIn(('user2@example.com', 'full-manager'), deltas)
         self.assertIn(('user3@example.com', 'viewer'), deltas)
 
 

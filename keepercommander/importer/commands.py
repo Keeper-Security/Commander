@@ -251,6 +251,19 @@ Accepted roles: requestor, viewer, share-manager, content-manager,
 content-share-manager, full-manager.
 Sample: sample_data/import_nsf_permissions.txt
 Use --users --nsf to update NSF permissions only (no record import).
+
+Thycotic (Delinea Secret Server) NSF ACL:
+import --format=thycotic --nsf user@https://<host>/ --add-users --add-teams
+import --format=thycotic --nsf user@https://<host>/ --add-users --add-teams --secret-ids <id1>,<id2>
+import --format=thycotic --nsf user@https://<host>/ --add-users --add-teams --old-domain delinea.com --new-domain keeper.com
+
+• Folder permissions are mapped from Delinea roles to NSF roles (viewer, content-manager, full-manager, requestor).
+• Secret-level ACL differs from folder role: deltas are granted as direct record shares (overriding folder role).
+• Lossy mappings (e.g., Owner folder + View secret) log warnings; secret role takes precedence on that record.
+• Team-based folder ACL is supported when teams exist in Keeper (--add-teams).
+• Use --old-domain/--new-domain to rewrite permission email domains.
+• Use --users --nsf to update NSF permissions only (no record import).
+• Use --dry-run to preview without writing to Keeper.
 '''
 
 

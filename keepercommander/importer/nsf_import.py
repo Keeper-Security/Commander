@@ -489,7 +489,7 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
     full-manager, …). When ``role`` is absent, classic manage_users /
     manage_records flags are mapped via ``classic_perms_to_nsf_role``.
     """
-    from ..nested_share_folder.folder_api import grant_folder_access_v3
+    from ..nested_share_folder.folder_api import grant_folder_access_v3, update_folder_v3
     from ..nested_share_folder.permissions import resolve_role_name
 
     default_role = classic_perms_to_nsf_role(
@@ -508,6 +508,21 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
                 fol.uid = parent
             if not fol.uid or not is_nsf_folder(params, fol.uid):
                 continue
+
+        # Break inheritance if needed (e.g., from Delinea custom folder ACL)
+        if getattr(fol, 'break_inheritance', False) is True:
+            try:
+                _call_with_throttle_retry(
+                    f'NSF folder break inheritance for "{fol.path or fol.uid}"',
+                    update_folder_v3,
+                    params,
+                    fol.uid,
+                    inherit_permissions=False,
+                )
+            except Exception as exc:
+                logging.warning(
+                    'Failed to break inheritance on NSF folder "%s": %s',
+                    fol.path or fol.uid, exc)
 
         folder_role = classic_perms_to_nsf_role(
             fol.manage_users if fol.manage_users is not None else manage_users,
@@ -584,6 +599,7 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
     Uses batch_create_record_shares_v3 for per-user overrides.
     """
     from ..nested_share_folder.record_api import batch_create_record_shares_v3
+    from ..nested_share_folder.permissions import resolve_role_name
 
     if not records:
         return
@@ -598,15 +614,21 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
             continue
 
         for nsr in record.nsf_record_shares:
-            share_uid = nsr.uid
+            recipient = nsr.uid
             role = nsr.role
-            if not share_uid or not role:
+            if not recipient or not role:
+                continue
+
+            try:
+                resolve_role_name(role)
+            except Exception:
+                logging.warning('Invalid NSF role for record "%s": "%s"', record_uid, role)
                 continue
 
             all_record_shares.append({
                 'record_uid': record_uid,
-                'to_uid': share_uid,
-                'role': role,
+                'email': recipient,
+                'access_role_type': role,
             })
 
     if not all_record_shares:
@@ -621,16 +643,22 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
             for share in batch:
                 logging.info(
                     'Would grant NSF record "%s" role "%s" to "%s"',
-                    share.get('record_uid'), share.get('role'), share.get('to_uid'))
+                    share.get('record_uid'), share.get('access_role_type'), share.get('email'))
         else:
             try:
-                _call_with_throttle_retry(
+                results = _call_with_throttle_retry(
                     f'NSF record permission batch ({len(batch)} items)',
                     batch_create_record_shares_v3,
                     params,
                     batch,
                 )
-                granted += len(batch)
+                for item, result in results or []:
+                    if result.get('success'):
+                        granted += 1
+                    elif not result.get('skipped'):
+                        logging.warning(
+                            'NSF record share failed for "%s" on "%s": %s',
+                            item.get('email'), item.get('record_uid'), result.get('message'))
             except Exception as exc:
                 logging.warning('NSF record permission batch failed: %s', exc)
 
