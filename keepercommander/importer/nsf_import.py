@@ -575,3 +575,64 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
 
     if granted:
         logging.info('Granted %d Nested Share Folder permission(s)', granted)
+
+
+def apply_nsf_record_permissions(params, records, dry_run=False):
+    # type: (KeeperParams, List[ImportRecord], bool) -> None
+    """Apply NSF record-level permissions from nsf_record_shares.
+
+    Uses batch_create_record_shares_v3 for per-user overrides.
+    """
+    from ..nested_share_folder.record_api import batch_create_record_shares_v3
+
+    if not records:
+        return
+
+    all_record_shares = []  # type: List[Dict]
+    for record in records:
+        if not record.nsf_record_shares:
+            continue
+
+        record_uid = record.uid
+        if not record_uid:
+            continue
+
+        for nsr in record.nsf_record_shares:
+            share_uid = nsr.uid
+            role = nsr.role
+            if not share_uid or not role:
+                continue
+
+            all_record_shares.append({
+                'record_uid': record_uid,
+                'to_uid': share_uid,
+                'role': role,
+            })
+
+    if not all_record_shares:
+        return
+
+    granted = 0
+    for start in range(0, len(all_record_shares), NSF_RECORD_BATCH):
+        batch = all_record_shares[start:start + NSF_RECORD_BATCH]
+
+        if dry_run:
+            granted += len(batch)
+            for share in batch:
+                logging.info(
+                    'Would grant NSF record "%s" role "%s" to "%s"',
+                    share.get('record_uid'), share.get('role'), share.get('to_uid'))
+        else:
+            try:
+                _call_with_throttle_retry(
+                    f'NSF record permission batch ({len(batch)} items)',
+                    batch_create_record_shares_v3,
+                    params,
+                    batch,
+                )
+                granted += len(batch)
+            except Exception as exc:
+                logging.warning('NSF record permission batch failed: %s', exc)
+
+    if granted:
+        logging.info('Granted %d NSF record permission(s)', granted)

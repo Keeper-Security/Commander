@@ -317,7 +317,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
         self._send_keep_alive_if_needed(params)
-        folders = ThycoticImporter.get_folders(auth, skip_permissions=True)
+        use_nsf = kwargs.get('use_nsf') or False
+        skip_permissions = not use_nsf
+        folders = ThycoticImporter.get_folders(auth, skip_permissions=skip_permissions)
         filter_folder = kwargs.get('filter_folder')
         if filter_folder:
             if filter_folder == 'Personal Folders':
@@ -367,6 +369,18 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
               return
 
         self._send_keep_alive_if_needed(params)
+
+        # NSF: yield shared folders with NSF ACL before secrets
+        if use_nsf:
+            users_by_id = ThycoticMixin.get_user_lookup(auth) or {}
+            for shared_folder in self._yield_nsf_shared_folders(auth, folders, users_by_id):
+                yield shared_folder
+
+            # If users_only mode, skip record import
+            users_only = kwargs.get('users_only') or False
+            if users_only:
+                return
+
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
         for secret_id in secrets_ids:
@@ -705,6 +719,54 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
             yield record
         print(' Done', flush=True)
+
+    def _yield_nsf_shared_folders(self, auth, folders, users_by_id):
+        # type: (ThycoticAuth, Dict[int, Dict], Dict[int, Dict]) -> Iterable[SharedFolder]
+        """Yield NSF SharedFolder objects with NSF role permissions from Delinea folders."""
+        from .nsf_acl import thycotic_roles_to_nsf_role, is_lossy_folder_secret_pair
+
+        for folder in folders.values():
+            if folder.get('inheritPermissions', True):
+                continue
+            if 'permissions' not in folder:
+                continue
+
+            permissions = folder.get('permissions', [])
+            if not isinstance(permissions, list) or len(permissions) == 0:
+                continue
+
+            shared_folder = SharedFolder()
+            shared_folder.uid = folder['id']
+            shared_folder.path = folder['folderPath']
+            shared_folder.break_inheritance = True
+            shared_folder.permissions = []
+
+            for p in permissions:
+                folder_role = p.get('folderAccessRoleName')
+                secret_role = p.get('secretAccessRoleName')
+
+                nsf_role = thycotic_roles_to_nsf_role(folder_role, secret_role)
+                if not nsf_role:
+                    continue
+
+                if is_lossy_folder_secret_pair(folder_role, secret_role):
+                    logging.warning(
+                        'Lossy NSF role mapping for folder %s: %s folder + %s secret → %s',
+                        shared_folder.path, folder_role, secret_role, nsf_role
+                    )
+
+                user_id = p.get('userId', -1)
+                if user_id in users_by_id:
+                    user = users_by_id[user_id]
+                    email = user.get('emailAddress')
+                    if email:
+                        perm = Permission()
+                        perm.name = email
+                        perm.role = nsf_role
+                        shared_folder.permissions.append(perm)
+
+            if shared_folder.permissions:
+                yield shared_folder
 
 
 class ThycoticAuth:
