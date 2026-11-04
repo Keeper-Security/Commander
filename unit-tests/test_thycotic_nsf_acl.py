@@ -7,6 +7,9 @@ from keepercommander.importer.thycotic.nsf_acl import (
     thycotic_secret_role_to_nsf_role,
     is_lossy_folder_secret_pair,
     diff_secret_acl,
+    nsf_record_shares_for_secret_acl,
+    parse_secret_inherit_permissions,
+    secret_acl_differs_from_folder_rows,
 )
 
 
@@ -219,6 +222,75 @@ class TestSecretAclDiff(unittest.TestCase):
         self.assertEqual(len(deltas), 2)
         self.assertIn(('user1@example.com', 'content-manager'), deltas)
         self.assertIn(('user3@example.com', 'viewer'), deltas)
+
+
+class TestSecretInheritParsing(unittest.TestCase):
+
+    def test_parse_inherit_false(self):
+        self.assertFalse(parse_secret_inherit_permissions({'inheritPermissions': False}))
+
+    def test_parse_inherit_true_default(self):
+        self.assertTrue(parse_secret_inherit_permissions({}))
+
+    def test_secret_acl_differs_when_priya_on_secret_only(self):
+        folder_rows = [
+            {'userId': 1, 'secretAccessRoleName': 'Owner'},
+        ]
+        secret_rows = [
+            {'userId': 1, 'secretAccessRoleName': 'Owner'},
+            {'userId': 2, 'secretAccessRoleName': 'View'},
+        ]
+        self.assertTrue(secret_acl_differs_from_folder_rows(secret_rows, folder_rows))
+
+    def test_secret_acl_same_set(self):
+        rows = [{'userId': 1, 'secretAccessRoleName': 'Owner'}]
+        self.assertFalse(secret_acl_differs_from_folder_rows(rows, rows))
+
+
+class TestSecretInheritBrokenRecordShares(unittest.TestCase):
+    """Secret inheritPermissions=false → full secret ACL as record shares."""
+    def test_broken_inherit_emits_all_secret_grants(self):
+        secret_roles = {
+            'owner@example.com': 'full-manager',
+            'priya@example.com': 'viewer',
+        }
+        folder_roles = {'owner@example.com': 'full-manager'}
+        shares = nsf_record_shares_for_secret_acl(
+            secret_roles, folder_roles, secret_inherits_folder_permissions=False)
+        self.assertEqual(len(shares), 2)
+        self.assertIn(('priya@example.com', 'viewer'), shares)
+        self.assertIn(('owner@example.com', 'full-manager'), shares)
+
+    def test_broken_inherit_excludes_keeper_import_user_only(self):
+        secret_roles = {
+            'sarah.wilson@norvaledynamics.com': 'full-manager',
+            'priya.sharma@norvaledynamics.com': 'full-manager',
+            'matteo.rossi@norvaledynamics.com': 'viewer',
+        }
+        import_user = 'sarah.wilson@norvaledynamics.com'
+        filtered = {
+            e: r for e, r in secret_roles.items()
+            if e.lower() != import_user.lower()
+        }
+        shares = nsf_record_shares_for_secret_acl(
+            filtered, {}, secret_inherits_folder_permissions=False)
+        self.assertIn(('priya.sharma@norvaledynamics.com', 'full-manager'), shares)
+        self.assertIn(('matteo.rossi@norvaledynamics.com', 'viewer'), shares)
+        self.assertFalse(any(e.lower() == import_user.lower() for e, _ in shares))
+
+    def test_inheriting_secret_still_uses_deltas(self):
+        secret_roles = {'priya@example.com': 'viewer'}
+        folder_roles = {}
+        shares = nsf_record_shares_for_secret_acl(
+            secret_roles, folder_roles, secret_inherits_folder_permissions=True)
+        self.assertEqual(shares, [('priya@example.com', 'viewer')])
+
+    def test_inheriting_secret_no_delta_when_roles_match(self):
+        secret_roles = {'user@example.com': 'viewer'}
+        folder_roles = {'user@example.com': 'viewer'}
+        shares = nsf_record_shares_for_secret_acl(
+            secret_roles, folder_roles, secret_inherits_folder_permissions=True)
+        self.assertEqual(shares, [])
 
 
 class TestSecretAclOverrides(unittest.TestCase):

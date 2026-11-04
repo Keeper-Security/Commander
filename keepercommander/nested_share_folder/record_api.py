@@ -804,6 +804,28 @@ _SHARE_BATCH_SIZE = 200
 """Maximum number of permissions per vault/records/v3/share request."""
 
 
+def _build_sharing_status_lookup(statuses):
+    # type: (List[Dict[str, Any]]) -> Dict[tuple, Dict[str, Any]]
+    """Map (record_uid, recipient_uid) → status; prefer success over failure."""
+    lookup = {}  # type: Dict[tuple, Dict[str, Any]]
+    for status in statuses:
+        key = (status['record_uid'], status['recipient_uid'])
+        previous = lookup.get(key)
+        if previous is None or (status.get('success') and not previous.get('success')):
+            lookup[key] = status
+    return lookup
+
+
+def _sharing_status_for_email(lookup, params, record_uid, email):
+    # type: (Dict[tuple, Dict[str, Any]], KeeperParams, str, str) -> Dict[str, Any]
+    _, _, uid_bytes, _ = get_user_public_key(params, email)
+    if not uid_bytes:
+        return {'success': False, 'message': 'No status returned'}
+    recipient_uid = utils.base64_url_encode(uid_bytes)
+    return lookup.get((record_uid, recipient_uid),
+                      {'success': False, 'message': 'No status returned'})
+
+
 def batch_update_record_shares_v3(params, updates, expiration_timestamp=None, chunk_size=_SHARE_BATCH_SIZE):
     """Send multiple updateSharingPermissions in as few REST calls as possible.
 
@@ -881,11 +903,10 @@ def batch_update_record_shares_v3(params, updates, expiration_timestamp=None, ch
             rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
                                       rs_type=record_sharing_pb2.Response)
             statuses = [parse_sharing_status(s) for s in rs.updatedSharingStatus]
-            status_by_uid = {s['record_uid']: s for s in statuses}
+            status_lookup = _build_sharing_status_lookup(statuses)
             for u in built:
-                outcomes.append((u, status_by_uid.get(u['record_uid'],
-                                                        {'success': False,
-                                                         'message': 'No status returned'})))
+                outcomes.append((u, _sharing_status_for_email(
+                    status_lookup, params, u['record_uid'], u['email'])))
         except Exception as exc:
             for u in built:
                 outcomes.append((u, {'success': False, 'message': str(exc)}))
@@ -937,11 +958,10 @@ def batch_create_record_shares_v3(params, creates, expiration_timestamp=None, ch
             rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
                                       rs_type=record_sharing_pb2.Response)
             statuses = [parse_sharing_status(s) for s in rs.createdSharingStatus]
-            status_by_uid = {s['record_uid']: s for s in statuses}
+            status_lookup = _build_sharing_status_lookup(statuses)
             for c in built:
-                outcomes.append((c, status_by_uid.get(c['record_uid'],
-                                                        {'success': False,
-                                                         'message': 'No status returned'})))
+                outcomes.append((c, _sharing_status_for_email(
+                    status_lookup, params, c['record_uid'], c['email'])))
         except Exception as exc:
             for c in built:
                 outcomes.append((c, {'success': False, 'message': str(exc)}))
@@ -995,11 +1015,10 @@ def batch_unshare_records_v3(params, revokes, chunk_size=_SHARE_BATCH_SIZE):
             rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
                                       rs_type=record_sharing_pb2.Response)
             statuses = [parse_sharing_status(s) for s in rs.revokedSharingStatus]
-            status_by_uid = {s['record_uid']: s for s in statuses}
+            status_lookup = _build_sharing_status_lookup(statuses)
             for r in built:
-                outcomes.append((r, status_by_uid.get(r['record_uid'],
-                                                        {'success': False,
-                                                         'message': 'No status returned'})))
+                outcomes.append((r, _sharing_status_for_email(
+                    status_lookup, params, r['record_uid'], r['email'])))
         except Exception as exc:
             for r in built:
                 outcomes.append((r, {'success': False, 'message': str(exc)}))
