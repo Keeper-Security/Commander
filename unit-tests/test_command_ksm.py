@@ -637,5 +637,274 @@ class TestKSMUsage(unittest.TestCase):
             mock_super.assert_called_once()
 
 
+def _status_response(rs_class, status, message=''):
+    rs = rs_class()
+    entry = rs.statuses.add()
+    entry.status = status
+    entry.message = message
+    return rs
+
+
+class TestKSMMembershipEntryStatus(unittest.TestCase):
+    """_membership_entry_ok: anything but 'ok' warns with the server message and returns False."""
+
+    def test_missing_response_is_ok(self):
+        self.assertTrue(KSMCommand._membership_entry_ok(None, 'User "x"'))
+
+    def test_empty_statuses_are_ok(self):
+        from keepercommander.proto import APIRequest_pb2
+        self.assertTrue(KSMCommand._membership_entry_ok(APIRequest_pb2.AppUserAddResponse(), 'User "x"'))
+
+    def test_ok_status_is_ok_and_silent(self):
+        from keepercommander.proto import APIRequest_pb2
+        rs = _status_response(APIRequest_pb2.AppUserAddResponse, 'ok')
+        with patch('keepercommander.commands.ksm.logging.warning') as warn:
+            self.assertTrue(KSMCommand._membership_entry_ok(rs, 'User "x"'))
+        warn.assert_not_called()
+
+    def test_failed_status_warns_with_message_and_hint(self):
+        from keepercommander.proto import APIRequest_pb2
+        rs = _status_response(APIRequest_pb2.AppUserAddResponse, 'already_member', 'User is already on this app')
+        with patch('keepercommander.commands.ksm.logging.warning') as warn:
+            self.assertFalse(KSMCommand._membership_entry_ok(rs, 'User "x"', 'Use "app-user update".'))
+        text = warn.call_args[0][0]
+        self.assertIn('User "x"', text)
+        self.assertIn('User is already on this app', text)
+        self.assertIn('Use "app-user update".', text)
+
+    def test_failed_status_without_message_falls_back_to_status_code(self):
+        from keepercommander.proto import APIRequest_pb2
+        rs = _status_response(APIRequest_pb2.AppUserAddResponse, 'user_not_found')
+        with patch('keepercommander.commands.ksm.logging.warning') as warn:
+            self.assertFalse(KSMCommand._membership_entry_ok(rs, 'User "x"'))
+        self.assertIn('user_not_found', warn.call_args[0][0])
+
+
+class TestKSMMembershipCommandStatus(unittest.TestCase):
+    """The six app-user/app-team commands: a failed entry warns, skips the success line and, on add, the auto-share."""
+
+    EMAIL = 'member@example.com'
+    TEAM = 'Team A'
+
+    def setUp(self):
+        from keepercommander import utils
+        self.app_uid = utils.base64_url_encode(bytes(range(16)))
+        self.team_uid = utils.base64_url_encode(bytes(range(16, 32)))
+        self.params = MagicMock()
+        bits = {'can_manage_users': True, 'can_manage_shares': False, 'can_manage_devices': False}
+        self.params.ksm_app_users = {self.app_uid: {self.EMAIL: dict(bits)}}
+        self.params.ksm_app_teams = {self.app_uid: {self.team_uid: dict(bits)}}
+
+    def _run(self, command, rs_class, status, *args):
+        """Runs a KSMCommand method with the lookups and the server call faked. Returns (printed, warn, auto_share)."""
+        app = {'record_uid': self.app_uid, 'record_key_unencrypted': b'k' * 32}
+        patches = [
+            patch('keepercommander.commands.ksm.KSMCommand.get_app_record', return_value=app),
+            patch('keepercommander.commands.ksm.KSMCommand.resolve_enterprise_user_id', return_value=7),
+            patch('keepercommander.commands.ksm.KSMCommand.resolve_team_uid', return_value=self.team_uid),
+            patch('keepercommander.commands.ksm.get_user_public_key', return_value=(MagicMock(), True, None, None)),
+            patch('keepercommander.commands.ksm.crypto.encrypt_ec', return_value=b'encrypted'),
+            patch('keepercommander.commands.ksm.get_team_keys', return_value=MagicMock()),
+            patch('keepercommander.commands.ksm.encrypt_for_team', return_value=(b'encrypted', 2)),
+            patch('keepercommander.commands.ksm.api.communicate_rest',
+                  return_value=_status_response(rs_class, status, 'server says no')),
+        ]
+        auto_share = patch('keepercommander.commands.ksm.KSMCommand._auto_share_app_folders')
+        printer = patch('builtins.print')
+        warner = patch('keepercommander.commands.ksm.logging.warning')
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        mock_share = auto_share.start()
+        self.addCleanup(auto_share.stop)
+        mock_print = printer.start()
+        self.addCleanup(printer.stop)
+        mock_warn = warner.start()
+        self.addCleanup(warner.stop)
+        command(self.params, self.app_uid, *args)
+        printed = ' '.join(str(c[0][0]) for c in mock_print.call_args_list if c[0])
+        return printed, mock_warn, mock_share
+
+    def test_add_user_ok_prints_success_and_auto_shares(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, share = self._run(
+            KSMCommand.add_app_user, APIRequest_pb2.AppUserAddResponse, 'ok', self.EMAIL, True, False, False)
+        self.assertIn('Successfully added user', printed)
+        warn.assert_not_called()
+        share.assert_called_once_with(self.params, self.app_uid, users=[self.EMAIL])
+
+    def test_add_user_already_member_warns_and_skips_auto_share(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, share = self._run(
+            KSMCommand.add_app_user, APIRequest_pb2.AppUserAddResponse, 'already_member',
+            self.EMAIL, True, False, False)
+        self.assertNotIn('Successfully', printed)
+        warn.assert_called_once()
+        self.assertIn('server says no', warn.call_args[0][0])
+        share.assert_not_called()
+
+    def test_add_team_ok_prints_success_and_auto_shares(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, share = self._run(
+            KSMCommand.add_app_team, APIRequest_pb2.AppTeamAddResponse, 'ok', self.TEAM, True, False, False)
+        self.assertIn('Successfully added team', printed)
+        warn.assert_not_called()
+        share.assert_called_once_with(self.params, self.app_uid, teams=[self.team_uid])
+
+    def test_add_team_already_member_warns_and_skips_auto_share(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, share = self._run(
+            KSMCommand.add_app_team, APIRequest_pb2.AppTeamAddResponse, 'already_member',
+            self.TEAM, True, False, False)
+        self.assertNotIn('Successfully', printed)
+        warn.assert_called_once()
+        share.assert_not_called()
+
+    def test_update_user_ok_and_not_a_member(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, _ = self._run(
+            KSMCommand.update_app_user, APIRequest_pb2.AppUserUpdateResponse, 'ok', self.EMAIL, None, 'on', None)
+        self.assertIn('Successfully updated user', printed)
+        warn.assert_not_called()
+        printed, warn, _ = self._run(
+            KSMCommand.update_app_user, APIRequest_pb2.AppUserUpdateResponse, 'not_a_member',
+            self.EMAIL, None, 'on', None)
+        self.assertNotIn('Successfully', printed)
+        warn.assert_called_once()
+
+    def test_update_team_ok_and_not_a_member(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, _ = self._run(
+            KSMCommand.update_app_team, APIRequest_pb2.AppTeamUpdateResponse, 'ok', self.TEAM, None, None, 'on')
+        self.assertIn('Successfully updated team', printed)
+        warn.assert_not_called()
+        printed, warn, _ = self._run(
+            KSMCommand.update_app_team, APIRequest_pb2.AppTeamUpdateResponse, 'not_a_member',
+            self.TEAM, None, None, 'on')
+        self.assertNotIn('Successfully', printed)
+        warn.assert_called_once()
+
+    def test_remove_user_ok_and_not_a_member(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, _ = self._run(
+            KSMCommand.remove_app_user, APIRequest_pb2.AppUserRemoveResponse, 'ok', self.EMAIL)
+        self.assertIn('Successfully removed user', printed)
+        warn.assert_not_called()
+        printed, warn, _ = self._run(
+            KSMCommand.remove_app_user, APIRequest_pb2.AppUserRemoveResponse, 'not_a_member', self.EMAIL)
+        self.assertNotIn('Successfully', printed)
+        warn.assert_called_once()
+
+    def test_remove_team_ok_and_not_a_member(self):
+        from keepercommander.proto import APIRequest_pb2
+        printed, warn, _ = self._run(
+            KSMCommand.remove_app_team, APIRequest_pb2.AppTeamRemoveResponse, 'ok', self.TEAM)
+        self.assertIn('Successfully removed team', printed)
+        warn.assert_not_called()
+        printed, warn, _ = self._run(
+            KSMCommand.remove_app_team, APIRequest_pb2.AppTeamRemoveResponse, 'not_a_member', self.TEAM)
+        self.assertNotIn('Successfully', printed)
+        warn.assert_called_once()
+
+    def test_update_user_keeps_bits_that_are_not_passed(self):
+        """Omitted options keep the member's current bits from the local cache."""
+        from keepercommander.proto import APIRequest_pb2
+        sent = {}
+
+        def capture(params, rq, endpoint, rs_type=None):
+            sent['entry'] = rq.users[0]
+            return _status_response(APIRequest_pb2.AppUserUpdateResponse, 'ok')
+
+        app = {'record_uid': self.app_uid}
+        with patch('keepercommander.commands.ksm.KSMCommand.get_app_record', return_value=app), \
+             patch('keepercommander.commands.ksm.KSMCommand.resolve_enterprise_user_id', return_value=7), \
+             patch('keepercommander.commands.ksm.api.communicate_rest', side_effect=capture), \
+             patch('builtins.print'):
+            KSMCommand.update_app_user(self.params, self.app_uid, self.EMAIL, None, 'on', None)
+        self.assertTrue(sent['entry'].canManageUsers, 'can_manage_users was not passed, so it keeps its value')
+        self.assertTrue(sent['entry'].canManageShares, 'can_manage_shares was passed on')
+        self.assertFalse(sent['entry'].canManageDevices)
+
+
+class TestKSMAutoShareFolders(unittest.TestCase):
+    """_auto_share_app_folders: which folders are shared, and how."""
+
+    def setUp(self):
+        from keepercommander import utils
+        from keepercommander.proto import APIRequest_pb2
+        self.folder_a = bytes(range(16))
+        self.folder_b = bytes(range(16, 32))
+        self.record = bytes(range(32, 48))
+        self.uid_a = utils.base64_url_encode(self.folder_a)
+        self.uid_b = utils.base64_url_encode(self.folder_b)
+
+        def share(uid, share_type):
+            s = MagicMock()
+            s.secretUid = uid
+            s.shareType = share_type
+            return s
+
+        self.shares = [share(self.folder_a, APIRequest_pb2.SHARE_TYPE_FOLDER),
+                       share(self.folder_b, APIRequest_pb2.SHARE_TYPE_FOLDER),
+                       share(self.record, APIRequest_pb2.SHARE_TYPE_RECORD)]
+        self.params = MagicMock()
+        self.params.shared_folder_cache = {self.uid_a: {'shared_folder_uid': self.uid_a},
+                                           self.uid_b: {'shared_folder_uid': self.uid_b}}
+
+    def _run(self, **kwargs):
+        app_info = MagicMock()
+        app_info.shares = self.shares
+        with patch('keepercommander.commands.ksm.KSMCommand.get_app_info', return_value=[app_info]), \
+             patch('keepercommander.commands.register.ShareFolderCommand.prepare_request') as prepare, \
+             patch('keepercommander.commands.register.ShareFolderCommand.send_requests') as send:
+            KSMCommand._auto_share_app_folders(self.params, 'appUid', **kwargs)
+        return prepare, send
+
+    def test_only_folder_shares_are_shared(self):
+        prepare, _ = self._run(users=['member@example.com'])
+        shared = {c[0][2]['shared_folder_uid'] for c in prepare.call_args_list}
+        self.assertEqual({self.uid_a, self.uid_b}, shared, 'the record share must not be sent')
+
+    def test_folders_missing_from_the_cache_are_skipped(self):
+        del self.params.shared_folder_cache[self.uid_b]
+        prepare, _ = self._run(users=['member@example.com'])
+        self.assertEqual(1, prepare.call_count)
+        self.assertEqual(self.uid_a, prepare.call_args[0][2]['shared_folder_uid'])
+
+    def test_grant_is_read_only_regardless_of_folder_defaults(self):
+        prepare, _ = self._run(users=['member@example.com'])
+        kwargs = prepare.call_args[0][1]
+        self.assertEqual('grant', kwargs['action'])
+        self.assertEqual('off', kwargs['manage_records'])
+        self.assertEqual('off', kwargs['manage_users'])
+
+    def test_users_and_teams_are_passed_to_the_request(self):
+        prepare, _ = self._run(users=['member@example.com'])
+        self.assertEqual(['member@example.com'], prepare.call_args[0][3])
+        self.assertEqual([], prepare.call_args[0][4])
+        prepare, _ = self._run(teams=['teamUid'])
+        self.assertEqual([], prepare.call_args[0][3])
+        self.assertEqual(['teamUid'], prepare.call_args[0][4])
+
+    def test_requests_are_sent_in_one_batch(self):
+        _, send = self._run(users=['member@example.com'])
+        send.assert_called_once()
+        batches = send.call_args[0][1]
+        self.assertEqual(1, len(batches))
+        self.assertEqual(2, len(batches[0]), 'one request per linked folder')
+
+    def test_no_linked_folders_sends_nothing(self):
+        self.shares = [s for s in self.shares if s.secretUid == self.record]
+        prepare, send = self._run(users=['member@example.com'])
+        prepare.assert_not_called()
+        send.assert_not_called()
+
+    def test_linked_folders_not_in_the_cache_send_nothing(self):
+        self.params.shared_folder_cache = {}
+        prepare, send = self._run(users=['member@example.com'])
+        prepare.assert_not_called()
+        send.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
