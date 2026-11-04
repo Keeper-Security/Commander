@@ -343,7 +343,6 @@ class TestClassicFolderConversionTargetCreation(TestCase):
                         {source_uid: node},
                         {source_uid: 1},
                         {source_uid: None},
-                        {source_uid: source_uid if isinstance(node, SharedFolderNode) else None},
                         destination_uid=destination_uid,
                         show_progress=False,
                     )
@@ -353,7 +352,7 @@ class TestClassicFolderConversionTargetCreation(TestCase):
                     captured_specs[0]['inherit_permissions'], expected_inheritance)
                 self.assertEqual(captured_specs[0]['parent_uid'], destination_uid)
 
-    def test_classic_shared_boundary_does_not_inherit_from_generated_private_parent(self):
+    def test_classic_shared_boundary_inherits_destination_through_private_parent(self):
         private_uid, shared_uid = _uid(), _uid()
         private = UserFolderNode()
         private.uid, private.name = private_uid, 'Private'
@@ -381,14 +380,13 @@ class TestClassicFolderConversionTargetCreation(TestCase):
                 {private_uid: private, shared_uid: shared},
                 {private_uid: 1, shared_uid: 2},
                 {private_uid: None, shared_uid: private_uid},
-                {private_uid: None, shared_uid: shared_uid},
                 destination_uid=_uid(),
                 show_progress=False,
             )
 
         self.assertEqual(
             [spec['inherit_permissions'] for spec in captured_specs],
-            [True, False])
+            [True, True])
 
     def test_duplicate_names_get_distinct_generated_folder_uids(self):
         first_uid, second_uid = _uid(), _uid()
@@ -418,7 +416,6 @@ class TestClassicFolderConversionTargetCreation(TestCase):
                 params,
                 nodes,
                 {first_uid: 1, second_uid: 1},
-                {first_uid: None, second_uid: None},
                 {first_uid: None, second_uid: None},
                 destination_uid=None,
                 show_progress=False,
@@ -496,9 +493,11 @@ class TestPamRecordConversionRestrictions(TestCase):
             [record['record_uid'] for record in skipped], pam_uids)
 
     def test_folder_preview_lists_each_skipped_pam_record(self):
-        folder_uid = _uid()
+        folder_uid, destination_uid = _uid(), _uid()
         folder = UserFolderNode()
         folder.uid, folder.name = folder_uid, 'PAM Folder'
+        params = SimpleNamespace(
+            nested_share_folders={destination_uid: {'name': 'Destination'}})
         skipped = [
             {'record_uid': _uid(), 'record_type': 'pamMachine', 'title': 'Machine'},
             {'record_uid': _uid(), 'record_type': 'pamUser', 'title': 'User'},
@@ -507,15 +506,48 @@ class TestPamRecordConversionRestrictions(TestCase):
         output = io.StringIO()
         with redirect_stdout(output):
             NestedShareFolderConvertCommand._print_preview(
-                {folder_uid: folder}, {folder_uid: []}, folder, None, 5, [],
+                params, {folder_uid: folder}, {folder_uid: []}, folder,
+                destination_uid, 5, [],
                 {folder_uid: 1}, {folder_uid: 1}, skipped)
 
         self.assertIn('PAM records skipped: 2', output.getvalue())
+        self.assertIn(
+            f'Destination: Destination ({destination_uid})', output.getvalue())
         self.assertIn('Machine', output.getvalue())
         self.assertIn('pamMachine', output.getvalue())
         self.assertIn('User', output.getvalue())
         self.assertIn('pamUser', output.getvalue())
         self.assertIn('source tree will be retained', output.getvalue())
+        self.assertLess(
+            output.getvalue().index('Source folders:'),
+            output.getvalue().index('Summary'))
+        self.assertLess(
+            output.getvalue().index('Summary'),
+            output.getvalue().index('Folders: 1'))
+
+    def test_folder_conversion_output_escapes_terminal_control_characters(self):
+        folder_uid, destination_uid, target_uid = _uid(), _uid(), _uid()
+        unsafe_name = 'Private\n\x1b[2J'
+        escaped_name = r'Private\u000a\u001b[2J'
+        folder = UserFolderNode()
+        folder.uid, folder.name = folder_uid, unsafe_name
+        params = SimpleNamespace(
+            nested_share_folders={destination_uid: {'name': unsafe_name}})
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            NestedShareFolderConvertCommand._print_preview(
+                params, {folder_uid: folder}, {folder_uid: []}, folder,
+                destination_uid, 5, [], {folder_uid: 1}, {folder_uid: 1}, [])
+            NestedShareFolderConvertCommand._print_uid_mapping(
+                {folder_uid: folder}, {folder_uid: target_uid})
+
+        rendered = output.getvalue()
+        self.assertIn(f'Source: {escaped_name} ({folder_uid})', rendered)
+        self.assertIn(f'Destination: {escaped_name} ({destination_uid})', rendered)
+        self.assertIn(f'{escaped_name} ({folder_uid}) -> {target_uid}', rendered)
+        self.assertNotIn('\x1b[2J', rendered)
+        self.assertNotIn(unsafe_name, rendered)
 
     def test_record_command_skips_pam_but_converts_selected_classic_records(self):
         pam_uid, regular_uid = _uid(), _uid()
@@ -545,6 +577,10 @@ class TestPamRecordConversionRestrictions(TestCase):
 
         convert_records.assert_called_once_with(
             params, record_uids=[regular_uid], folder_uid=None)
+        self.assertIn('[1/2]', output.getvalue())
+        self.assertIn('Converting 1 Classic record(s)...', output.getvalue())
+        self.assertIn('[2/2]', output.getvalue())
+        self.assertIn('Processing conversion results...', output.getvalue())
         self.assertIn(pam_uid, output.getvalue())
         self.assertIn('pamMachine', output.getvalue())
 

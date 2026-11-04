@@ -94,6 +94,13 @@ def _record_title(params, record_uid):
     return title
 
 
+def _escape_non_printable(value):
+    return ''.join(
+        char if char.isprintable() else f'\\u{ord(char):04x}'
+        for char in str(value)
+    )
+
+
 def _record_type(params, record_uid):
     record = vault.KeeperRecord.load(params, record_uid)
     return getattr(record, 'record_type', '') if record else ''
@@ -202,7 +209,8 @@ class NestedShareConvertCommand(Command):
             folder_data = (getattr(params, 'nested_share_folders', {}) or {}).get(folder_uid) or {}
             folder_name = folder_data.get('name') or folder_uid
             if folder_name != folder_uid:
-                folder_description = f'{folder_name} ({folder_uid})'
+                folder_description = (
+                    f'{_escape_non_printable(folder_name)} ({folder_uid})')
         print(
             f'\n{bcolors.WARNING}Warning: Conversion is permanent. '
             'Classic shared-folder membership and additional Classic folder '
@@ -212,10 +220,8 @@ class NestedShareConvertCommand(Command):
         for record_uid in record_uids:
             title = _record_title(params, record_uid)
             if title:
-                quoted_title = json.dumps(title, ensure_ascii=False)
-                quoted_title = ''.join(
-                    char if char.isprintable() else f'\\u{ord(char):04x}'
-                    for char in quoted_title)
+                quoted_title = _escape_non_printable(
+                    json.dumps(title, ensure_ascii=False))
                 label = f'{quoted_title} ({record_uid})'
             else:
                 label = record_uid
@@ -229,6 +235,8 @@ class NestedShareConvertCommand(Command):
                 return
 
         with command_error_handler('nsf-convert-record'):
+            _print_conversion_step(
+                1, 2, f'Converting {len(record_uids)} Classic record(s)...')
             results = _nsf.convert_records_v3(
                 params, record_uids=record_uids, folder_uid=folder_uid)
         if not results:
@@ -254,6 +262,7 @@ class NestedShareConvertCommand(Command):
                 continue
             result_by_uid[result_uid] = result
 
+        _print_conversion_step(2, 2, 'Processing conversion results...')
         if duplicate_uids:
             logging.warning(
                 'The conversion endpoint returned duplicate results for %d record(s).',
@@ -281,11 +290,13 @@ class NestedShareConvertCommand(Command):
             if result['success']:
                 converted += 1
                 logging.info(
-                    'Classic record "%s" converted to a Nested Share Record.', record_uid)
+                    '  ✓ Classic record "%s" converted to a Nested Share Record.',
+                    record_uid)
             else:
                 message = _STATUS_MESSAGES.get(status, status.replace('_', ' ').title())
                 logging.warning(
-                    'Classic record "%s" was not converted: %s.', record_uid, message)
+                    '  ⚠ Classic record "%s" was not converted: %s.',
+                    record_uid, message)
                 logging.debug('Conversion status for record %s: %s', record_uid, status)
 
         if converted or missing_results or unexpected_result_count:
@@ -567,7 +578,20 @@ def _read_applications(params):
 
 
 def _classic_folder_label(node):
-    return f'{node.name} ({node.uid})'
+    return f'{_escape_non_printable(node.name)} ({node.uid})'
+
+
+def _nested_share_folder_label(params, folder_uid):
+    if not folder_uid:
+        return 'Vault (root)'
+    folder = (getattr(params, 'nested_share_folders', {}) or {}).get(folder_uid) or {}
+    name = folder.get('name') or folder_uid
+    name = _escape_non_printable(name)
+    return f'{name} ({folder_uid})' if name != folder_uid else folder_uid
+
+
+def _print_conversion_step(step, total_steps, message):
+    print(f'\n{bcolors.OKBLUE}[{step}/{total_steps}]{bcolors.ENDC} {message}')
 
 
 class NestedShareFolderConvertCommand(Command):
@@ -629,7 +653,7 @@ class NestedShareFolderConvertCommand(Command):
 
         self._validate_folder_keys(params, destination_uid)
         self._print_preview(
-            nodes, records_to_convert_by_folder, source_node, destination_uid,
+            params, nodes, records_to_convert_by_folder, source_node, destination_uid,
             available_depth, source_record_uids, depths, target_levels,
             skipped_pam_records)
 
@@ -660,14 +684,17 @@ class NestedShareFolderConvertCommand(Command):
                 'Application keys are unavailable for linked KSM application(s): '
                 + ', '.join(missing_app_keys[:5]))
 
+        _print_conversion_step(1, 6, 'Creating NSF folder structure...')
         target_uids = self._create_target_tree(
             params, nodes, target_levels, target_parent_sources,
-            scope_by_folder, destination_uid, show_progress=True)
+            destination_uid, show_progress=True)
         params.sync_data = True
-        self._log_uid_mapping(nodes, target_uids)
+        self._print_uid_mapping(nodes, target_uids)
 
         # Apply folder-level ACLs before record conversion so converted
         # records inherit the intended access from their destination folders.
+        _print_conversion_step(
+            2, 6, 'Migrating folder permissions and application shares...')
         try:
             self._grant_scope_access(params, scope_grants, scope_accessors, target_uids)
             self._grant_folder_app_shares(
@@ -679,11 +706,16 @@ class NestedShareFolderConvertCommand(Command):
                 f'NSF folders were created, but permission migration failed; '
                 f'the Classic tree was left intact. {exc}')
 
+        _print_conversion_step(
+            3, 6,
+            f'Converting {len(source_record_uids)} supported Classic record(s)...')
         converted_uids = self._convert_records(
             params, source_record_uids, placements, target_uids)
         if converted_uids:
             sync_down.sync_down(params)
 
+        _print_conversion_step(
+            4, 6, 'Preserving additional record placements and app shares...')
         link_failures = self._create_additional_placements(
             params, converted_uids, placements, target_uids)
         if link_failures:
@@ -694,6 +726,8 @@ class NestedShareFolderConvertCommand(Command):
             params, record_app_shares, converted_uids, applications)
         for failure in app_share_failures:
             logging.warning('Could not preserve application record share: %s', failure)
+
+        _print_conversion_step(5, 6, 'Verifying conversion results...')
         sync_down.sync_down(params)
 
         conversion_complete = (
@@ -721,22 +755,30 @@ class NestedShareFolderConvertCommand(Command):
 
         params.sync_data = True
         if not conversion_complete:
-            logging.warning(
-                'Folder conversion was partial. The Classic source tree was not deleted.')
+            print(
+                f'\n{bcolors.WARNING}Conversion incomplete. '
+                f'The Classic source tree was retained.{bcolors.ENDC}')
             return
+        print(f'\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Conversion complete{bcolors.ENDC}')
+        print(f'  NSF folders created: {len(target_uids)}')
+        print(f'  Classic records converted: {len(converted_uids)}')
+        print(f'  PAM records skipped: {len(skipped_pam_records)}')
         if skipped_pam_records:
-            logging.warning(
-                'Skipped %d PAM record(s); they remain in the Classic source tree, '
-                'which was retained.', len(skipped_pam_records))
+            _print_conversion_step(
+                6, 6, 'Keeping the Classic source tree because PAM records were skipped.')
+            print(
+                f'  {bcolors.WARNING}Classic source tree retained because skipped '
+                f'PAM records remain in it.{bcolors.ENDC}')
             return
 
         if not kwargs.get('force'):
             if user_choice(
                     'Conversion succeeded. Do you want to delete the Classic source tree?',
                     'yn', default='n').lower() != 'y':
-                logging.info('Classic source tree retained.')
+                _print_conversion_step(6, 6, 'Keeping the Classic source tree.')
                 return
 
+        _print_conversion_step(6, 6, 'Deleting the Classic source tree...')
         self._delete_classic_source(params, source_uid)
 
     @staticmethod
@@ -864,20 +906,20 @@ class NestedShareFolderConvertCommand(Command):
         return folder_shares, record_shares
 
     @staticmethod
-    def _print_preview(nodes, records_by_folder, source_node, destination_uid,
+    def _print_preview(params, nodes, records_by_folder, source_node, destination_uid,
                        available_depth, record_uids, source_depths, target_levels,
                        skipped_pam_records):
-        destination = destination_uid or 'Vault (root)'
+        destination = _nested_share_folder_label(params, destination_uid)
         print(
-            f'\n{bcolors.WARNING}Warning: Folder conversion is permanent. '
+            f'\n{"=" * 72}\n'
+            f'{bcolors.BOLD}Classic-to-NSF folder conversion preview{bcolors.ENDC}\n'
+            f'{"=" * 72}\n'
+            f'{bcolors.WARNING}Warning: Folder conversion is permanent. '
             'The Classic folder tree will only be deleted after a fully successful '
             'conversion and confirmation (unless --force is used).'
             f'{bcolors.ENDC}')
         print(f'Source: {_classic_folder_label(source_node)}')
         print(f'Destination: {destination}')
-        print(
-            f'Folders: {len(nodes)}; records to convert: {len(record_uids)}; '
-            f'PAM records skipped: {len(skipped_pam_records)}')
         _print_skipped_pam_records(skipped_pam_records)
         if skipped_pam_records:
             print(
@@ -892,11 +934,19 @@ class NestedShareFolderConvertCommand(Command):
         print('Source folders:')
         for folder_uid, node in nodes.items():
             record_count = len(records_by_folder.get(folder_uid) or [])
-            print(f'  {node.name} ({folder_uid}) — {record_count} record(s)')
+            print(
+                f'  - {_escape_non_printable(node.name)} ({folder_uid}) — '
+                f'{record_count} record(s)')
+        print()
+        print(f'{bcolors.BOLD}Summary{bcolors.ENDC}')
+        print(f'  Folders: {len(nodes)}')
+        print(f'  Records to convert: {len(record_uids)}')
+        print(f'  PAM records skipped: {len(skipped_pam_records)}')
+        print(f'{"=" * 72}\n')
 
     @staticmethod
     def _create_target_tree(params, nodes, target_levels, target_parent_sources,
-                            scope_by_folder, destination_uid, show_progress):
+                            destination_uid, show_progress):
         if getattr(params, 'nested_share_folders', None) is None:
             params.nested_share_folders = {}
         target_uids = {}
@@ -914,18 +964,13 @@ class NestedShareFolderConvertCommand(Command):
                         target_uids[parent_source_uid] if parent_source_uid
                         else destination_uid
                     )
-                    parent_scope = (
-                        scope_by_folder.get(parent_source_uid) if parent_source_uid else None)
-                    inherit_permissions = bool(
-                        parent_uid and (
-                            parent_source_uid is None or
-                            parent_scope == scope_by_folder.get(source_uid)
-                        ))
                     specs.append({
                         'name': source_node.name,
                         'parent_uid': parent_uid,
                         'color': getattr(source_node, 'color', None),
-                        'inherit_permissions': inherit_permissions,
+                        # NSF permissions inherit along the reconstructed tree;
+                        # each Classic share boundary is granted separately.
+                        'inherit_permissions': bool(parent_uid),
                     })
 
                 # Ensure an uncertain transport failure triggers a refresh;
@@ -949,7 +994,8 @@ class NestedShareFolderConvertCommand(Command):
                 for source_uid, result in zip(chunk, results):
                     if not result.get('success'):
                         failures.append(
-                            f"{nodes[source_uid].name} ({source_uid}): "
+                            f"{_escape_non_printable(nodes[source_uid].name)} "
+                            f"({source_uid}): "
                             f"{result.get('message') or result.get('status')}")
                         continue
                     target_uid = result['folder_uid']
@@ -975,17 +1021,18 @@ class NestedShareFolderConvertCommand(Command):
                         'tree was left intact. ' + '; '.join(failures[:5]))
 
                 if show_progress:
-                    logging.info(
-                        'Created %d NSF folder(s) at target depth %d.',
-                        len(chunk), target_level)
+                    print(
+                        f'  {bcolors.OKGREEN}✓{bcolors.ENDC} Created '
+                        f'{len(chunk)} NSF folder(s) at target depth {target_level}.')
         return target_uids
 
     @staticmethod
-    def _log_uid_mapping(nodes, target_uids):
-        logging.info('Classic-to-NSF folder UID mapping:')
+    def _print_uid_mapping(nodes, target_uids):
+        print('  Folder UID mapping:')
         for source_uid, target_uid in target_uids.items():
-            logging.info(
-                '  %s (%s) -> %s', nodes[source_uid].name, source_uid, target_uid)
+            print(
+                f'    {_escape_non_printable(nodes[source_uid].name)} '
+                f'({source_uid}) -> {target_uid}')
 
     @staticmethod
     def _grant_scope_access(params, scope_grants, scope_accessors, target_uids):
@@ -1088,12 +1135,12 @@ class NestedShareFolderConvertCommand(Command):
                     elif result.get('success'):
                         converted.add(record_uid)
                         logging.info(
-                            'Classic record %s converted to a Nested Share Record.',
+                            '  ✓ Classic record %s converted to a Nested Share Record.',
                             record_uid)
                     else:
                         status = result.get('status') or 'unknown error'
                         logging.warning(
-                            'Classic record %s was not converted: %s.',
+                            '  ⚠ Classic record %s was not converted: %s.',
                             record_uid, status.replace('_', ' ').title())
         return converted
 
