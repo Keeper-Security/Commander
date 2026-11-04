@@ -312,7 +312,7 @@ def get_share_objects(params):  # type: (KeeperParams) -> Dict[str, Dict[str, An
             enterprise=rs.shareEnterpriseUsers,
             mc=rs.shareMCEnterpriseUsers,
         )
-        get_users = lambda rs_data, cat: {su.username: dict(name=su.fullname, is_sa=su.isShareAdmin, enterprise_id=su.enterpriseId, status=su.status, category=cat) for su in rs_data}
+        get_users = lambda rs_data, cat: {su.username: dict(name=su.fullname, is_sa=su.isShareAdmin, enterprise_id=su.enterpriseId, status=su.status, category=cat, user_id=su.userId) for su in rs_data}
         users = reduce(
             lambda a, b: {**a, **b},
             [get_users(users, cat) for cat, users in users_by_type.items()],
