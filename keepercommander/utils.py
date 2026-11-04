@@ -192,7 +192,10 @@ def datetime_to_millis(dt):   # type: (datetime.datetime) -> int
 
 
 def base64_url_decode(s):       # type: (str) -> bytes
-    return base64.urlsafe_b64decode(s + '==')
+    # Keeper APIs return both URL-safe Base64 (-_) and standard Base64 (+/).
+    # Python 3.15 warns that the standard alphabet is invalid for
+    # urlsafe_b64decode, so normalize the URL-safe characters
+    return base64.b64decode(s.replace('-', '+').replace('_', '/') + '==')
 
 
 def base64_url_encode(b):       # type: (bytes) -> str

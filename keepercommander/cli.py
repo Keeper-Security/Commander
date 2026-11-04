@@ -70,6 +70,7 @@ command_info['quit'] = 'Exit the shell'
 aliases['c'] = 'clear'
 aliases['h'] = 'history'
 aliases['q'] = 'quit'
+aliases['exit'] = 'quit'
 
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
@@ -453,8 +454,8 @@ def do_command(params, command_line):
             print("  -h, --help            show this help message and exit")
             print("  --file=PATH           write DEBUG logs to PATH (does not enable terminal DEBUG)")
             return
-        elif command_line.lower().startswith('q ') or command_line.lower().startswith('quit '):
-            print("usage: quit|q [-h]")
+        elif command_line.lower().startswith(('q ', 'quit ', 'exit ')):
+            print("usage: quit|q|exit [-h]")
             print("\nExit commander")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
@@ -925,7 +926,7 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
                     if tmer:
                         tmer.cancel()
 
-            if command.lower() == 'q' or command.lower() == "quit":
+            if command.lower() in ('q', 'quit', 'exit'):
                 break
 
             suppress_errno = False
