@@ -17,7 +17,7 @@ Commander supports importing secrets from Thycotic Secret Server (now known as D
 
 ## Installation
 
-Thycotic import uses the same Python dependencies as Commander (`requests`, and `tabulate` when using team listing features). Install Commander from the [repository root README](../../../README.md#linux--python-using-pip) (pip package or source with `requirements.txt`).
+Install Commander from the [repository root README](../../../README.md#linux--python-using-pip) (pip package or source with `requirements.txt`).
 
 ## Starting Commander
 
