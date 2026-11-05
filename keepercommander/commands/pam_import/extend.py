@@ -23,6 +23,8 @@ from typing import Any, Dict, Optional, List
 from ...loginv3 import CommonHelperMethods
 url_safe_str_to_bytes = CommonHelperMethods.url_safe_str_to_bytes
 
+from .batch_pipeline import BatchPamImportEngine, assign_uids
+from .import_tail import run_import_tail
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
     PamUserObject,
@@ -32,32 +34,23 @@ from .base import (
     PamDirectoryObject,
     PamRemoteBrowserObject,
     PamRotationParams,
-    add_pam_scripts,
     find_external_user,
     find_user,
     get_admin_credential,
     get_launch_credential,
     get_sftp_attribute,
-    is_admin_external,
     mark_local_users_allowing_empty_password_for_external_admin,
-    parse_command_options,
     resolve_domain_admin,
     resolve_script_creds,
     set_launch_record_uid,
     set_sftp_uid,
     set_user_record_uid
 )
-from .keeper_ai_settings import (
-    set_resource_jit_settings,
-    set_resource_keeper_ai_settings,
-    refresh_meta_to_latest,
-    refresh_link_to_config_to_latest,
-)
-from .workflow_apply import apply_workflow, validate_workflow_principals
+from .port_forward_validation import preflight_port_forward
+from .workflow_apply import validate_workflow_principals
 from .nsf_helpers import (
     build_folder_tree,
     create_nsf_subfolder,
-    extend_create_record,
     find_pam_configuration,
     get_folder_record_uids,
     get_ksm_app_folders,
@@ -66,8 +59,6 @@ from .nsf_helpers import (
     sync_down_preserving_nsf_keys,
 )
 from .record_loader import load_pam_record
-from ...keeper_dag import EdgeType
-from ...keeper_dag.types import RefType
 from ..base import Command
 from ..ksm import KSMCommand
 from ..pam import gateway_helper
@@ -75,7 +66,6 @@ from ..pam.config_helper import configuration_controller_get
 from ..pam.vault_target import is_nested_share_folder, is_pam_nsf_record, update_pam_record
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-from ..tunnel_and_connections import PAMTunnelEditCommand
 from ... import api, crypto, utils, vault, record_management
 from ... import enterprise as _enterprise_module
 from ...display import bcolors
@@ -485,6 +475,10 @@ class PAMProjectExtendCommand(Command):
             logging.warning(f"{bcolors.WARNING}WARNING: Import JSON contains extra data - "
                             f"""`extend` command uses only "pam_data": {{ }} {bcolors.ENDC}""")
 
+        # pre-flight: validate port_forward (Keeper proxy gates etc.) before ANY vault write - runs in dry-run too
+        if not preflight_port_forward(pam_data, "pam project extend", bcolors):
+            return
+
         if dry_run:
             print("[DRY RUN] No changes will be made. This is a simulation only.")
 
@@ -547,7 +541,7 @@ class PAMProjectExtendCommand(Command):
 
         project = {
             "data": {"pam_data": pam_data},
-            "options": {"dry_run": dry_run},
+            "options": {"dry_run": dry_run, "file_name": file_name},
             "ksm_app_uid": ksmapp_uid,
             "ksm_shared_folders": ksm_shared_folders,
             "folders": folders,
@@ -574,6 +568,8 @@ class PAMProjectExtendCommand(Command):
         res_folder_uid = (project.get("folders") or {}).get("resources_folder_uid", "")
         usr_folder_uid = (project.get("folders") or {}).get("users_folder_uid", "")
 
+        # Explicit folder_path from JSON wins (via path_to_folder_uid).
+        # When unspecified: resources → Resources folder; pamUser/login → Users.
         for o in chain(project.get("mapped_resources", []), project.get("mapped_users", [])):
             if getattr(o, "_extend_tag", None) != "new":
                 continue
@@ -592,6 +588,17 @@ class PAMProjectExtendCommand(Command):
         validate_workflow_principals(params, new_rscs)
 
         if dry_run:
+            engine = BatchPamImportEngine(
+                params, project,
+                project.get("mapped_users") or [],
+                project.get("mapped_resources") or [],
+                users_folder_uid=usr_folder_uid,
+                resources_folder_uid=res_folder_uid,
+                pam_cfg_uid=(project.get("pam_config") or {}).get("pam_config_uid", ""),
+                extend_mode=True,
+            )
+            plan = engine.simulate()
+            print(json.dumps(plan, indent=2))
             print("[DRY RUN COMPLETE] No changes were made. All actions were validated but not executed.")
             return
         self.process_data(params, project)
@@ -971,6 +978,12 @@ class PAMProjectExtendCommand(Command):
             if hasattr(mach, "users") and isinstance(mach.users, list):
                 for usr in mach.users:
                     resolve_one(usr, mach)
+
+        extend_objects = list(chain(users, resources))
+        for mach in resources:
+            if hasattr(mach, "users") and isinstance(mach.users, list):
+                extend_objects.extend(mach.users)
+        assign_uids(extend_objects, only_new=True)
 
         autogenerated_titles = []
         for o in chain(resources, users):
@@ -1432,12 +1445,7 @@ class PAMProjectExtendCommand(Command):
 
 
     def process_data(self, params, project):
-        """Extend: only create records tagged new; use resolved_folder_uid; for existing machines only add new users."""
-        if project.get("options", {}).get("dry_run", False) is True:
-            return
-        # Local import to avoid circular import with discoveryrotation
-        from ..discoveryrotation import PAMCreateRecordRotationCommand
-
+        """Extend using the batch engine for records tagged as new."""
         resources = project.get("mapped_resources") or []
         users = project.get("mapped_users") or []
         pam_cfg_uid = (project.get("pam_config") or {}).get("pam_config_uid", "")
@@ -1463,201 +1471,24 @@ class PAMProjectExtendCommand(Command):
             resolve_domain_admin(pce, users_for_domain_admin)
 
         print("Started importing data...")
+
+        engine = BatchPamImportEngine(
+            params, project, users, resources,
+            users_folder_uid=shfusr,
+            resources_folder_uid=shfres,
+            pam_cfg_uid=pam_cfg_uid,
+            extend_mode=True,
+        )
+        if not engine.run():
+            print(f"{bcolors.FAIL}Extend import aborted due to batch vault/DAG failure.{bcolors.ENDC}")
+            return
+
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True,
                          transmission_key=transmission_key)
-        pte = PAMTunnelEditCommand()
-        prc = PAMCreateRecordRotationCommand()
-        pdelta = 10
 
-        new_users = [u for u in users if getattr(u, "_extend_tag", None) == "new"]
-        if new_users:
-            logging.warning(f"Processing external users: {len(new_users)}")
-            for n, user in enumerate(new_users):
-                folder_uid = getattr(user, "resolved_folder_uid", None) or shfusr
-                extend_create_record(params, user, folder_uid)
-                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
-                    from .nsf_helpers import sync_down_preserving_nsf_keys
-                    sync_down_preserving_nsf_keys(params)
-                if n % pdelta == 0:
-                    print(f"{n}/{len(new_users)}")
-            print(f"{len(new_users)}/{len(new_users)}\n")
-
-        resources_sorted = sorted(resources, key=lambda r: (getattr(r, "type", "") or "").lower() != "pamdirectory")
-        new_resources = [r for r in resources_sorted if getattr(r, "_extend_tag", None) == "new"]
-        existing_resources = [r for r in resources_sorted if getattr(r, "_extend_tag", None) == "existing"]
-        if new_resources:
-            logging.warning(f"Processing resources: {len(new_resources)}")
-        for n, mach in enumerate(new_resources):
-            if n % pdelta == 0:
-                print(f"{n}/{len(new_resources)}")
-            folder_uid = getattr(mach, "resolved_folder_uid", None) or shfres
-            admin_uid = get_admin_credential(mach, True)
-            extend_create_record(params, mach, folder_uid)
-            # NSF creates with sync_after=False; pam tunnel edit resolves from
-            # record_cache / NSF caches, so sync when the new UID is not loaded yet.
-            if mach.uid and mach.uid not in (getattr(params, 'record_cache', None) or {}):
-                from .nsf_helpers import sync_down_preserving_nsf_keys
-                sync_down_preserving_nsf_keys(params)
-            tdag.link_resource_to_config(mach.uid)
-            if isinstance(mach, PamRemoteBrowserObject):
-                args = parse_command_options(mach, True)
-                pte.execute(params, config=pam_cfg_uid, silent=True, **args)
-                args = parse_command_options(mach, False)
-                if args.get("remote_browser_isolation", False) is True:
-                    args["connections"] = True
-                args["v_type"] = RefType.PAM_BROWSER
-                tdag.set_resource_allowed(**args)
-                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
-                if rbi_wf:
-                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
-            else:
-                args = parse_command_options(mach, True)
-                if admin_uid:
-                    args["admin"] = admin_uid
-                pte.execute(params, config=pam_cfg_uid, silent=True, **args)
-                if admin_uid and is_admin_external(mach):
-                    tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
-                args = parse_command_options(mach, False)
-                args["meta_version"] = 1
-                _rtype = (getattr(mach, "type", "") or "").lower()
-                args["v_type"] = RefType.PAM_DIRECTORY if _rtype == "pamdirectory" else RefType.PAM_DATABASE if _rtype == "pamdatabase" else RefType.PAM_MACHINE
-                tdag.set_resource_allowed(**args)
-
-                # After setting allowedSettings, save JIT settings if present
-                # JIT settings don't apply to RBI records (only machine/db/directory); RBI has rbi_settings, no pam_settings.jit_settings
-                ps = getattr(mach, "pam_settings", None)
-                jit = getattr(ps, "jit_settings", None) if ps else None
-                ai = getattr(ps, "ai_settings", None) if ps else None
-                if jit:
-                    jit_dag_dict = jit.to_dag_dict()
-                    if jit_dag_dict:  # Only save if not empty
-                        set_resource_jit_settings(params, mach.uid, jit_dag_dict, pam_cfg_uid)
-
-                # After setting allowedSettings, save AI settings if present
-                # AI settings don't apply to RBI records (only machine/db/directory)
-                if ai:
-                    user_id = ""
-                    if getattr(params, "account_uid_bytes", None):
-                        user_id = utils.base64_url_encode(params.account_uid_bytes)
-                    elif getattr(params, "user", ""):
-                        user_id = params.user
-                    ai_dag_dict = ai.to_dag_dict(user_id=user_id)
-                    if ai_dag_dict:  # Only save if not empty
-                        set_resource_keeper_ai_settings(params, mach.uid, ai_dag_dict, pam_cfg_uid)
-
-                # Web vault UI visualizer shows only latest and meta is most wanted path.
-                if jit or ai:
-                    refresh_meta_to_latest(params, mach.uid, pam_cfg_uid)
-                # Bump LINK to config only when AI is present (AI adds the encryption KEY).
-                if ai:
-                    refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
-
-                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
-                if ps_wf:
-                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
-
-            mach_users = getattr(mach, "users", []) or []
-            for user in mach_users:
-                if getattr(user, "_extend_tag", None) != "new":
-                    continue
-                rs = getattr(user, "rotation_settings", None)
-                if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
-                    rs.resourceUid = mach.uid
-                ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
-                extend_create_record(params, user, ufolder)
-                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
-                    from .nsf_helpers import sync_down_preserving_nsf_keys
-                    sync_down_preserving_nsf_keys(params)
-                if isinstance(user, PamUserObject):
-                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
-                    if rs:
-                        args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
-                        enabled = getattr(rs, "enabled", "")
-                        key = {"on": "enable", "off": "disable"}.get(enabled, "")
-                        if key:
-                            args[key] = True
-                        # Schedule type comparison is case-insensitive;
-                        # Case-insensitive schedule type; cron value must be a list.
-                        schedule = getattr(rs, "schedule", None)
-                        schedule_type = getattr(schedule, "type", "") if schedule else ""
-                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
-                        if schedule_type_lc == "on-demand":
-                            args["on_demand"] = True
-                        elif schedule_type_lc == "cron" and schedule and getattr(schedule, "cron", None):
-                            args["schedule_cron_data"] = [rs.schedule.cron]
-                        if getattr(rs, "password_complexity", None):
-                            args["pwd_complexity"] = rs.password_complexity
-                        prc.execute(params, silent=True, **args)
-            # Also runs for admin-only (no launch): re-asserts the admin as the last write,
-            # after the JIT/AI/meta writes and after nested users are created.
-            launch_uid = get_launch_credential(mach, True)
-            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
-
-        if new_resources:
-            print(f"{len(new_resources)}/{len(new_resources)}\n")
-
-        for mach in existing_resources:
-            mach_users = getattr(mach, "users", []) or []
-            admin_uid = get_admin_credential(mach, True)
-            for user in mach_users:
-                if getattr(user, "_extend_tag", None) != "new":
-                    continue
-                rs = getattr(user, "rotation_settings", None)
-                if isinstance(user, PamUserObject) and rs and (getattr(rs, "rotation", "") or "").lower() == "general":
-                    rs.resourceUid = mach.uid
-                ufolder = getattr(user, "resolved_folder_uid", None) or shfusr
-                extend_create_record(params, user, ufolder)
-                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
-                    from .nsf_helpers import sync_down_preserving_nsf_keys
-                    sync_down_preserving_nsf_keys(params)
-                if isinstance(user, PamUserObject):
-                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid == user.uid, True)
-                    if rs:
-                        args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
-                        enabled = getattr(rs, "enabled", "")
-                        key = {"on": "enable", "off": "disable"}.get(enabled, "")
-                        if key:
-                            args[key] = True
-                        # See note on the new-resources branch above for
-                        # why this comparison is lowercase and why
-                        # ``schedule_cron_data`` is wrapped in a list.
-                        schedule = getattr(rs, "schedule", None)
-                        schedule_type = getattr(schedule, "type", "") if schedule else ""
-                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
-                        if schedule_type_lc == "on-demand":
-                            args["on_demand"] = True
-                        elif schedule_type_lc == "cron" and schedule and getattr(schedule, "cron", None):
-                            args["schedule_cron_data"] = [rs.schedule.cron]
-                        if getattr(rs, "password_complexity", None):
-                            args["pwd_complexity"] = rs.password_complexity
-                        prc.execute(params, silent=True, **args)
-            # Launch only (no admin-only re-assert): an empty connectUsers would clear
-            # launch credentials already set on this existing resource.
-            launch_uid = get_launch_credential(mach, True)
-            if launch_uid and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))
-
-        # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
-        # RBI has rbi_settings only (no pam_settings.jit_settings)
-        jit_domain_links_added = False
-        for mach in resources:
-            ps = getattr(mach, "pam_settings", None)
-            jit = getattr(ps, "jit_settings", None) if ps else None
-            if not (mach and jit):
-                continue
-            dir_uid = getattr(jit, "pam_directory_uid", None)
-            if not dir_uid:
-                continue
-            dag = tdag.linking_dag
-            machine_vertex = dag.get_vertex(mach.uid)
-            dir_vertex = dag.get_vertex(dir_uid)
-            if machine_vertex and dir_vertex:
-                machine_vertex.belongs_to(dir_vertex, EdgeType.LINK, path="domain", content={})
-                jit_domain_links_added = True
-        if jit_domain_links_added:
-            tdag.linking_dag.save()
+        scripts = getattr(getattr(pce, "scripts", None), "scripts", None) or []
+        run_import_tail(params, pam_cfg_uid, None, tdag, scripts=scripts)
 
         # PAM Domain Config - update domain admin creds
         if pce and getattr(pce, "environment", "") == "domain":
@@ -1690,17 +1521,6 @@ class PAMProjectExtendCommand(Command):
                             logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")
             else:
                 logging.debug(f"Unable to resolve domain admin '{getattr(pce, 'dom_administrative_credential', '')}' for PAM Domain configuration.")
-
-        if pce and getattr(pce, "scripts", None) and getattr(pce.scripts, "scripts", None):
-            refs = [x for x in pce.scripts.scripts if getattr(x, "record_refs", None)]
-            if refs:
-                api.sync_down(params)
-                add_pam_scripts(params, pam_cfg_uid, refs)
-
-        # One sync after bulk NSF record creates (create_record uses sync_after=False).
-        if is_nested_share_folder(params, shfres) or is_nested_share_folder(params, shfusr):
-            from .nsf_helpers import sync_down_preserving_nsf_keys
-            sync_down_preserving_nsf_keys(params)
 
         logging.debug("Done processing project data.")
         return

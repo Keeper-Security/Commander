@@ -18,9 +18,12 @@ import os.path
 from itertools import chain
 from typing import Any, Dict, Optional, List, Union
 
-from .keeper_ai_settings import set_resource_jit_settings, set_resource_keeper_ai_settings, refresh_meta_to_latest, refresh_link_to_config_to_latest
+from .batch_pipeline import BatchPamImportEngine, assign_uids
+from .batch_nsf import sync_down_after_batch
+from .import_tail import run_import_tail
 from .playground import compute_network_id as _pg_compute_network_id
-from .workflow_apply import apply_workflow, validate_workflow_principals
+from .port_forward_validation import preflight_port_forward
+from .workflow_apply import validate_workflow_principals
 from .base import (
     PAM_RESOURCES_RECORD_TYPES,
     PROJECT_IMPORT_JSON_TEMPLATE,
@@ -38,9 +41,7 @@ from .base import (
     get_admin_credential,
     get_launch_credential,
     get_sftp_attribute,
-    is_admin_external,
     mark_local_users_allowing_empty_password_for_external_admin,
-    parse_command_options,
     resolve_domain_admin,
     resolve_script_creds,
     set_launch_record_uid,
@@ -53,24 +54,18 @@ from ..nested_share_folder.helpers import ROOT_FOLDER_UID as NSF_ROOT_FOLDER_UID
 from ..pam import gateway_helper
 from ..pam.config_helper import pam_configurations_get_all
 from ..pam.vault_target import (
-    execute_record_v3_add_in_folder,
     grant_pam_folder_permissions,
     is_nested_share_folder,
-    is_pam_nsf_record,
-    update_pam_record,
 )
 from ..record_edit import RecordUploadAttachmentCommand
 from ..tunnel.port_forward.TunnelGraph import TunnelDAG
 from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-from ..tunnel_and_connections import PAMTunnelEditCommand
-from ... import api, crypto, utils, vault, record_management
+from ... import api, crypto, utils, vault
 from ... import enterprise as _enterprise_module
 from ...display import bcolors
 from ...error import CommandError
 from ...importer import imp_exp
 from ...importer.importer import SharedFolder, Permission
-from ...keeper_dag import EdgeType
-from ...keeper_dag.types import RefType
 from ...params import LAST_FOLDER_UID, LAST_SHARED_FOLDER_UID
 from ...proto import record_pb2, APIRequest_pb2, enterprise_pb2
 from ...recordv3 import RecordV3
@@ -168,6 +163,13 @@ class PAMProjectImportCommand(Command):
         if project["options"].get("dry_run", False) is True:
             print("[DRY RUN] No changes will be made. This is a simulation only.")
 
+        # pre-flight: validate port_forward (Keeper proxy gates etc.) before ANY vault write
+        # (app / folders / records / DAG) - runs in dry-run too
+        if project["options"]["sample_data"] is False:
+            _pam_data = project["data"].get("pam_data") if isinstance(project["data"], dict) else None
+            if not preflight_port_forward(_pam_data, "pam project import", bcolors):
+                return
+
         # Initialize the caches
         api.sync_down(params)
 
@@ -179,7 +181,7 @@ class PAMProjectImportCommand(Command):
             return isinstance(perms, list) and len(perms) > 0
 
         def _has_safe_folder_perms():
-            # CyberArk per-safe folders carry their own permission lists.
+            # Per-safe folders may carry their own permission lists.
             # Any non-empty ``permissions`` array means we need enterprise
             # data to resolve the principals before creating folders.
             data = project["data"] if isinstance(project["data"], dict) else {}
@@ -274,7 +276,7 @@ class PAMProjectImportCommand(Command):
             "resources_folder_uid": "",
             "users_folder": f"""{project["options"]["project_name"]} - Users""",
             "users_folder_uid": "",
-            # CyberArk --folder-mode safe: per-safe folder UID lookup by folder_path.
+            # Optional folder_path → folder UID map (safe_folders layout).
             "safe_folder_map": {},
             "safe_folders": [],
         }
@@ -342,6 +344,7 @@ class PAMProjectImportCommand(Command):
                         fname = fname.strip() or f"""{res["project_folder"]} - Resources"""
                         fperm, rperm = self.get_folder_permissions(users_folder=False, data=project["data"])
                         fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
+                        res["resources_folder"] = fname
                         res["resources_folder_uid"] = fuid
 
                         sfn = project["data"].get("shared_folder_users", None)
@@ -349,6 +352,7 @@ class PAMProjectImportCommand(Command):
                         fname = fname.strip() or f"""{res["project_folder"]} - Users"""
                         fperm, uperm = self.get_folder_permissions(users_folder=True, data=project["data"])
                         fuid = self.create_subfolder(params, folder_name=fname, parent_uid=puid, permissions=fperm, use_nsf=use_nsf)
+                        res["users_folder"] = fname
                         res["users_folder_uid"] = fuid
 
                         # add users and teams
@@ -660,11 +664,11 @@ class PAMProjectImportCommand(Command):
             restore_nsf_folder_keys(params, preserved)
 
         # The KSM app must have access to every shared folder containing
-        # PAM records. Legacy mode emits exactly two folders (Resources +
-        # Users). Safe-per-folder mode emits one folder per CyberArk safe
-        # plus the admin Config folder; collect them all here (dedup'd in
-        # case the same UID surfaces twice — e.g. config == resources in
-        # safe mode where resources_folder_uid mirrors the config folder).
+        # PAM records. Standard layout emits exactly two folders (Resources +
+        # Users). Safe-folders layout emits one folder per safe entry plus
+        # the admin Config folder; collect them all here (dedup'd in case
+        # the same UID surfaces twice — e.g. config == resources when
+        # resources_folder_uid mirrors the config folder).
         sf_uids_to_grant = []
         seen_sf_uids = set()
 
@@ -961,18 +965,23 @@ class PAMProjectImportCommand(Command):
         # All sample-data logic (records + credentials + docker-compose) lives
         # in playground.py; this method just orchestrates it.
         from .playground import PlaygroundSession, COMPOSE_FILENAME, SECCOMP_URL
+        session = PlaygroundSession(params, project)
         if project["options"].get("dry_run", False) is True:
-            # Dry-run: no vault writes, no files - just report intent + target paths.
             intended = os.path.abspath(os.path.join(os.getcwd(), COMPOSE_FILENAME))
+            plan = session.simulate()
+            print(json.dumps(plan, indent=2))
             print("[DRY RUN] Would generate discovery-playground sample records "
-                  "(MySQL, SSH, VNC, RDP, RBI, PostgreSQL, MariaDB, MSSQL, MongoDB, "
+                  "via BatchPamImportEngine "
+                  "(MySQL, SSH, VNC, RDP, RBI, PostgreSQL, MariaDB, MSSQL, "
                   "Telnet, OpenLDAP) with freshly generated credentials.")
             print(f"[DRY RUN] Would write docker-compose to: {intended}")
             print(f"[DRY RUN] Seccomp profile: {SECCOMP_URL}")
+            print("[DRY RUN COMPLETE] No vault/DAG writes.")
             return
 
-        session = PlaygroundSession(params, project)
-        session.create_all_records()
+        if not session.create_all_records():
+            print(f"{bcolors.FAIL}Sample-data import aborted due to batch vault/DAG failure.{bcolors.ENDC}")
+            return
         gateway_config_b64 = project["gateway"].get("gateway_config_b64", "")
         compose_yaml = session.build_compose(gateway_config_b64)
         session.save_compose_and_seccomp(compose_yaml)
@@ -1262,6 +1271,125 @@ class PAMProjectImportCommand(Command):
             return None
         return nsf_parent
 
+    @staticmethod
+    def _collect_pam_folder_paths(pam_data: dict) -> list:
+        """Unique non-empty folder_path values from resources, nested users, and global users."""
+        paths = set()
+        for r in pam_data.get("resources") or []:
+            if not isinstance(r, dict):
+                continue
+            fp = r.get("folder_path")
+            if isinstance(fp, str) and fp.strip():
+                paths.add(fp.strip())
+            for u in r.get("users") or []:
+                if not isinstance(u, dict):
+                    continue
+                ufp = u.get("folder_path")
+                if isinstance(ufp, str) and ufp.strip():
+                    paths.add(ufp.strip())
+        for u in pam_data.get("users") or []:
+            if not isinstance(u, dict):
+                continue
+            fp = u.get("folder_path")
+            if isinstance(fp, str) and fp.strip():
+                paths.add(fp.strip())
+        return sorted(paths)
+
+    def _find_child_folder(self, params, parent_uid: str, name: str):
+        """Find any child folder (shared / user / shared-folder-folder / NSF) by name."""
+        folders = params.folder_cache if params and params.folder_cache else {}
+        if isinstance(folders, dict):
+            for v in folders.values():
+                if getattr(v, "parent_uid", None) == parent_uid and getattr(v, "name", None) == name:
+                    return v
+        for uid, nsf in getattr(params, "nested_share_folders", {}).items():
+            if (nsf.get("parent_uid") or None) == parent_uid and nsf.get("name") == name:
+                nsf_folder = NestedShareFolderNode()
+                nsf_folder.uid = uid
+                nsf_folder.name = nsf.get("name")
+                nsf_folder.parent_uid = nsf.get("parent_uid")
+                return nsf_folder
+        return None
+
+    def _materialize_folder_paths(self, params, project: dict, pam_data: dict) -> dict:
+        """Build folder_path → UID map; create nested folders for explicit paths.
+
+        Starts from ``safe_folder_map`` (per-safe layout) and project Resources/Users
+        roots. Any ``folder_path`` in pam_data that is not yet mapped is walked and
+        missing segments are created under the matching root. Unresolvable roots
+        are left unmapped so stamping falls back to type defaults.
+        """
+        from .extend import split_folder_path
+
+        folders = project.get("folders") or {}
+        path_map = dict(folders.get("safe_folder_map") or {})
+        path_map.update(folders.get("path_to_folder_uid") or {})
+
+        for name_key, uid_key in (
+            ("resources_folder", "resources_folder_uid"),
+            ("users_folder", "users_folder_uid"),
+            ("config_folder", "config_folder_uid"),
+        ):
+            name = (folders.get(name_key) or "").strip()
+            uid = folders.get(uid_key) or ""
+            if name and uid:
+                path_map.setdefault(name, uid)
+
+        for sf in folders.get("safe_folders") or []:
+            if not isinstance(sf, dict):
+                continue
+            name = (sf.get("name") or "").strip()
+            uid = sf.get("uid") or ""
+            if name and uid:
+                path_map.setdefault(name, uid)
+
+        paths = self._collect_pam_folder_paths(pam_data)
+        dry_run = project.get("options", {}).get("dry_run", False) is True
+        use_nsf = project.get("options", {}).get("use_nsf", False) is True
+        created = 0
+
+        for path in paths:
+            if path in path_map:
+                continue
+            parts = split_folder_path(path)
+            if not parts:
+                continue
+            parent_uid = None
+            cumulative = ""
+            for i, part in enumerate(parts):
+                cumulative = part if i == 0 else f"{cumulative}/{part}"
+                if cumulative in path_map:
+                    parent_uid = path_map[cumulative]
+                    continue
+                if i == 0:
+                    logging.warning(
+                        'folder_path "%s": root folder "%s" not found among project '
+                        "folders; records with this path use type-based Users/Resources defaults",
+                        path, part,
+                    )
+                    break
+                child = self._find_child_folder(params, parent_uid, part)
+                if child is not None:
+                    path_map[cumulative] = child.uid
+                    parent_uid = child.uid
+                    continue
+                if dry_run:
+                    new_uid = api.generate_record_uid()
+                else:
+                    new_uid = self.create_subfolder(
+                        params, part, parent_uid, use_nsf=use_nsf,
+                    )
+                path_map[cumulative] = new_uid
+                parent_uid = new_uid
+                created += 1
+
+        if created and not dry_run:
+            # Plain sync_down drops NSF folder keys; batch helper preserves them when NSF is in play.
+            sync_down_after_batch(params, project)
+
+        folders["path_to_folder_uid"] = path_map
+        return path_map
+
     def create_ksm_app(self, params, app_name) -> str:
         app_record_data = {
             "title": app_name,
@@ -1345,8 +1473,6 @@ class PAMProjectImportCommand(Command):
 
     def process_data(self, params, project):
         """Process project data (JSON)"""
-        # Local import to avoid circular import with discoveryrotation
-        from ..discoveryrotation import PAMCreateRecordRotationCommand
         # users section is mostly RBI login users, but occasional "disconnected"
         # PAM User (ex. NOOP rotation) requires explicit record type to be set
         # also for shared users b/n ssh, vnc, rdp on same host (one pamMachine each)
@@ -1368,17 +1494,16 @@ class PAMProjectImportCommand(Command):
 
         shfres = project["folders"].get("resources_folder_uid", "")
         shfusr = project["folders"].get("users_folder_uid", "")
-        # Per-safe folder routing (CyberArk --folder-mode safe); empty for legacy layout.
-        safe_folder_map = project["folders"].get("safe_folder_map") or {}
+        # Explicit folder_path → UID map (safe_folder_map + nested paths under
+        # Resources/Users). Type defaults apply only when folder_path is unset.
+        folder_path_map = self._materialize_folder_paths(params, project, pam_data)
 
         def _resolve_folder_uid(obj, default_uid: str) -> str:
-            if not safe_folder_map:
-                return default_uid
             fp = getattr(obj, "folder_path", None) or ""
             fp = fp.strip() if isinstance(fp, str) else ""
             if not fp:
                 return default_uid
-            return safe_folder_map.get(fp, default_uid)
+            return folder_path_map.get(fp) or default_uid
 
         usrs = pam_data["users"] if "users" in pam_data and isinstance(pam_data["users"], list) else []
         rsrs = pam_data["resources"] if "resources" in pam_data and isinstance(pam_data["resources"], list) else []
@@ -1425,15 +1550,7 @@ class PAMProjectImportCommand(Command):
             if obj:
                 resources.append(obj)
 
-        # generate record UIDs used for DAG links
-        for obj in chain(resources, users):
-            # preserve any valid UID from JSON otherwise generate new UID
-            if not(isinstance(obj.uid, str) and RecordV3.is_valid_ref_uid(obj.uid)):
-                obj.uid = utils.generate_uid()
-            if hasattr(obj, "users") and isinstance(obj.users, list):
-                for usr in obj.users:
-                    if not(isinstance(usr.uid, str) and RecordV3.is_valid_ref_uid(usr.uid)):
-                        usr.uid = utils.generate_uid()
+        assign_uids(chain(resources, users), only_new=False)
 
         # Detect and reject duplicate UIDs to prevent graph ambiguity
         _all_assigned_uids: list[str] = []
@@ -1601,234 +1718,55 @@ class PAMProjectImportCommand(Command):
             resolve_domain_admin(pce, users)
         # only resolve here - create after machine and user creation
 
+        # Stamp resolved_folder_uid for batch routing.
+        # Explicit folder_path from import JSON wins (via folder_path_map).
+        # When unspecified: pamUser/login → Users; resource types → Resources.
+        for user in users:
+            user.resolved_folder_uid = _resolve_folder_uid(user, shfusr)
+        for mach in resources:
+            mach.resolved_folder_uid = _resolve_folder_uid(mach, shfres)
+            for user in getattr(mach, "users", None) or []:
+                user.resolved_folder_uid = _resolve_folder_uid(user, shfusr)
+
         # pre-flight: validate workflow team UIDs before any vault writes (runs in dry-run too)
         validate_workflow_principals(params, resources)
 
-        # dry run
+        # dry run — simulate batch plan without vault writes
         if project["options"].get("dry_run", False) is True:
-            print("Will import file data here...")
+            engine = BatchPamImportEngine(
+                params, project, users, resources,
+                users_folder_uid=shfusr,
+                resources_folder_uid=shfres,
+                pam_cfg_uid=pam_cfg_uid,
+                extend_mode=False,
+            )
+            plan = engine.simulate()
+            print(json.dumps(plan, indent=2))
+            print("[DRY RUN COMPLETE] No vault/DAG writes.")
             return
 
-        # if errors > 0:
-        #     logging.warning(f"{bcolors.WARNING}{errors} errors found.{bcolors.ENDC} ")
-        #     if project["options"]["force"] is True:
-        #         print("Starting data import (--force option present)")
-        #     else:
-        #         print("Exiting. If you want to continue use --force option")
-        #         return
         print("Started importing data...")
+
+        engine = BatchPamImportEngine(
+            params, project, users, resources,
+            users_folder_uid=shfusr,
+            resources_folder_uid=shfres,
+            pam_cfg_uid=pam_cfg_uid,
+            extend_mode=False,
+        )
+        if not engine.run():
+            print(f"{bcolors.FAIL}Import aborted due to batch vault/DAG failure.{bcolors.ENDC}")
+            return
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         tdag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, pam_cfg_uid, True,
                          transmission_key=transmission_key)
-        pte = PAMTunnelEditCommand()
-        prc = PAMCreateRecordRotationCommand()
 
-        pdelta = 10  # progress delta (update progress stats every pdelta items)
-        msg = "Start data processing "
-        msg += f" {len(resources)} resources" if resources else ""
-        msg += f" {len(users)} external users" if users else ""
-        msg += " - This could take a while..." if len(resources) + len(users) > 0 else ""
-        logging.warning(msg)
-
-        # Create records
-        if users:
-            logging.warning(f"Processing external users: {len(users)}")
-            for n, user in enumerate(users):  # standalone users
-                user.create_record(params, _resolve_folder_uid(user, shfusr))
-                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
-                    from .nsf_helpers import sync_down_preserving_nsf_keys
-                    sync_down_preserving_nsf_keys(params)
-                if n % pdelta == 0: print(f"{n}/{len(users)}")
-            print(f"{len(users)}/{len(users)}\n")
-
-        # we need pamDirectory first in case AD Admin user is used in Local pamMachine
-        resources.sort(key=lambda r: r.type != "pamDirectory")
-        if resources: logging.warning(f"Processing resources: {len(resources)}")
-        for n, mach in enumerate(resources):
-            if n % pdelta == 0: print(f"{n}/{len(resources)}")
-            # Machine - create machine first to avoid error:
-            # Resource <UID> does not belong to the configuration
-            admin_uid = get_admin_credential(mach, True)
-            mach_folder_uid = _resolve_folder_uid(mach, shfres)
-            mach.create_record(params, mach_folder_uid)
-            # NSF creates with sync_after=False; pam tunnel edit resolves from
-            # record_cache, so sync once when the new UID is not loaded yet.
-            if mach.uid and mach.uid not in (getattr(params, 'record_cache', None) or {}):
-                from .nsf_helpers import sync_down_preserving_nsf_keys
-                sync_down_preserving_nsf_keys(params)
-            tdag.link_resource_to_config(mach.uid)
-            if isinstance(mach, PamRemoteBrowserObject): # RBI
-                args = parse_command_options(mach, True)
-                pte.execute(params, config=pam_cfg_uid, silent=True, **args)
-                args = parse_command_options(mach, False)
-                # bugfix: RBI=True also needs connections=True to enable RBI (in web vault)
-                if args.get("remote_browser_isolation", False) is True:
-                    args["connections"] = True
-                args["v_type"] = RefType.PAM_BROWSER
-                tdag.set_resource_allowed(**args)
-                rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
-                if rbi_wf:
-                    apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
-            else: # machine/db/directory
-                args = parse_command_options(mach, True)
-                if admin_uid: args["admin"] = admin_uid
-                pte.execute(params, config=pam_cfg_uid, silent=True, **args)
-                if admin_uid and is_admin_external(mach):
-                    tdag.link_user_to_resource(admin_uid, mach.uid, is_admin=True, belongs_to=False)
-                args = parse_command_options(mach, False)
-                args["meta_version"] = 1
-                _rtype = (getattr(mach, "type", "") or "").lower()
-                args["v_type"] = RefType.PAM_DIRECTORY if _rtype == "pamdirectory" else RefType.PAM_DATABASE if _rtype == "pamdatabase" else RefType.PAM_MACHINE
-                tdag.set_resource_allowed(**args)
-
-                # After setting allowedSettings, save JIT settings if present
-                # JIT settings don't apply to RBI records (only machine/db/directory); RBI has rbi_settings, no pam_settings.jit_settings
-                ps = getattr(mach, "pam_settings", None)
-                jit = getattr(ps, "jit_settings", None) if ps else None
-                ai = getattr(ps, "ai_settings", None) if ps else None
-                if jit:
-                    jit_dag_dict = jit.to_dag_dict()
-                    if jit_dag_dict:  # Only save if not empty
-                        set_resource_jit_settings(params, mach.uid, jit_dag_dict, pam_cfg_uid)
-
-                # After setting allowedSettings, save AI settings if present
-                # AI settings don't apply to RBI records (only machine/db/directory)
-                if ai:
-                    user_id = ""
-                    if getattr(params, "account_uid_bytes", None):
-                        user_id = utils.base64_url_encode(params.account_uid_bytes)
-                    elif getattr(params, "user", ""):
-                        user_id = params.user
-                    ai_dag_dict = ai.to_dag_dict(user_id=user_id)
-                    if ai_dag_dict:  # Only save if not empty
-                        set_resource_keeper_ai_settings(params, mach.uid, ai_dag_dict, pam_cfg_uid)
-
-                # Web vault UI visualizer shows only latest and meta is most wanted path.
-                # Note: DAG may take a while to sync in web vault
-                # Dummy update to meta so it is latest among DATA (after jit/ai).
-                if jit or ai:
-                    refresh_meta_to_latest(params, mach.uid, pam_cfg_uid)
-                # Bump LINK to config only when AI is present (AI adds the encryption KEY).
-                if ai:
-                    refresh_link_to_config_to_latest(params, mach.uid, pam_cfg_uid)
-
-                ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
-                if ps_wf:
-                    apply_workflow(params, mach.uid, mach.title or '', ps_wf)
-
-            # Machine - create its users (if any)
-            users = getattr(mach, "users", [])
-            users = users if isinstance(users, list) else []
-            for user in users:
-                if (isinstance(user, PamUserObject) and user.rotation_settings and
-                    user.rotation_settings.rotation.lower() == "general"):
-                    user.rotation_settings.resourceUid = mach.uid # DAG only
-                # Nested users default to the same safe folder as their
-                # owning machine so safe-level permissions apply uniformly
-                # to every record originating from that CyberArk safe.
-                user_folder_uid = _resolve_folder_uid(user, mach_folder_uid)
-                user.create_record(params, user_folder_uid)
-                if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
-                    from .nsf_helpers import sync_down_preserving_nsf_keys
-                    sync_down_preserving_nsf_keys(params)
-                if isinstance(user, PamUserObject):  # rotation setup
-                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid==user.uid, True)
-                    if user.rotation_settings:
-                        args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
-                        enabled = user.rotation_settings.enabled # on|off|default
-                        key = {"on": "enable", "off": "disable"}.get(enabled, "")
-                        if key: args[key] = True
-                        # args["schedule_config"] = True  # Schedule from Configuration
-                        # Schedule type is case-insensitive; CyberArk
-                        # importer emits "CRON" (uppercase) per Keeper's
-                        # on-the-wire convention, while older import paths
-                        # use "cron" (lowercase). Compare in lowercase so
-                        # both shapes are honored.
-                        schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
-                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
-                        if schedule_type_lc == "on-demand":
-                            args["on_demand"] = True
-                        elif schedule_type_lc == "cron":
-                            if user.rotation_settings.schedule.cron:
-                                # Must be a list for parse_schedule_data (CLI uses action=append).
-                                args["schedule_cron_data"] = [user.rotation_settings.schedule.cron]
-                            else:
-                                logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
-                        if user.rotation_settings.password_complexity:
-                            args["pwd_complexity"]=user.rotation_settings.password_complexity
-                        prc.execute(params, silent=True, **args)
-            # Launch credentials: link for pamMachine, pamDatabase, pamDirectory (not RBI)
-            # Also runs for admin-only (no launch): re-asserts the admin as the last write,
-            # after the JIT/AI/meta writes and after nested users are created.
-            launch_uid = get_launch_credential(mach, True)
-            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
-        if resources: print(f"{len(resources)}/{len(resources)}\n")
-
-        # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
-        # RBI has rbi_settings only (no pam_settings.jit_settings)
-        jit_domain_links_added = False
-        for mach in resources:
-            ps = getattr(mach, "pam_settings", None)
-            jit = getattr(ps, "jit_settings", None) if ps else None
-            if not (mach and jit):
-                continue
-            dir_uid = getattr(jit, "pam_directory_uid", None)
-            if not dir_uid:
-                continue
-            dag = tdag.linking_dag
-            machine_vertex = dag.get_vertex(mach.uid)
-            dir_vertex = dag.get_vertex(dir_uid)
-            if machine_vertex and dir_vertex:
-                machine_vertex.belongs_to(dir_vertex, EdgeType.LINK, path="domain", content={})
-                jit_domain_links_added = True
-        if jit_domain_links_added:
-            tdag.linking_dag.save()
-
-        # add scripts with resolved additional credentials - owner records must exist
-        if pce and pce.scripts and pce.scripts.scripts:
-            refs = [x for x in pce.scripts.scripts if x.record_refs]
-            if refs:
-                api.sync_down(params)
-                add_pam_scripts(params, pam_cfg_uid, refs)
-
-        # PAM Domain Config - update domain admin creds
-        if pce and pce.environment == "domain":
-            if pce.admin_credential_ref:
-                from .record_loader import load_pam_record
-                pcuid = project["pam_config"].get("pam_config_uid")
-                pcrec = load_pam_record(params, pcuid) if pcuid else None
-                if pcrec and isinstance(pcrec, vault.TypedRecord) and pcrec.version == 6:
-                    if pcrec.record_type == "pamDomainConfiguration":
-                        prf = pcrec.get_typed_field('pamResources')
-                        if not prf:
-                            prf = vault.TypedField.new_field('pamResources', {})
-                            pcrec.fields.append(prf)
-                        prf.value = prf.value or [{}]
-                        if isinstance(prf.value[0], dict):
-                            prf.value[0]["adminCredentialRef"] = pce.admin_credential_ref
-                            users_folder_uid = (project.get("folders") or {}).get("users_folder_uid", "")
-                            force_nsf = (
-                                project["options"].get("use_nsf", False) is True
-                                or is_nested_share_folder(params, users_folder_uid)
-                                or is_pam_nsf_record(params, pcuid)
-                            )
-                            if force_nsf:
-                                update_pam_record(
-                                    params, pcrec, command='pam-project-import', force_nsf=True)
-                            else:
-                                record_management.update_record(params, pcrec)
-                            tdag.link_user_to_config_with_options(pce.admin_credential_ref, is_admin='on')
-                        else:
-                            logging.error(f"Unable to add adminCredentialRef - bad pamResources field in PAM Config {pcuid}")
-            else:
-                logging.debug(f"Unable to resolve domain admin '{pce.dom_administrative_credential}' for PAM Domain configuration.")
-
-        # One sync after bulk NSF record creates (create_record uses sync_after=False).
-        use_nsf = project["options"].get("use_nsf", False) is True
-        if use_nsf or is_nested_share_folder(params, shfres) or is_nested_share_folder(params, shfusr):
-            from .nsf_helpers import sync_down_preserving_nsf_keys
-            sync_down_preserving_nsf_keys(params)
+        # Import tail: config cred scripts, then domain admin (NSF-aware).
+        run_import_tail(
+            params, pam_cfg_uid, pce, tdag,
+            project_options=project.get("options") or {},
+            users_folder_uid=(project.get("folders") or {}).get("users_folder_uid", ""),
+        )
 
         logging.debug("Done processing project data.")

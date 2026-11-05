@@ -5,9 +5,9 @@ configure_resource call.
 
 Behavior matrix:
 
-| Case                              | configure_resource sent? | connectUsers.uids       | meta has version=1? | local link_user(belongs_to=True) follow-up? |
+| Case                              | configure_resource sent? | connectUsers.uids       | meta has version=1? | local link_user follow-up? |
 | --------------------------------- | ------------------------ | ----------------------- | ------------------- | ------------------------------------------- |
-| set, Layer-B enabled, success     | yes                      | [launch_uid bytes]      | yes                 | yes (belongs_to + is_launch_credential)     |
+| set, Layer-B enabled, success     | yes                      | [launch_uid bytes]      | yes                 | yes (is_launch_credential; no forced belongs_to) |
 | clear, Layer-B enabled, success   | yes                      | []                      | yes                 | no (no launch user to mark)                 |
 | set, Layer-B feature-disabled     | no                       | n/a                     | n/a                 | legacy fallback (link+clear+meta)           |
 | set, Layer-B RRC_NOT_ALLOWED + FB | yes (then fall back)     | n/a                     | n/a                 | legacy fallback                             |
@@ -104,12 +104,12 @@ def test_set_path_builds_proto_with_launch_uid_and_meta_v1():
     assert len(rq.connectUsers.uids[0]) == 16  # decoded launch_uid
     meta = json.loads(rq.meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    # Follow-up preserves krouter flags (KC-1330).
+    # Follow-up: launch flag only — do not force belongs_to (admin/launch ACL).
     tdag.link_user.assert_called_once()
     args, kwargs = tdag.link_user.call_args
     assert args[0] == LAUNCH_UID
-    assert kwargs.get('belongs_to') is True
     assert kwargs.get('is_launch_credential') is True
+    assert 'belongs_to' not in kwargs
     assert 'is_admin' not in kwargs
     # No legacy fallback paths invoked.
     tdag.clear_launch_credential_for_resource.assert_not_called()
@@ -138,30 +138,24 @@ def test_clear_path_builds_proto_with_empty_uids():
     assert len(rq.connectUsers.uids) == 0
     meta = json.loads(rq.meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    # Version-only meta: empty allowedSettings so krouter's deep-merge preserves
-    # the server's current flags (connections stays True) instead of re-asserting
-    # a stale in-memory snapshot.
-    assert meta['allowedSettings'] == {}
+    # Inclusive meta: preserve current allowedSettings (WV parity — empty {}
+    # would clear connections on the server).
+    assert meta['allowedSettings'] == {'connections': True}
     # CLEAR path doesn't do a belongs_to follow-up.
     tdag.link_user.assert_not_called()
 
 
-def test_set_path_sends_version_only_meta_and_does_not_clobber_allowed_settings():
-    """Regression: the launch-cred meta must NOT re-assert a (possibly stale)
-    in-memory allowedSettings snapshot.
+def test_set_path_sends_inclusive_allowed_settings_from_local_meta():
+    """Launch meta must include the current allowedSettings snapshot (WV parity).
 
-    set_resource_allowed's Layer-B path enables connections on the SERVER but does
-    not refresh the in-memory vertex, so get_vertex_content here still reports the
-    pre-command flags (e.g. connections=False). If we sent those, krouter's
-    deep-merge would flip connections back off and the vault would hide the
-    connection port/protocol. The fix sends version=1 with an EMPTY allowedSettings
-    so the server's just-enabled connections survives the merge untouched.
+    krouter replaces Meta.allowedSettings; empty {} clears connections. After
+    set_resource_allowed Layer-B, the overlay (or vertex) holds the desired
+    flags — set_launch_credentials must re-send them, not wipe with {}.
     """
-    # Simulate the stale in-memory snapshot (connections still off / rotation set).
     initial = {
         'version': 0,
-        'allowedSettings': {'connections': False, 'rotation': False},
-        'rotateOnTermination': True,
+        'allowedSettings': {'connections': True, 'rotation': True, 'portForwards': True},
+        'rotateOnTermination': False,
     }
     tdag, _ = _make_tdag(initial_meta=initial)
 
@@ -178,10 +172,38 @@ def test_set_path_sends_version_only_meta_and_does_not_clobber_allowed_settings(
 
     meta = json.loads(captured['rq'].meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    # No stale flags re-asserted — empty allowedSettings, no rotateOnTermination.
-    assert meta['allowedSettings'] == {}
-    assert 'connections' not in meta['allowedSettings']
-    assert 'rotateOnTermination' not in meta
+    assert meta['allowedSettings']['connections'] is True
+    assert meta['allowedSettings']['rotation'] is True
+    assert meta['allowedSettings']['portForwards'] is True
+
+
+def test_set_path_uses_layer_b_overlay_when_vertex_stale():
+    """Overlay from set_resource_allowed wins over stale vertex content."""
+    stale = {
+        'version': 0,
+        'allowedSettings': {'connections': False, 'rotation': False},
+    }
+    tdag, _ = _make_tdag(initial_meta=stale)
+    tdag._sync_local_resource_meta(RESOURCE_UID, {
+        'version': RESOURCE_META_VERSION_V1,
+        'allowedSettings': {'connections': True, 'rotation': True, 'portForwards': True},
+        'rotateOnTermination': False,
+    })
+
+    captured = {}
+
+    def _capture(params, rq):
+        captured['rq'] = rq
+
+    with patch('keepercommander.commands.pam._layer_b.is_layer_b_feature_disabled', return_value=False), \
+         patch('keepercommander.commands.pam.router_helper.get_router_url', return_value='krouter.test'), \
+         patch('keepercommander.commands.pam.router_helper.router_configure_resource',
+               side_effect=_capture):
+        tdag.set_launch_credentials(RESOURCE_UID, launch_uid=LAUNCH_UID)
+
+    meta = json.loads(captured['rq'].meta.decode())
+    assert meta['allowedSettings']['connections'] is True
+    assert meta['allowedSettings']['rotation'] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -212,11 +234,11 @@ def test_set_path_with_admin_sends_admin_uid_alongside_connect_users():
     assert bytes(rq.adminUid) != bytes(rq.connectUsers.uids[0])  # admin not the launch cred
     meta = json.loads(rq.meta.decode())
     assert meta['version'] == RESOURCE_META_VERSION_V1
-    assert meta['allowedSettings'] == {}
+    assert meta['allowedSettings'] == {'connections': True}
     tdag.link_user.assert_called_once()
     _, kwargs = tdag.link_user.call_args
-    assert kwargs.get('belongs_to') is True
     assert kwargs.get('is_launch_credential') is True
+    assert 'belongs_to' not in kwargs
     assert 'is_admin' not in kwargs
 
 
@@ -242,9 +264,9 @@ def test_set_path_same_admin_and_launch_preserves_both_flags_in_follow_up():
     tdag.link_user.assert_called_once()
     args, kwargs = tdag.link_user.call_args
     assert args[0] == LAUNCH_UID
-    assert kwargs.get('belongs_to') is True
     assert kwargs.get('is_launch_credential') is True
     assert kwargs.get('is_admin') is True
+    assert 'belongs_to' not in kwargs
 
 
 def test_admin_only_sends_admin_uid_with_empty_connect_users():
@@ -300,6 +322,7 @@ def test_admin_fallback_links_admin_via_legacy_when_feature_disabled():
     admin_calls = [c for c in tdag.link_user.call_args_list if c.args and c.args[0] == ADMIN_UID]
     assert len(admin_calls) == 1
     assert admin_calls[0].kwargs.get('is_admin') is True
+    assert 'belongs_to' not in admin_calls[0].kwargs
     # launch still goes through the legacy link_user_to_resource path.
     tdag.link_user_to_resource.assert_called_once()
 
@@ -326,7 +349,7 @@ def test_set_path_feature_disabled_uses_legacy_sequence():
     args, kwargs = tdag.link_user_to_resource.call_args
     assert args[0] == LAUNCH_UID
     assert kwargs.get('is_launch_credential') is True
-    assert kwargs.get('belongs_to') is True
+    assert 'belongs_to' not in kwargs
     tdag.upgrade_resource_meta_to_v1.assert_called_once_with(RESOURCE_UID)
 
 
@@ -368,7 +391,7 @@ def test_set_path_rrc_not_allowed_falls_back_when_env_enabled():
     tdag.clear_launch_credential_for_resource.assert_called_once()
     tdag.link_user_to_resource.assert_called_once()
     tdag.upgrade_resource_meta_to_v1.assert_called_once()
-    # Success path's belongs_to=True follow-up was NOT taken (we never reached it).
+    # Success path's launch follow-up was NOT taken (we never reached it).
     tdag.link_user.assert_not_called()
 
 

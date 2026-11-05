@@ -49,8 +49,50 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 
 > **Notes:**
 - Folder for new records: 1) `--resources-folder`/`--users-folder`, 2) `folder_path` in the JSON, 3) autodetect — folders named `<project> - Resources`/`<project> - Users`, otherwise the folder where existing resources (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser) or users (pamUser, login) live. If autodetect is ambiguous or finds nothing the command fails; add `folder_path` or use the options above.
-- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault.
+- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault. Import/extend dry-run prints the **batch plan** (creation tiers + Step 2 dispatch + `import_tail` on import) from `BatchPamImportEngine.simulate()` — no vault or DAG writes.
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
+
+### Phase 0 skeleton (not batched)
+
+Before `BatchPamImportEngine.run()`, import still runs sequentially:
+
+1. Shared folder tree (`process_folders`) — classic SF or NSF
+2. KSM application (`process_ksm_app`)
+3. Gateway / controller (`process_gateway`)
+4. PAM configuration (`process_pam_config`) — may stash `pam_config_object` for scripts deferred to **import tail**
+5. **Batch engine** — `process_data` / extend equivalent (`1a→1b→1c→Step 2`)
+6. **Import tail only** — [`import_tail.py`](import_tail.py): batched pamConfiguration cred scripts, then domain `pamDomainConfiguration` admin link (NSF-aware)
+
+Extend skips steps 1–4 (config already exists) and runs its own domain-admin update after the engine when needed.
+
+### Batch pipeline (import / extend)
+
+Vault record creation uses **`BatchPamImportEngine`** ([`batch_pipeline.py`](batch_pipeline.py)):
+
+1. **Step 0** — `assign_uids` / `assign_record_keys` (pre-assign UIDs and AES keys)
+2. **Step 1a** — tiered `vault/records_add` via `pam_object_to_typed_record` + `pb_only=True` (chunks of 999)
+3. **Step 1b** — deferred ref updates (`deferred_refs.py`): **Channel B** — strip/patch embedded `pamSettings` JSON refs via typed setters; **Channel A** — strip/patch typed `recordRef` / script `recordRef` + `record_links` via batch `records_update`
+4. **Step 1c** — global `files_add` (300/chunk) + parallel PUTs + batch `records_update` for `fileRef` / rotation scripts ([`batch_attachments.py`](batch_attachments.py))
+5. **Step 2** — shared deferred `TunnelDAG` + per-resource micro-order ([`batch_step2.py`](batch_step2.py)); tunnel validation via [`tunnel_setup.py`](tunnel_setup.py) helpers (**no** `PAMTunnelEditCommand.execute` on batch path); graph flush every 100 resources + final flush (`save_batch_count=50` chunked `add_data`, halves on HTTP 5xx down to 10)
+
+**Folder routing:** Explicit ``folder_path`` in import JSON wins (import via ``safe_folder_map`` / nested path materialization; extend via ``path_to_folder_uid``). When unspecified: machine-like types → Resources; ``pamUser`` / ``login`` → Users.
+
+**NSF (`--nsf`):** Phase 0 creates NSF folders; Step 1a uses ``vault/records/v3/add`` for NSF folder targets (classic ``vault/records_add`` otherwise); Step 1b uses ``vault/records/v3/update`` for NSF records; mid-pipeline sync preserves NSF folder keys.
+
+**Layer-B hygiene:** at `run()` start, `clear_layer_b_feature_cache()` runs and a warning is logged if `KEEPER_DAG_LB_FALLBACK` is set (does not override that env var).
+
+**Partial failure:** any `records_add` failure in a tier aborts before Step 1b/Step 2 and prints a per-record summary. A **Step 1b** or **Step 1c** `records_update` / upload failure also aborts before the next step.
+
+**Import re-run after partial success:** manual only — use extend with explicit `"uid"` values or vault cleanup.
+
+**PAM configuration scripts:** scripts without `additional_credentials` are uploaded during Phase 0 (`process_pam_config`). Scripts with resolved `recordRef`s run in the **import tail** after `engine.run()` via [`import_tail.py`](import_tail.py) (`run_import_tail` → batched `run_import_tail_config_scripts`; warn-only on failure). Domain admin link runs **after** cred scripts on the same config record (NSF uses `update_pam_record`).
+
+**Dry-run (`simulate()`):** returns creation tiers, Step 2 dispatch, deferred ref/link plans, `link_count_warnings` when projected typed `record_links` per record exceed 100, and **`import_tail`** flags for post–Step 2 import-only work.
+
+**Step 2 rotation:** `set_record_rotation` calls are throttled (10 per 10s pause) via [`rotation_throttle.py`](rotation_throttle.py). Schedule types are case-insensitive (`CRON` / `cron`). Extend/import skip rotation when `record_rotation_cache` already has the pamUser bound to the same resource.
+
+**Sample-data (`--sample-data` / `-s`):** [`playground.py`](playground.py) builds the same Pam* object graph as a JSON import (fresh credentials + discovery-playground services), then runs **`BatchPamImportEngine`** — same Step 1a/1b/1c/2 path as file import. Dry-run prints `simulate()` plus compose/seccomp target paths. Compose YAML generation is unchanged (post-engine).
+
 
 
 Import directly from a KCM/Guacamole database. Connects to the KCM database, extracts connections/users/groups, maps 130+ parameters, and feeds the result into the existing import engine.
@@ -334,6 +376,15 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrativ
   > **Note 3:** Post rotation scripts (a.k.a. `scripts`) are executed in following order: `pamUser` scripts after any **successful** rotation for that user, `pamMachine` scripts after any **successful** rotation on the machine and `pamConfiguration` scripts after any rotation using that configuration.
   > **Note 4:** Post-rotation scripts can only be attached by the **record owner**. Non-owners will see an upload error during import or when using `pam rotate script add`.
   > **Note 5:** When `allow_supply_user` is false and JIT ephemeral is not used, vault may require a launch credential; import can provide it via `launch_credentials` in the resource's `connection` block.
+  > **Note 6:** RBI (pamRemoteBrowser) `connection` supports `allow_supply_user` (true/false; omit to leave unset), `accept_language` (e.g. `en-US,en;q=0.9`) and `suppress_js_dialogs` (true/false). `clipboard_buffer_size` - the clipboard data size limit: `256kb`, `1mb`, `10mb` or `50mb` (case-insensitive; stored in bytes) - is supported by RBI and by RDP, VNC, Telnet, SSH and all database protocols (not Kubernetes). `default` or omitted leaves it unset; any other value is ignored with a warning (use `--dry-run` to see these warnings before importing).
+  > **Note 7:** `pam_settings.port_forward` (remote/local port, Keeper proxy gates `allow_keeper_db_proxy` / `allow_keeper_rdp_proxy` / `allow_keeper_ssh_proxy`) is explained in the _Port forwarding and Keeper proxies_ section below, including the validation that runs before any vault write.
+  > **Note 8:** SFTP settings (RDP, SSH, VNC) are in `pam_settings.connection.sftp`. RDP/VNC: `enable_sftp`, `sftp_resource` (title or login of the SFTP server machine), `sftp_user_credentials` (title or login of the pamUser), `sftp_root_directory`, `sftp_upload_directory`, `sftp_keepalive_interval`, `sftp_timeout` (SFTP connection timeout in whole **seconds**, same unit as KCM `sftp-timeout`; the KCM default is 10 seconds when omitted; `0` and non-numeric values are not written; the sign is ignored, as for `sftp_keepalive_interval`), `sftp_disable_download`, `sftp_disable_upload`. SSH reuses its own connection and credentials, so it only takes `enable_sftp`, `sftp_root_directory`, `sftp_disable_download` and `sftp_disable_upload`; Telnet and other protocols have no SFTP. All sftp keys are added even when `enable_sftp` is not true, with a warning that they stay disabled until SFTP is enabled. Other warnings: RDP/VNC with `enable_sftp` true but no `sftp_resource`, and keys the protocol does not support (ignored).  
+  > **Note 9:** VNC display, clipboard and audio options (`pam_settings.connection`, protocol `vnc`): `read_only` (no input accepted), `swap_red_blue` (fixes wrong colors: blue shown as orange/red), `force_lossless` (lossless compression only), `cursor` (`local` default | `remote`), `color_depth` (bits per pixel: `8`, `16`, `24` or `32`; omitted = server decides), `compress_level` (whole number 0-9: 0 = no compression/fastest, 9 = maximum compression), `quality_level` (whole number 0-9: JPEG quality for the `tight` encoding, 0 = lowest, 9 = best), `encodings` (space separated list of `copyrect`, `hextile`, `raw`, `rre`, `tight`, `zrle`, `ultra`, `zlib`, `corre`; a JSON list is also accepted; unknown names are skipped with a warning; omitted = plugin default order `zrle ultra copyrect hextile zlib corre rre raw`), `clipboard_encoding` (`ISO8859-1` default | `UTF-8` | `UTF-16` | `CP1252` | `MacRoman`), `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800), `enable_audio` (opens a second PulseAudio connection) and `audio_servername` (PulseAudio server name; default device when omitted). Booleans accept true/false. Invalid values are ignored with a warning. The Web Vault UI names the compression, quality and encodings options differently, so the Vault does not show the values set here.  
+  > **Note 10:** SSH terminal and session options (`pam_settings.connection`, protocol `ssh`): `font_name` (font family name, free text), `read_only` (no input accepted), `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H), `terminal_type` (the `TERM` value sent to the server, free text; the common values are `xterm`, `xterm-256color`, `vt220`, `vt100`, `ansi`, `linux` - other values are written with a warning because the target host may not know them), `locale` (the `$LANG` value, e.g. `en_US.UTF-8`), `timezone` (the `$TZ` value, an IANA name e.g. `America/New_York`), `server_alive_interval` (whole seconds between SSH keepalive packets: `0` = disabled, the default; the minimum is `2`, `1` is stored as `2` with a warning; negative values are ignored with a warning), plus `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). Invalid values are ignored with a warning.  
+  > **Note 11:** RDP options (`pam_settings.connection`, protocol `rdp`): `initial_program` (full path of the program to run after connecting), `client_name` (shown on Windows servers as `%CLIENTNAME%`; guacd truncates it to 32 bytes - a guacd limitation, longer names are written unchanged with a warning), `server_layout` (keyboard layout: `cs-cz-qwertz`, `da-dk-qwerty`, `de-ch-qwertz`, `de-de-qwertz`, `en-gb-qwerty`, `en-us-qwerty` - the default, `es-es-qwerty`, `es-latam-qwerty`, `failsafe` - Unicode events, `fr-be-azerty`, `fr-ca-qwerty`, `fr-ch-qwertz`, `fr-fr-azerty`, `hu-hu-qwertz`, `it-it-qwerty`, `ja-jp-qwerty`, `nb-no-qwerty`, `no-no-qwerty`, `pl-pl-qwerty`, `pt-br-qwerty`, `pt-pt-qwerty`, `ro-ro-qwerty`, `sv-se-qwerty`, `tr-tr-qwerty`; an unknown name is skipped with a warning and guacd uses `en-us-qwerty`), `timezone` (IANA name, e.g. `America/New_York`; defaults to the client timezone), `enable_touch` (multi-touch), `console` (connect to the console/admin session), `width`, `height` (pixels) and `dpi` (whole numbers greater than 0; defaults follow the connecting client; guacd rounds the width down to a multiple of 4), `color_depth` (bits per pixel: `8`, `16`, `24` or `32`; guacd always uses 32 while the RDP Graphics Pipeline is enabled, which is the default, so lower values are ignored), `force_lossless` (lossless compression only), `read_only` (no input accepted), `normalize_clipboard` (`preserve` = unchanged, `unix` = LF line endings, `windows` = CRLF line endings), `console_audio`, `enable_audio_input` (microphone), `enable_printing`, `printer_name` (name of the redirected printer; defaults to `Guacamole Printer`), performance flags `enable_theming`, `enable_font_smoothing`, `enable_desktop_composition`, `enable_menu_animations` (all off by default) and `disable_bitmap_caching`, `disable_offscreen_caching`, `disable_glyph_caching` (true turns that cache off), `remote_app` (RemoteApp to start - on Windows servers the published name needs the `||` prefix, e.g. `||notepad`), `remote_app_dir` (working directory) and `remote_app_args` (command-line arguments). Booleans accept true/false. Invalid values are ignored with a warning.  
+  > **Note 12:** Telnet options (`pam_settings.connection`, protocol `telnet`): `username_regex` and `password_regex` are POSIX extended regular expressions (case-insensitive) that guacd matches against the server output to find the login and password prompts (defaults `[Ll]ogin:` and `[Pp]assword:`; used only when a username is set). `login_success_regex` and `login_failure_regex` detect a successful or failed login with the same kind of expression - give both or neither: guacd ignores a single one (the import warns and writes it anyway). The patterns are not validated by the import. `font_name` (font family, default `monospace`), `font_size` (points: 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72 or 96, default 12; the closest value is used), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000), `read_only` (no input accepted), `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H), `terminal_type` (the `TERM` value sent to the server, default `linux`; common values `xterm`, `xterm-256color`, `vt220`, `vt100`, `ansi`, `linux` - other values are written with a warning because the target host may not know them) and `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). Telnet has no SFTP: an `sftp` object on a Telnet resource is ignored with a warning. Invalid values are ignored with a warning.  
+  > **Note 13:** Kubernetes options (`pam_settings.connection`, protocol `kubernetes`): `use_ssl` (use SSL/TLS for the connection to the Kubernetes API server, default false), `ignore_server_cert` (accept a server certificate that cannot be validated), `ca_certificate`, `client_certificate` and `client_key` (PEM-encoded), `namespace` (the namespace of the pod), `pod_name` (the pod to connect to - required), `container` (the container inside the pod), `exec_command` (the command to run in the container; omitted = the default shell), `font_name` (font family, default `monospace`), `font_size` (points: 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72 or 96, default 12), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000), `read_only` (no input accepted) and `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H). Invalid values are ignored with a warning. The Web Vault names the exec command option differently, so the Vault does not show the value set here.  
+  > **Note 14:** Database options (`pam_settings.connection`, protocols `mysql`, `postgresql`, `sql-server`, `mariadb`, `oracle`, `mongodb`, `redis`, `elasticsearch`, `clickhouse`, `dynamodb`): `default_database` (database name), `disable_csv_export` / `disable_csv_import` (true blocks CSV download / upload), `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). For `mysql`, `postgresql` and `sql-server` only (the CLI-capable protocols): `font_name` (font family, default `monospace`), `font_size` (points, default 12), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000) and `read_only` (no input accepted). `db_connection_method` (`cli` = guacd database client, `keeperDB` = KeeperDB proxy session, `both` = the user chooses at launch; case-insensitive): for `mysql`, `postgresql` and `sql-server` it is written as given and nothing is written when omitted (CLI); the other seven protocols are KeeperDB-only, so the record always gets `keeperDB` - any other value is replaced with `keeperDB` and a warning says so. `session_persistence` (`none` = incognito, no profile storage; `user` = profile stored per user and resource; `resource` = one profile shared per resource) is written as `rbiSettings.sessionPersistence` and only applies to KeeperDB sessions (`keeperDB` or `both`); with `cli` it has no effect and a warning is printed. The pamDatabase `database_type` has nine values (the Web Vault "Database Type" list): `postgresql`, `postgresql-flexible`, `mysql`, `mysql-flexible`, `mariadb`, `mariadb-flexible`, `mssql`, `oracle` and `mongodb`. `redis`, `elasticsearch`, `clickhouse` and `dynamodb` are chosen through `pam_settings.connection.protocol` instead (leave `database_type` out; `dynamodb` also needs `provider_region`) - the Gateway uses `database_type` first and `connection.protocol` only when `database_type` is empty, so a `database_type` that differs from the connection protocol gets a warning. A KeeperDB-only database resource that has no `pam_settings.connection` at all gets a warning that shows the connection to add, e.g. `"pam_settings": { "connection": { "protocol": "oracle", "db_connection_method": "keeperDB" } }`. Invalid values are ignored with a warning.  
 
 JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records. **Workflow** (approvals / checkout / temporal restrictions) is supported on all four resource types: pamMachine, pamDatabase, pamDirectory, **and** pamRemoteBrowser.
 
@@ -511,6 +562,50 @@ Workflow controls how privileged access to a resource is gated: how many approva
 - **`extend` only applies workflow to newly created resources** (existing resources are not touched).
 </details>
 <details>
+<summary>Port forwarding and Keeper proxies (pam_settings.port_forward)</summary>
+
+`pam_settings.port_forward` (tunneling) is present on pamMachine, pamDatabase and pamDirectory; it sits next to `connection`, not inside it. pamRemoteBrowser has no port forward settings. The keys are written to the record's `pamSettings.portForward`:
+
+| Key | Type | Notes |
+|---|---|---|
+| `port` | string | Remote tunnel port override (the Gateway reads it) |
+| `reuse_port` | boolean | Reuse the last local port (Vault clients only) |
+| `use_specified_local_port` | boolean | Use `local_port` instead of a generated local port (Vault clients only). **Requires `local_port`** |
+| `local_port` | string/number | Local port, 1-65535 (Vault clients only) |
+| `allow_keeper_db_proxy` | boolean | KeeperDB Proxy - **MySQL, MariaDB, PostgreSQL, SQL Server, Oracle, DynamoDB** (not MongoDB) |
+| `allow_keeper_rdp_proxy` | boolean | KeeperRDP Proxy - **RDP** machines |
+| `allow_keeper_ssh_proxy` | boolean | KeeperSSH Proxy - **SSH** machines |
+
+```json
+{
+    "type": "pamDatabase",
+    "title": "PAM MySQL",
+    "pam_settings": {
+        "options": { "tunneling": "on", "connections": "on" },
+        "port_forward": {
+            "port": "3306",
+            "use_specified_local_port": true,
+            "local_port": "13306",
+            "allow_keeper_db_proxy": true
+        },
+        "connection": { "protocol": "mysql", "port": "3306", "launch_credentials": "db-user1" }
+    }
+}
+```
+
+**Validation** - checked for the whole file *before* anything is written to the vault (app, folders, records, DAG), also in `--dry-run`, for both `pam project import` and `pam project extend`. All problems are listed together and the command aborts without changes. Errors:
+- a proxy gate on a protocol it does not support (RDP gate on non-RDP, SSH gate on non-SSH, DB gate on a protocol outside the list above) or without `connection.protocol`;
+- a proxy gate without a launch credential - set `connection.launch_credentials` (not needed with `connection.allow_supply_user`, `allow_supply_host` or `jit_settings.create_ephemeral`; ephemeral JIT does not count for DynamoDB);
+- `use_specified_local_port` without `local_port`, or a `local_port` that is not a valid port number;
+- `connection.allow_keeper_db_proxy` / `connection.allowKeeperDBProxy` - the KeeperDB Proxy gate moved to `port_forward.allow_keeper_db_proxy`.
+
+`port_forward` settings on a resource with `options.tunneling` set to `off` only produce a warning: the values are still stored (like switching the Vault toggle off and on again) but have no effect while tunneling is off.
+
+**Notes:**
+- The proxy gates are read by the Gateway; the Web Vault shows the KeeperRDP / KeeperSSH proxy switches from Vault 18.7.0. `use_specified_local_port`, `local_port` and `reuse_port` are used by Vault clients only (the Gateway and `pam tunnel` ignore them).
+- `pam tunnel edit --keeper-db-proxy` and `--keeper-proxy` write the KeeperDB Proxy gate to `portForward.allowKeeperDBProxy` only. A legacy `connection.allowKeeperDBProxy` on existing records is left as is (the Gateway still honours it as a fallback).
+</details>
+<details>
 <summary>pam_data.resources.pamMachine (RDP)</summary>
 
 ```json
@@ -548,7 +643,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
             "_comment": "Tunneling settings",
             "_comment_port": "remote tunneling port",
             "port": "2222",
-            "reuse_port": true
+            "reuse_port": true,
+            "_comment_proxy": "optional: allow_keeper_rdp_proxy (RDP) - see Port forwarding and Keeper proxies above",
+            "allow_keeper_rdp_proxy": true
         },
         "connection" : {
             "_comment": "Connections settings per protocol - RDP",
@@ -561,6 +658,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
             "recording_include_keys": true,
             "disable_copy": true,
             "disable_paste": true,
+            "clipboard_buffer_size": "10mb",
+            "_comment_clipboard_buffer_size": "default | 256kb | 1mb | 10mb | 50mb (all protocols with clipboard settings, not Kubernetes)",
             "_comment_security": "any|nla|tls|vmconnect|rdp",
             "security": "any",
             "disable_authentication": true,
@@ -574,14 +673,51 @@ Workflow controls how privileged access to a resource is gated: how many approva
                 "sftp_user_credentials": "sftp user2",
                 "sftp_root_directory": "/opt/sftp",
                 "sftp_upload_directory": "/opt/uploads",
-                "sftp_keepalive_interval": 12
+                "sftp_keepalive_interval": 12,
+                "sftp_timeout": 30,
+                "sftp_disable_download": false,
+                "sftp_disable_upload": false
             },
+            "_comment_sftp": "RDP/VNC sftp object: see section 'SFTP settings (RDP, SSH, VNC)'; all sftp keys are added even when enable_sftp is not true (warning: they stay disabled until SFTP is enabled)",
             "disable_audio": true,
-            "disable_dynamic_resizing": false,
+            "resize_method": "display-update",
+            "_comment_resize_method": "RDP resize-method: \"\" (empty) = no dynamic resizing | display-update (default when omitted) | reconnect (replaces the removed disable_dynamic_resizing)",
             "enable_full_window_drag": true,
             "enable_wallpaper": true,
             "_comment_drive_redirection_path": "none|user|resource",
-            "drive_redirection_path": "resource"
+            "drive_redirection_path": "resource",
+            "initial_program": "C:\\Windows\\notepad.exe",
+            "client_name": "keeper-client",
+            "_comment_server_layout": "keyboard layout, e.g. en-us-qwerty (default) | en-gb-qwerty | de-de-qwertz | fr-fr-azerty | ja-jp-qwerty | failsafe",
+            "server_layout": "en-us-qwerty",
+            "timezone": "America/New_York",
+            "enable_touch": false,
+            "console": false,
+            "_comment_display": "width/height in pixels and dpi: whole numbers greater than 0",
+            "width": 1920,
+            "height": 1080,
+            "dpi": 96,
+            "_comment_color_depth": "bits per pixel: 8 | 16 | 24 | 32. guacd uses 32 while the RDP Graphics Pipeline is enabled (default) and ignores other values",
+            "color_depth": 32,
+            "force_lossless": false,
+            "read_only": false,
+            "_comment_normalize_clipboard": "preserve | unix (LF line endings) | windows (CRLF line endings)",
+            "normalize_clipboard": "preserve",
+            "console_audio": false,
+            "enable_audio_input": false,
+            "enable_printing": false,
+            "printer_name": "Keeper Printer",
+            "enable_theming": false,
+            "enable_font_smoothing": true,
+            "enable_desktop_composition": false,
+            "enable_menu_animations": false,
+            "disable_bitmap_caching": false,
+            "disable_offscreen_caching": false,
+            "disable_glyph_caching": false,
+            "_comment_remote_app": "Windows servers: the published RemoteApp name needs the || prefix, e.g. ||notepad",
+            "remote_app": "||notepad",
+            "remote_app_dir": "C:\\Users\\Public",
+            "remote_app_args": "/safe"
         }
     }
 }
@@ -621,7 +757,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
 		"port_forward": {
 			"_comment": "Tunneling settings",
 			"port": "2222",
-			"reuse_port": true
+			"reuse_port": true,
+			"allow_keeper_ssh_proxy": true
 		},
 		"connection" : {
 			"_comment": "Connections settings per protocol - SSH",
@@ -638,9 +775,20 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"scrollback": 5000,
 			"public_host_key": "<Public Host Key (Base64)>",
 			"command": "/bin/bash",
+			"font_name": "Menlo",
+			"read_only": false,
+			"_comment_backspace": "127 = Delete (Ctrl-?, default) | 8 = Backspace (Ctrl-H)",
+			"backspace": "127",
+			"terminal_type": "xterm-256color",
+			"locale": "en_US.UTF-8",
+			"timezone": "America/New_York",
+			"_comment_server_alive_interval": "seconds between SSH keepalive packets; 0 = disabled (default), minimum 2",
+			"server_alive_interval": 30,
 			"sftp": {
 			  "enable_sftp": true,
-			  "sftp_root_directory": "/tmp"
+			  "sftp_root_directory": "/tmp",
+			  "sftp_disable_download": false,
+			  "sftp_disable_upload": false
 			}
 		}
 	}
@@ -692,13 +840,35 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"disable_paste": true,
 			"destination_host": "127.0.0.2",
 			"destination_port": "2121",
+			"disable_display_resize": false,
+			"_comment_disable_display_resize": "VNC only (disable-display-resize): do not send display resize requests; RDP uses resize_method instead",
+			"read_only": false,
+			"swap_red_blue": false,
+			"force_lossless": false,
+			"_comment_cursor": "local (default, rendered by the client) | remote (rendered on the server; the local pointer is shown as a small dot)",
+			"cursor": "local",
+			"_comment_color_depth": "bits per pixel: 8 | 16 | 24 | 32 (omit to let the server decide)",
+			"color_depth": "24",
+			"_comment_compress_level": "0 (no compression, fastest) .. 9 (maximum compression); Web Vault presets: 0 None, 3 Low, 6 Balanced, 8 High, 9 Maximum",
+			"compress_level": 6,
+			"_comment_quality_level": "0 (lowest) .. 9 (best) JPEG quality, used with the tight encoding; Web Vault presets: 0 Low, 3 Medium, 6 High, 9 Best",
+			"quality_level": 6,
+			"_comment_encodings": "space separated list (a JSON list also works): copyrect hextile raw rre tight zrle (also ultra zlib corre); omit for the default order",
+			"encodings": "tight zrle",
+			"_comment_clipboard_encoding": "ISO8859-1 (default) | UTF-8 | UTF-16 | CP1252 | MacRoman",
+			"clipboard_encoding": "UTF-8",
+			"enable_audio": true,
+			"audio_servername": "pulse.example.com",
 			"sftp": {
 			  "enable_sftp": true,
 			  "sftp_resource": "Machine2",
 			  "sftp_user_credentials": "sftp user2",
 			  "sftp_root_directory": "/opt/sftp",
 			  "sftp_upload_directory": "/opt/uploads",
-			  "sftp_keepalive_interval": 12
+			  "sftp_keepalive_interval": 12,
+			  "sftp_timeout": 30,
+			  "sftp_disable_download": false,
+			  "sftp_disable_upload": false
 			}
 		}
 	}
@@ -755,7 +925,12 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"username_regex": "regex: username",
 			"password_regex": "regex: password",
 			"login_success_regex": "regex: login success",
-			"login_failure_regex": "regex: login failure"
+			"login_failure_regex": "regex: login failure",
+			"font_name": "Menlo",
+			"read_only": false,
+			"_comment_backspace": "127 = Delete (Ctrl-?, default) | 8 = Backspace (Ctrl-H)",
+			"backspace": "127",
+			"terminal_type": "xterm-256color"
 		}
 	}
 }
@@ -812,7 +987,14 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"ignore_server_cert": true,
 			"ca_certificate": "cert authority certificate\nline2",
 			"client_certificate": "client certificate\nline2\n",
-			"client_key": "client key\nline2"
+			"client_key": "client key\nline2",
+			"use_ssl": true,
+			"_comment_exec_command": "command to run in the container; omit for the default shell",
+			"exec_command": "/bin/bash",
+			"font_name": "Menlo",
+			"read_only": false,
+			"_comment_backspace": "127 = Delete (Ctrl-?, default) | 8 = Backspace (Ctrl-H)",
+			"backspace": "127"
 		}
 	}
 }
@@ -854,7 +1036,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					"allow_supply_host": false,
 					"port_forward": {
 						"port": "2222",
-						"reuse_port": true
+						"reuse_port": true,
+						"allow_keeper_db_proxy": true
 					},
 					"connection" : {
 						"protocol": "mysql",
@@ -871,7 +1054,13 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"scrollback": 5000,
 						"disable_csv_import": true,
 						"disable_csv_export": true,
-						"default_database": "db1"
+						"default_database": "db1",
+						"font_name": "Menlo",
+						"read_only": false,
+						"_comment_db_connection_method": "cli | keeperDB | both (omit for cli on mysql / postgresql / sql-server; KeeperDB-only protocols always use keeperDB)",
+						"db_connection_method": "both",
+						"_comment_session_persistence": "KeeperDB sessions only: none (incognito) | user (profile per user and resource) | resource (profile shared per resource)",
+						"session_persistence": "user"
 					}
 				},
 				"users": []
@@ -989,6 +1178,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
+						"clipboard_buffer_size": "10mb",
+						"_comment_clipboard_buffer_size": "default | 256kb | 1mb | 10mb | 50mb (case-insensitive); default or omitted = unset",
+						"allow_supply_user": true,
 						"autofill_credentials": "rbi_hotmail_user1",
 						"allow_url_manipulation": true,
 						"allowed_url_patterns": "*.com\n*.org",
@@ -999,6 +1191,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"_comment_session_persistence": "none | user | resource",
 						"allow_file_uploads": true,
 						"allow_file_downloads": true,
+						"accept_language": "en-US,en;q=0.9",
+						"suppress_js_dialogs": true,
 						"disable_audio": false,
 						"audio_channels": 2,
 						"_comment_audio_channels": "1 (mono) or 2 (stereo)",

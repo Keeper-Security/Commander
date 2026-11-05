@@ -1135,7 +1135,12 @@ class PamUserObject():
             if password_empty:
                 logging.debug("PAM User (pamDirectory/AD) has empty password (valid for AD).")
         elif password_empty:
-            logging.warning("PAM User is missing required field `password`")
+            who = self.title or self.login or self.uid or '(untitled)'
+            login = f' login={self.login}' if self.login else ''
+            logging.warning(
+                f'PAM User is missing required field `password` '
+                f'(title="{who}"{login})',
+            )
         if not self.rotation_settings:
             logging.debug("PAM User is missing rotation settings")
         if isinstance(self.rotation_settings, PamRotationSettingsObject):
@@ -1318,7 +1323,22 @@ class PamBaseMachineParser():
         dbtype = str(data["database_type"]) if "database_type" in data else None
         pamdbt = next((s for s in pam_db_types if s.lower() == str(dbtype).lower()), None)
         if dbtype and not pamdbt:
-            logging.error(f"""Unexpected DB type "{dbtype}" - should be one of the known DB types "{pam_db_types}" """)
+            # NB! The Web Vault "Database Type" dropdown has only pam_db_types. redis, elasticsearch, clickhouse and dynamodb
+            # are connection protocols only (ConnectionProtocol); the Gateway resolves the DB type from the record's
+            # databaseType field first and falls back to pam_settings.connection.protocol when it is empty.
+            title = str(data.get("title", "") or "")
+            known = ", ".join(pam_db_types)
+            proto = KEEPERDB_ONLY_DB_PROTOCOLS.get(dbtype.lower())
+            if proto:
+                logging.warning(
+                    f"""PAM Database "{title}": database_type '{dbtype}' is not in the Web Vault's Database Type list ({known}) """
+                    "- written as given. The Gateway accepts it but the Web Vault cannot display it. "
+                    f"""For {proto} leave database_type out and set the connection protocol instead: """
+                    f""""pam_settings": {{ "connection": {{ "protocol": "{proto}", "db_connection_method": "keeperDB" }} }}""")
+            else:
+                logging.error(
+                    f"""PAM Database "{title}": unknown database_type '{dbtype}' - written as given, but it is not in the """
+                    f"Web Vault's Database Type list ({known}) and the Gateway may not recognize it")
             pamdbt = dbtype.lower()  # use provided db type "as-is"
         if not pamdbt and obj.type == "pamDatabase":
             logging.debug(f"""pamDatabase - unable to determine DB type: database_type should be one of "{pam_db_types}" """)
@@ -1505,6 +1525,8 @@ class PamMachineObject():
         errmsg = validate_pam_connection(self.pam_settings.connection, "pamMachine") if self.pam_settings else ""
         if errmsg:
             logging.warning(f"""PAM Machine "{self.title}" has incorrect connection setup: {errmsg}""")
+        for msg in (getattr(self.pam_settings, "sftp_warnings", None) or []):
+            logging.warning(f"""PAM Machine "{self.title}": {msg}""")
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"PAM Machine uid_imported is not a valid UID: {self.uid_imported}")
 
@@ -1557,6 +1579,17 @@ def validate_pam_connection(connection, record_type):
         logging.debug(errmsg)
     return errmsg
 
+
+# pamDatabase database_type -> connection protocol of the KeeperDB-only database protocols (no guacd CLI plugin)
+KEEPERDB_ONLY_DB_PROTOCOLS = {
+    "mariadb": "mariadb", "mariadb-flexible": "mariadb", "oracle": "oracle", "mongodb": "mongodb",
+    "redis": "redis", "elasticsearch": "elasticsearch", "clickhouse": "clickhouse", "dynamodb": "dynamodb",
+}
+# every database_type (Web Vault Database Type list + the Gateway-accepted extras) -> the connection protocol it implies
+DB_TYPE_TO_PROTOCOL = {
+    "postgresql": "postgresql", "postgresql-flexible": "postgresql", "mysql": "mysql", "mysql-flexible": "mysql",
+    "mssql": "sql-server", **KEEPERDB_ONLY_DB_PROTOCOLS,
+}
 
 class PamDatabaseObject():
     def __init__(self):
@@ -1695,6 +1728,26 @@ class PamDatabaseObject():
         errmsg = validate_pam_connection(self.pam_settings.connection, "pamDatabase") if self.pam_settings else ""
         if errmsg:
             logging.warning(f"""PAM Database "{self.title}" has incorrect connection setup: {errmsg}""")
+        for msg in (getattr(self.pam_settings, "sftp_warnings", None) or []):
+            logging.warning(f"""PAM Database "{self.title}": {msg}""")
+        # KeeperDB-only protocols need dbConnectionMethod=keeperDB on the record (the Gateway reads only the stored value),
+        # and it is only written when a connection is given - the record would be created without it.
+        proto = KEEPERDB_ONLY_DB_PROTOCOLS.get(str(self.databaseType or "").lower())
+        if proto and not (self.pam_settings and self.pam_settings.connection):
+            logging.warning(
+                f"""PAM Database "{self.title}" ({proto}) has no pam_settings.connection - {proto} is a KeeperDB-only protocol """
+                "and its record needs db_connection_method=keeperDB, which is only written when a connection is given. "
+                f"""Add this to the resource: "pam_settings": {{ "connection": {{ "protocol": "{proto}", "db_connection_method": "keeperDB" }} }}""")
+        # The Gateway resolves the database type from the record's databaseType field FIRST and uses
+        # connection.protocol only when databaseType is empty - a conflict makes the session run as databaseType.
+        conn = self.pam_settings.connection if self.pam_settings else None
+        conn_proto = getattr(getattr(conn, "protocol", None), "value", None)
+        type_proto = DB_TYPE_TO_PROTOCOL.get(str(self.databaseType or "").lower())
+        if conn_proto and type_proto and conn_proto != type_proto:
+            logging.warning(
+                f"""PAM Database "{self.title}": database_type '{self.databaseType}' (protocol {type_proto}) conflicts with """
+                f"pam_settings.connection.protocol '{conn_proto}' - the Gateway uses database_type first, so this resource will be "
+                f"handled as {type_proto}. Remove database_type or make them match.")
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"PAM Database uid_imported is not a valid UID: {self.uid_imported}")
 
@@ -1844,6 +1897,8 @@ class PamDirectoryObject():
         errmsg = validate_pam_connection(self.pam_settings.connection, "pamDirectory") if self.pam_settings else ""
         if errmsg:
             logging.warning(f"""PAM Directory "{self.title}" has incorrect connection setup: {errmsg}""")
+        for msg in (getattr(self.pam_settings, "sftp_warnings", None) or []):
+            logging.warning(f"""PAM Directory "{self.title}": {msg}""")
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"PAM Directory uid_imported is not a valid UID: {self.uid_imported}")
 
@@ -2026,10 +2081,38 @@ def parse_dag_option(option: Optional[str]) -> Optional[str]:
         return key
     return None
 
+# Keep in sync with RBI_CLIPBOARD_BUFFER_SIZES in commands/tunnel_and_connections.py (pam rbi edit --clipboard-buffer-size).
+CLIPBOARD_BUFFER_SIZES = {
+    "256kb": 256 * 1024,
+    "1mb": 1024 * 1024,
+    "10mb": 10 * 1024 * 1024,
+    "50mb": 50 * 1024 * 1024,
+}
+
+def parse_clipboard_buffer_size(value: Any) -> Optional[int]:
+    """Name (256kb/1mb/10mb/50mb, case-insensitive) or the matching byte count -> bytes; None if unset/"default"/invalid."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key in ("", "default"):
+            return None
+        if key in CLIPBOARD_BUFFER_SIZES:
+            return CLIPBOARD_BUFFER_SIZES[key]
+        if key.isdecimal() and int(key) in CLIPBOARD_BUFFER_SIZES.values():
+            return int(key)
+    elif isinstance(value, int) and value in CLIPBOARD_BUFFER_SIZES.values():
+        return value
+    logging.warning(f"clipboard_buffer_size must be one of "
+                    f"default, {', '.join(CLIPBOARD_BUFFER_SIZES)}; got: {value!r} (skipped)")
+    return None
+
 class ClipboardConnectionSettings:
-    def __init__(self, disableCopy: Optional[bool] = None, disablePaste: Optional[bool] = None):
+    def __init__(self, disableCopy: Optional[bool] = None, disablePaste: Optional[bool] = None,
+                 clipboardBufferSize: Optional[int] = None):
         self.disableCopy = disableCopy
         self.disablePaste = disablePaste
+        self.clipboardBufferSize = clipboardBufferSize  # bytes (256kb/1mb/10mb/50mb)
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2040,27 +2123,38 @@ class ClipboardConnectionSettings:
 
         obj.disableCopy = utils.value_to_boolean(data.get("disable_copy", None))
         obj.disablePaste = utils.value_to_boolean(data.get("disable_paste", None))
+        obj.clipboardBufferSize = parse_clipboard_buffer_size(data.get("clipboard_buffer_size", None))
         return obj
 
 def clipboard_connection_settings(connection_settings: Union[PamConnectionSettings, ConnectionSettingsHTTP]) -> Optional[ClipboardConnectionSettings]:
-    if connection_settings and connection_settings.protocol and connection_settings.protocol in (
-        ConnectionProtocol.RDP,
-        ConnectionProtocol.VNC,
-        ConnectionProtocol.TELNET,
-        ConnectionProtocol.SSH,
-        ConnectionProtocol.SQLSERVER,
-        ConnectionProtocol.MYSQL,
-        ConnectionProtocol.POSTGRESQL,
-        ConnectionProtocol.HTTP
+    # Same set as the Web Vault clipboardConnectionSettings: RDP, VNC, Telnet, SSH, HTTP (RBI) and all database protocols
+    # (Kubernetes has no clipboard settings in the Web Vault).
+    if connection_settings and connection_settings.protocol and (
+        connection_settings.protocol in (
+            ConnectionProtocol.RDP,
+            ConnectionProtocol.VNC,
+            ConnectionProtocol.TELNET,
+            ConnectionProtocol.SSH,
+            ConnectionProtocol.HTTP,
+        ) or is_database_protocol(connection_settings.protocol)
     ):
         disableCopy = getattr(connection_settings, "disableCopy", None)
         disablePaste = getattr(connection_settings, "disablePaste", None)
-        return ClipboardConnectionSettings(disableCopy, disablePaste)
+        clipboardBufferSize = getattr(connection_settings, "clipboardBufferSize", None)
+        return ClipboardConnectionSettings(disableCopy, disablePaste, clipboardBufferSize)
 
 class SFTPRootDirectorySettings:
-    def __init__(self, enableSftp: Optional[bool] = None, sftpRootDirectory: Optional[str] = None):
+    def __init__(
+        self,
+        enableSftp: Optional[bool] = None,
+        sftpRootDirectory: Optional[str] = None,
+        sftpDisableDownload: Optional[bool] = None,
+        sftpDisableUpload: Optional[bool] = None
+    ):
         self.enableSftp = enableSftp
         self.sftpRootDirectory = sftpRootDirectory
+        self.sftpDisableDownload = sftpDisableDownload
+        self.sftpDisableUpload = sftpDisableUpload
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2072,6 +2166,8 @@ class SFTPRootDirectorySettings:
         obj.enableSftp = utils.value_to_boolean(data.get("enable_sftp", None))
         val = data.get("sftp_root_directory", None)
         if isinstance(val, str): obj.sftpRootDirectory = val
+        obj.sftpDisableDownload = utils.value_to_boolean(data.get("sftp_disable_download", None))
+        obj.sftpDisableUpload = utils.value_to_boolean(data.get("sftp_disable_upload", None))
         return obj
 
     def to_dict(self):
@@ -2080,6 +2176,10 @@ class SFTPRootDirectorySettings:
             dict["enableSftp"] = self.enableSftp
         if self.sftpRootDirectory and isinstance(self.sftpRootDirectory, str) and self.sftpRootDirectory.strip():
             dict["sftpRootDirectory"] = self.sftpRootDirectory.strip()
+        if self.sftpDisableDownload is not None and isinstance(self.sftpDisableDownload, bool):
+            dict["sftpDisableDownload"] = self.sftpDisableDownload
+        if self.sftpDisableUpload is not None and isinstance(self.sftpDisableUpload, bool):
+            dict["sftpDisableUpload"] = self.sftpDisableUpload
 
         return dict
 
@@ -2091,13 +2191,17 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
         sftpResource: Optional[List[str]] = None,
         sftpUser: Optional[List[str]] = None,
         sftpDirectory: Optional[str] = None,
-        sftpServerAliveInterval: Optional[int] = None
+        sftpServerAliveInterval: Optional[int] = None,
+        sftpDisableDownload: Optional[bool] = None,
+        sftpDisableUpload: Optional[bool] = None,
+        sftpTimeout: Optional[int] = None
     ):
-        super().__init__(enableSftp, sftpRootDirectory)
+        super().__init__(enableSftp, sftpRootDirectory, sftpDisableDownload, sftpDisableUpload)
         self.sftpResource = sftpResource
         self.sftpUser = sftpUser
         self.sftpDirectory = sftpDirectory
         self.sftpServerAliveInterval = sftpServerAliveInterval
+        self.sftpTimeout = sftpTimeout
         self.sftpResourceUid = None # resolve from sftpResource
         self.sftpUserUid = None # resolve from sftpUser
 
@@ -2112,6 +2216,8 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
         if rds:
             obj.enableSftp = rds.enableSftp
             obj.sftpRootDirectory = rds.sftpRootDirectory
+            obj.sftpDisableDownload = rds.sftpDisableDownload
+            obj.sftpDisableUpload = rds.sftpDisableUpload
 
         # which is the resource record (not yet in web UI)
         obj.sftpResource = parse_multiline(data, "sftp_resource", "Error parsing sftp_resource")
@@ -2121,6 +2227,9 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
         val = data.get("sftp_keepalive_interval", None)
         if type(val) is int: obj.sftpServerAliveInterval = abs(val)
         elif val and str(val).isdecimal(): obj.sftpServerAliveInterval = int(val)
+        val = data.get("sftp_timeout", None)
+        if type(val) is int: obj.sftpTimeout = abs(val)
+        elif val and str(val).isdecimal(): obj.sftpTimeout = int(val)
 
         return obj
 
@@ -2130,6 +2239,10 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
             dict["sftpRootDirectory"] = self.sftpRootDirectory.strip()
         if self.enableSftp is not None and isinstance(self.enableSftp, bool):
             dict["enableSftp"] = self.enableSftp
+        if self.sftpDisableDownload is not None and isinstance(self.sftpDisableDownload, bool):
+            dict["sftpDisableDownload"] = self.sftpDisableDownload
+        if self.sftpDisableUpload is not None and isinstance(self.sftpDisableUpload, bool):
+            dict["sftpDisableUpload"] = self.sftpDisableUpload
 
         # if resolved from sftpResource
         if self.sftpResourceUid and isinstance(self.sftpResourceUid, str) and self.sftpResourceUid.strip():
@@ -2142,8 +2255,45 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
             dict["sftpDirectory"] = self.sftpDirectory.strip()
         if self.sftpServerAliveInterval and type(self.sftpServerAliveInterval) is int and abs(self.sftpServerAliveInterval) > 0:
             dict["sftpServerAliveInterval"] = abs(self.sftpServerAliveInterval)
+        if self.sftpTimeout and type(self.sftpTimeout) is int and abs(self.sftpTimeout) > 0:
+            dict["sftpTimeout"] = abs(self.sftpTimeout)
 
         return dict
+
+_SFTP_ROOT_KEYS = ("enable_sftp", "sftp_root_directory", "sftp_disable_download", "sftp_disable_upload")
+_SFTP_CONNECTION_KEYS = _SFTP_ROOT_KEYS + (
+    "sftp_resource", "sftp_user_credentials", "sftp_upload_directory", "sftp_keepalive_interval", "sftp_timeout")
+
+def sftp_import_warnings(cdata: dict) -> List[str]:
+    """Warnings (never errors) for the `sftp` object of pam_settings.connection.
+
+    SFTP exception: all sftp keys are still added when enable_sftp is not true -
+    they just stay disabled until SFTP is enabled.
+    """
+    msgs: List[str] = []
+    sftp = cdata.get("sftp", None) if isinstance(cdata, dict) else None
+    if not isinstance(sftp, dict) or not sftp:
+        return msgs
+    proto = str(cdata.get("protocol", "") or "").strip().lower()
+    if proto not in ("rdp", "ssh", "vnc"):
+        msgs.append(f"""SFTP settings are not supported for protocol "{proto[:24]}" - ignored""")
+        return msgs
+
+    supported = _SFTP_ROOT_KEYS if proto == "ssh" else _SFTP_CONNECTION_KEYS
+    if proto == "ssh":
+        extra = sorted(k for k in sftp if k in _SFTP_CONNECTION_KEYS and k not in _SFTP_ROOT_KEYS)
+        if extra:
+            msgs.append(f"SFTP keys not supported for SSH (it uses its own connection) - ignored: {', '.join(extra)}")
+
+    enabled = utils.value_to_boolean(sftp.get("enable_sftp", None))
+    other = [k for k in sftp if k in supported and k != "enable_sftp"]
+    if not enabled and other:
+        msgs.append("SFTP settings are set but enable_sftp is not true - they stay disabled until SFTP is enabled")
+    if enabled and proto in ("rdp", "vnc"):
+        res = sftp.get("sftp_resource", None)
+        if not (res and (res if isinstance(res, str) else str(res)).strip()):
+            msgs.append("enable_sftp is true but sftp_resource (SFTP server) is missing")
+    return msgs
 
 def sftp_enabled(connection_settings: Union[PamConnectionSettings, ConnectionSettingsHTTP]) -> Optional[bool]:
     if connection_settings and connection_settings.protocol and connection_settings.protocol in (
@@ -2159,10 +2309,13 @@ def sftp_enabled(connection_settings: Union[PamConnectionSettings, ConnectionSet
 class TerminalDisplayConnectionSettings:
     fontSizes: List[int] = [8,9,10,11,12,14,18,24,30,36,48,60,72,96]
     def __init__(self, colorScheme: Optional[str] = None, fontSize: Optional[int] = None,
-                 scrollback: Optional[int] = None):
+                 scrollback: Optional[int] = None, fontName: Optional[str] = None,
+                 readOnly: Optional[bool] = None):
         self.colorScheme = colorScheme
         self.fontSize = fontSize
         self.scrollback = scrollback
+        self.fontName = fontName  # font-name: font family name (Web Vault: free text)
+        self.readOnly = readOnly  # read-only: no input accepted at all
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2194,6 +2347,43 @@ class TerminalDisplayConnectionSettings:
                     obj.scrollback = parsed
             except (TypeError, ValueError):
                 logging.warning(f"Terminal Display Connection Settings: invalid scrollback value: {val!r}")
+
+        val = data.get("font_name", None)
+        if isinstance(val, str) and val.strip(): obj.fontName = val.strip()
+        elif val is not None and val != "": logging.warning(f"Terminal Display Connection Settings: font_name must be a string, got: {val!r} (skipped)")
+        obj.readOnly = utils.value_to_boolean(data.get("read_only", None))
+        return obj
+
+# Terminal backspace key (guacd backspace): 127 = Delete (Ctrl-?, default), 8 = Backspace (Ctrl-H)
+TERMINAL_BACKSPACE_VALUES = ("127", "8")
+
+class TerminalBehaviorConnectionSettings:
+    """Terminal behavior shared by the terminal protocols (SSH, Telnet, Kubernetes) - mirrors the Web Vault
+    `TerminalBehaviorConnectionSettingsFields` (backspace). terminalType is declared per protocol, like in the Web Vault."""
+    def __init__(self, backspace: Optional[str] = None):
+        self.backspace = backspace  # "127" (Delete, default) | "8" (Backspace)
+        # [Do not remove] NOT processed on purpose (as of 2026-11-03):
+        #   typescript_path / typescript_name / create_typescript_path / typescript_write_existing - the Gateway owns where
+        #     typescript (text session) recordings are stored and blocks these arguments (it never forwards them to guacd),
+        #     so a value here would be silently dropped. Use text_session_recording in pam_settings.options instead.
+        # self.typescriptPath = None
+        # self.typescriptName = None
+        # self.createTypescriptPath = None
+        # self.typescriptWriteExisting = None
+
+    @classmethod
+    def load(cls, data: Union[str, dict]):
+        obj = cls()
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: logging.error(f"Terminal Behavior Connection Settings failed to load from: {str(data)[:80]}")
+        if not isinstance(data, dict): return obj
+
+        val = data.get("backspace", None)
+        if val is not None and val != "" and not isinstance(val, bool) and str(val).strip() in TERMINAL_BACKSPACE_VALUES:
+            obj.backspace = str(val).strip()
+        elif val is not None and val != "":
+            logging.warning(f"Terminal Behavior Connection Settings: backspace must be one of {', '.join(TERMINAL_BACKSPACE_VALUES)} "
+                            f"(127 = Delete, 8 = Backspace), got: {val!r} (skipped)")
         return obj
 
 class BaseConnectionSettings:
@@ -2205,6 +2395,15 @@ class BaseConnectionSettings:
         self.userRecordUid = None  # resolved from userRecords
         self.launch_credentials = launch_credentials  # title or login of pamUser for launch
         self.launchRecordUid = None  # resolved from launch_credentials
+        # [Do not remove] NOT processed on purpose (as of 2026-11-03):
+        #   username / password / private_key / passphrase / public_key as connection settings - the Gateway reads credentials
+        #     only from the linked user record and ignores them in connection settings. Define a pamUser and link it with
+        #     administrative_credentials / launch_credentials instead.
+        # self.username = None
+        # self.password = None
+        # self.privateKey = None
+        # self.passphrase = None
+        # self.publicKey = None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2224,6 +2423,45 @@ class BaseConnectionSettings:
         if creds: obj.launch_credentials = creds
 
         return obj
+
+# RDP resize-method (KCM): "" = no dynamic resizing, "display-update", "reconnect".
+RDP_RESIZE_METHODS = ("display-update", "reconnect")
+RDP_RESIZE_METHOD_DEFAULT = "display-update"  # Web Vault default; used when resize_method is omitted
+
+def parse_rdp_resize_method(value: Any) -> Optional[str]:
+    """"" / "display-update" / "reconnect" (case-insensitive) -> canonical value; None if omitted or invalid (warns)."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key == "" or key in RDP_RESIZE_METHODS:
+            return key
+    logging.warning(f"ConnectionSettingsRDP: resize_method must be one of \"\" (no dynamic resizing), "
+                    f"{', '.join(RDP_RESIZE_METHODS)}; got: {value!r} - using the default "
+                    f"\"{RDP_RESIZE_METHOD_DEFAULT}\"")
+    return None
+
+# RDP option domains (see options-rdp-plan.md "Units and allowed values")
+RDP_COLOR_DEPTHS = (8, 16, 24, 32)  # bits per pixel; guacd forces 32 while the RDP Graphics Pipeline (GFX) is enabled (default)
+RDP_NORMALIZE_CLIPBOARD = ("preserve", "unix", "windows")  # unix = LF line endings, windows = CRLF
+RDP_CLIENT_NAME_MAX_BYTES = 32  # NB! guacd limitation (RDP_CLIENT_HOSTNAME_SIZE in rdp/settings.h, a build-time constant)
+RDP_DEFAULT_SERVER_LAYOUT = "en-us-qwerty"  # guacd GUAC_DEFAULT_KEYMAP, used for an unknown or missing layout
+# KCM connection form (rdp.json) keyboard layouts; the Web Vault UI offers a subset of 17
+RDP_SERVER_LAYOUTS = (
+    "cs-cz-qwertz", "da-dk-qwerty", "de-ch-qwertz", "de-de-qwertz", "en-gb-qwerty", "en-us-qwerty", "es-es-qwerty",
+    "es-latam-qwerty", "failsafe", "fr-be-azerty", "fr-ca-qwerty", "fr-ch-qwertz", "fr-fr-azerty", "hu-hu-qwertz",
+    "it-it-qwerty", "ja-jp-qwerty", "nb-no-qwerty", "no-no-qwerty", "pl-pl-qwerty", "pt-br-qwerty", "pt-pt-qwerty",
+    "ro-ro-qwerty", "sv-se-qwerty", "tr-tr-qwerty",
+)
+
+def parse_str_setting(data: dict, key: str, owner: str, hint: str = "a string") -> Optional[str]:
+    """Non-empty stripped string or None; a non-string, non-empty value warns and is skipped."""
+    val = data.get(key, None)
+    if isinstance(val, str):
+        return val.strip() or None
+    if val is not None and val != "":
+        logging.warning(f"{owner}: {key} must be {hint}, got: {val!r} (skipped)")
+    return None
 
 class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings):
     protocol = ConnectionProtocol.RDP
@@ -2246,7 +2484,44 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         resizeMethod: Optional[str] = None,
         enableWallpaper: Optional[bool] = None,
         enableFullWindowDrag: Optional[bool] = None,
-        driveRedirectionPath: Optional[str] = None
+        driveRedirectionPath: Optional[str] = None,
+        initialProgram: Optional[str] = None,
+        clientName: Optional[str] = None,
+        serverLayout: Optional[str] = None,
+        timezone: Optional[str] = None,
+        enableTouch: Optional[bool] = None,
+        console: Optional[bool] = None,
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        dpi: Optional[int] = None,
+        colorDepth: Optional[int] = None,
+        forceLossless: Optional[bool] = None,
+        readOnly: Optional[bool] = None,
+        normalizeClipboard: Optional[str] = None,
+        consoleAudio: Optional[bool] = None,
+        enableAudioInput: Optional[bool] = None,
+        enablePrinting: Optional[bool] = None,
+        printerName: Optional[str] = None,
+        enableTheming: Optional[bool] = None,
+        enableFontSmoothing: Optional[bool] = None,
+        enableDesktopComposition: Optional[bool] = None,
+        enableMenuAnimations: Optional[bool] = None,
+        disableBitmapCaching: Optional[bool] = None,
+        disableOffscreenCaching: Optional[bool] = None,
+        disableGlyphCaching: Optional[bool] = None,
+        remoteApp: Optional[str] = None,
+        remoteAppDir: Optional[str] = None,
+        remoteAppArgs: Optional[str] = None,
+        driveRedirectionName: Optional[str] = None,
+        disableDownload: Optional[bool] = None,
+        disableUpload: Optional[bool] = None,
+        timeout: Optional[int] = None,
+        certTofu: Optional[bool] = None,
+        certFingerprints: Optional[str] = None,
+        disableGfx: Optional[bool] = None,
+        staticChannels: Optional[str] = None,
+        wol: Optional[WolConnectionSettings] = None,
+        recordingFilter: Optional[RecordingFilterConnectionSettings] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
@@ -2258,13 +2533,69 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         self.preconnectionBlob = preconnectionBlob
         self.sftp = sftp if isinstance(sftp, SFTPConnectionSettings) else None
         self.disableAudio = disableAudio
-        self.resizeMethod = resizeMethod # disable_dynamic_resizing ? "" : "display-update"
-        # resize-method: "" | "display-update" | "reconnect"
+        self.resizeMethod = resizeMethod  # resize-method: "" (none) | "display-update" | "reconnect"
         # Performance Properties
         self.enableWallpaper = enableWallpaper
         self.enableFullWindowDrag = enableFullWindowDrag
         # Device Redirection: "none" | "user" | "resource"
         self.driveRedirectionPath = driveRedirectionPath
+        # In the Web Vault UI (RDP Basic / Display / Clipboard / Device redirection / Performance / Remote App sections)
+        self.initialProgram = initialProgram  # initial-program: full path of the program to run after connecting
+        self.clientName = clientName  # client-name: shown on Windows servers as %CLIENTNAME%; guacd truncates it to 32 bytes
+        self.serverLayout = serverLayout  # server-layout: keyboard layout name (RDP_SERVER_LAYOUTS)
+        self.timezone = timezone  # timezone: IANA name, e.g. America/New_York (free text)
+        self.enableTouch = enableTouch  # enable-touch: multi-touch via the RDPEI channel
+        self.console = console  # console: connect to the console (admin) session
+        self.width = width  # width: pixels (> 0)
+        self.height = height  # height: pixels (> 0)
+        self.dpi = dpi  # dpi: effective resolution of the display (> 0)
+        self.colorDepth = colorDepth  # color-depth: bits per pixel 8 | 16 | 24 | 32 (a number, like the Web Vault)
+        self.forceLossless = forceLossless  # force-lossless: lossless compression only
+        self.readOnly = readOnly  # read-only: no input accepted at all
+        self.normalizeClipboard = normalizeClipboard  # normalize-clipboard: preserve | unix | windows
+        self.consoleAudio = consoleAudio  # console-audio: audio explicitly enabled in the console session
+        self.enableAudioInput = enableAudioInput  # enable-audio-input: microphone support
+        self.enablePrinting = enablePrinting  # enable-printing: virtual printer
+        self.printerName = printerName  # printer-name: name of the redirected printer (see the NB in load())
+        self.enableTheming = enableTheming
+        self.enableFontSmoothing = enableFontSmoothing
+        self.enableDesktopComposition = enableDesktopComposition
+        self.enableMenuAnimations = enableMenuAnimations
+        self.disableBitmapCaching = disableBitmapCaching
+        self.disableOffscreenCaching = disableOffscreenCaching
+        self.disableGlyphCaching = disableGlyphCaching
+        self.remoteApp = remoteApp  # remote-app: on Windows servers the published RemoteApp name needs the "||" prefix
+        self.remoteAppDir = remoteAppDir  # remote-app-dir: working directory of the RemoteApp
+        self.remoteAppArgs = remoteAppArgs  # remote-app-args: command-line arguments of the RemoteApp
+        # NB! Not in the Web Vault UI yet (KCM / guacd / Gateway only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        self.driveRedirectionName = driveRedirectionName  # Gateway: name of the shared drive (default KeeperShare)
+        self.disableDownload = disableDownload  # Gateway drive redirection: block download
+        self.disableUpload = disableUpload  # Gateway drive redirection: block upload
+        self.timeout = timeout  # timeout: seconds to wait for the RDP server to respond (guacd default 10)
+        self.certTofu = certTofu  # cert-tofu: FreeRDP Trust On First Use certificate policy
+        self.certFingerprints = certFingerprints  # cert-fingerprints: comma separated fingerprint + hash combinations
+        self.disableGfx = disableGfx  # disable-gfx: turn the RDP Graphics Pipeline off (needed for color depths below 32)
+        self.staticChannels = staticChannels  # static-channels: comma separated static channel names
+        self.wol = wol if isinstance(wol, WolConnectionSettings) else None  # wol-send-packet, wol-mac-addr, ...
+        self.recordingFilter = recordingFilter if isinstance(recordingFilter, RecordingFilterConnectionSettings) else None
+        # [Do not remove] NOT processed on purpose (as of 2026-11-03):
+        #   drive_path / drive_name / create_drive_path / enable_drive (guacd drive-path, drive-name, create-drive-path,
+        #     enable-drive) - the Gateway builds the drive storage itself (per user / per resource, under its own root) and blocks
+        #     these arguments, so a value here would be silently dropped. Use drive_redirection_path (none / user / resource) instead.
+        # self.drivePath = None
+        # self.driveName = None
+        # self.createDrivePath = None
+        # self.enableDrive = None
+        # [Do not remove] NOT processed on purpose (as of 2026-11-03):
+        #   gateway_hostname / gateway_port / gateway_username / gateway_password / gateway_domain (the RD Gateway block) - not in
+        #     the Web Vault, and the Gateway does not block gateway-username / gateway-password as user fields, so credentials would
+        #     end up stored in the connection settings of the record. Revisit only together with the Vault and Gateway owners.
+        # self.gatewayHostname = None
+        # self.gatewayPort = None
+        # self.gatewayUsername = None
+        # self.gatewayPassword = None
+        # self.gatewayDomain = None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2286,6 +2617,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         if ccs:
             obj.disableCopy = ccs.disableCopy
             obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
 
         val = data.get("security", None)
         if isinstance(val, str): obj.security = RDPSecurity.map(val)
@@ -2311,9 +2643,88 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             if val in ("none", "user", "resource"): obj.driveRedirectionPath = val
             else: logging.warning(f"Invalid drive_redirection_path '{val}' (expected none, user or resource) - ignored")
 
-        # disable_dynamic_resizing ? "" : "display-update"
-        val = utils.value_to_boolean(data.get("disable_dynamic_resizing", None))
-        obj.resizeMethod = "" if val is True else "display-update"
+        # resize_method: "" (no dynamic resizing) | "display-update" | "reconnect"; omitted -> "display-update"
+        if "disable_dynamic_resizing" in data:
+            logging.warning("ConnectionSettingsRDP: disable_dynamic_resizing is no longer supported - "
+                            "use resize_method (\"\" = no dynamic resizing, \"display-update\", \"reconnect\")")
+        val = parse_rdp_resize_method(data.get("resize_method", None))
+        obj.resizeMethod = RDP_RESIZE_METHOD_DEFAULT if val is None else val
+
+        owner = "ConnectionSettingsRDP"
+        obj.initialProgram = parse_str_setting(data, "initial_program", owner)
+        val = parse_str_setting(data, "client_name", owner)
+        if val:
+            obj.clientName = val
+            size = len(val.encode("utf-8"))
+            if size > RDP_CLIENT_NAME_MAX_BYTES:
+                # NB! guacd limitation (not an RDP or Keeper one): guacd truncates the client name to 32 bytes
+                # (RDP_CLIENT_HOSTNAME_SIZE, a build-time constant), so the value is accepted unchanged.
+                logging.warning(f"{owner}: client_name is {size} bytes - guacd truncates the RDP client name to "
+                                f"{RDP_CLIENT_NAME_MAX_BYTES} bytes (a guacd limitation); written unchanged")
+        val = parse_str_setting(data, "server_layout", owner)
+        if val:
+            if val.lower() in RDP_SERVER_LAYOUTS: obj.serverLayout = val.lower()
+            else: logging.warning(f"{owner}: server_layout {val!r} is not a known layout - skipped; guacd will use its default "
+                                  f"layout '{RDP_DEFAULT_SERVER_LAYOUT}' (known layouts: {', '.join(RDP_SERVER_LAYOUTS)})")
+        obj.timezone = parse_str_setting(data, "timezone", owner, "a string (IANA name)")
+        obj.enableTouch = utils.value_to_boolean(data.get("enable_touch", None))
+        obj.console = utils.value_to_boolean(data.get("console", None))
+        big = 2147483647
+        obj.width = parse_int_in_range(data.get("width", None), "width", 1, big, owner)
+        obj.height = parse_int_in_range(data.get("height", None), "height", 1, big, owner)
+        obj.dpi = parse_int_in_range(data.get("dpi", None), "dpi", 1, big, owner)
+        obj.disableGfx = utils.value_to_boolean(data.get("disable_gfx", None))
+        depth = parse_int_in_range(data.get("color_depth", None), "color_depth", 1, big, owner)
+        if depth is not None:
+            if depth not in RDP_COLOR_DEPTHS:
+                logging.warning(f"{owner}: color_depth must be one of {', '.join(str(x) for x in RDP_COLOR_DEPTHS)} (bits per pixel), got: {depth!r} (skipped)")
+            else:
+                obj.colorDepth = depth
+                if depth != 32 and not obj.disableGfx:
+                    logging.warning(f"{owner}: color_depth {depth} is ignored by guacd while the RDP Graphics Pipeline is enabled "
+                                    "(the default) - it requires and uses 32 bits per pixel; set disable_gfx to apply it")
+        obj.forceLossless = utils.value_to_boolean(data.get("force_lossless", None))
+        obj.readOnly = utils.value_to_boolean(data.get("read_only", None))
+        val = parse_str_setting(data, "normalize_clipboard", owner)
+        if val:
+            if val.lower() in RDP_NORMALIZE_CLIPBOARD: obj.normalizeClipboard = val.lower()
+            else: logging.warning(f"{owner}: normalize_clipboard must be one of {', '.join(RDP_NORMALIZE_CLIPBOARD)}, got: {val!r} (skipped)")
+        obj.consoleAudio = utils.value_to_boolean(data.get("console_audio", None))
+        obj.enableAudioInput = utils.value_to_boolean(data.get("enable_audio_input", None))
+        obj.enablePrinting = utils.value_to_boolean(data.get("enable_printing", None))
+        # NB! printer_name uses the KCM name ON PURPOSE. As of 2026-11-03 the Web Vault writes this option as
+        # "redirectedPrinterName". The Gateway forwards record keys unchanged and the guacd client only strips "-"/"_" and
+        # lowercases them, so it ends up as "redirectedprintername", which matches no guacd argument (guacd expects
+        # "printer-name" -> "printername"), and the Gateway has no alias for it. The Vault value is therefore ignored
+        # (maps to nothing) until the Vault/Gateway side is aligned. Data keys are independent of UI labels.
+        obj.printerName = parse_str_setting(data, "printer_name", owner)
+        obj.enableTheming = utils.value_to_boolean(data.get("enable_theming", None))
+        obj.enableFontSmoothing = utils.value_to_boolean(data.get("enable_font_smoothing", None))
+        obj.enableDesktopComposition = utils.value_to_boolean(data.get("enable_desktop_composition", None))
+        obj.enableMenuAnimations = utils.value_to_boolean(data.get("enable_menu_animations", None))
+        obj.disableBitmapCaching = utils.value_to_boolean(data.get("disable_bitmap_caching", None))
+        obj.disableOffscreenCaching = utils.value_to_boolean(data.get("disable_offscreen_caching", None))
+        obj.disableGlyphCaching = utils.value_to_boolean(data.get("disable_glyph_caching", None))
+        obj.remoteApp = parse_str_setting(data, "remote_app", owner)
+        obj.remoteAppDir = parse_str_setting(data, "remote_app_dir", owner)
+        obj.remoteAppArgs = parse_str_setting(data, "remote_app_args", owner)
+
+        # NB! Not in the Web Vault UI yet (KCM / guacd / Gateway only; the Gateway forwards them) - deliberately NOT
+        # documented in README.md until the Web Vault adds them and the other clients follow (officially enabled on all
+        # clients in sync).
+        obj.driveRedirectionName = parse_str_setting(data, "drive_redirection_name", owner)
+        obj.disableDownload = utils.value_to_boolean(data.get("disable_download", None))
+        obj.disableUpload = utils.value_to_boolean(data.get("disable_upload", None))
+        obj.timeout = parse_int_in_range(data.get("timeout", None), "timeout", 1, big, owner)
+        obj.certTofu = utils.value_to_boolean(data.get("cert_tofu", None))
+        val = data.get("cert_fingerprints", None)
+        obj.certFingerprints = ",".join(str(x).strip() for x in val if str(x).strip()) if isinstance(val, list) else parse_str_setting(data, "cert_fingerprints", owner)
+        val = data.get("static_channels", None)
+        obj.staticChannels = ",".join(str(x).strip() for x in val if str(x).strip()) if isinstance(val, list) else parse_str_setting(data, "static_channels", owner)
+        wol = WolConnectionSettings.load(data, owner)
+        if not wol.is_empty(): obj.wol = wol
+        rfs = RecordingFilterConnectionSettings.load(data, touch=True)
+        if not rfs.is_empty(): obj.recordingFilter = rfs
 
         return obj
 
@@ -2336,6 +2747,8 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             kvp["disableCopy"] = self.disableCopy
         if self.disablePaste is not None and isinstance(self.disablePaste, bool):
             kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
         if isinstance(self.security, RDPSecurity):
             kvp["security"] = self.security.value.lower()
 
@@ -2360,7 +2773,7 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         if self.driveRedirectionPath in ("none", "user", "resource"):
             kvp["driveRedirectionPath"] = self.driveRedirectionPath
 
-        # populated on load - "resizeMethod": disable_dynamic_resizing ? "" : "display-update"
+        # populated on load from resize_method ("" is written as is: no dynamic resizing)
         if isinstance(self.resizeMethod, str):
             kvp["resizeMethod"] = self.resizeMethod
 
@@ -2368,6 +2781,49 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             sftp = self.sftp.to_dict()
             if sftp:
                 kvp["sftp"] = sftp
+
+        for attr in ("enableTouch", "console", "forceLossless", "readOnly", "consoleAudio", "enableAudioInput", "enablePrinting",
+                     "enableTheming", "enableFontSmoothing", "enableDesktopComposition", "enableMenuAnimations",
+                     "disableBitmapCaching", "disableOffscreenCaching", "disableGlyphCaching"):
+            val = getattr(self, attr)
+            if val is not None and isinstance(val, bool):
+                kvp[attr] = val
+        for attr in ("initialProgram", "clientName", "timezone", "remoteApp", "remoteAppDir", "remoteAppArgs"):
+            val = getattr(self, attr)
+            if val and isinstance(val, str) and val.strip():
+                kvp[attr] = val.strip()
+        if self.serverLayout and isinstance(self.serverLayout, str) and self.serverLayout in RDP_SERVER_LAYOUTS:
+            kvp["serverLayout"] = self.serverLayout
+        for attr in ("width", "height", "dpi"):
+            val = getattr(self, attr)
+            if val is not None and type(val) is int and val > 0:
+                kvp[attr] = val
+        if self.colorDepth is not None and type(self.colorDepth) is int and self.colorDepth in RDP_COLOR_DEPTHS:
+            kvp["colorDepth"] = self.colorDepth
+        if self.normalizeClipboard and isinstance(self.normalizeClipboard, str) and self.normalizeClipboard in RDP_NORMALIZE_CLIPBOARD:
+            kvp["normalizeClipboard"] = self.normalizeClipboard
+        # NB! KCM key name on purpose: as of 2026-11-03 the Web Vault uses redirectedPrinterName instead; GW/guacd map that
+        # to nothing (guacd expects printer-name) - see the dated comment in load().
+        if self.printerName and isinstance(self.printerName, str) and self.printerName.strip():
+            kvp["printerName"] = self.printerName.strip()
+
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd / Gateway only
+        if self.driveRedirectionName and isinstance(self.driveRedirectionName, str) and self.driveRedirectionName.strip():
+            kvp["driveRedirectionName"] = self.driveRedirectionName.strip()
+        for attr in ("disableDownload", "disableUpload", "certTofu", "disableGfx"):
+            val = getattr(self, attr)
+            if val is not None and isinstance(val, bool):
+                kvp[attr] = val
+        if self.timeout is not None and type(self.timeout) is int and self.timeout > 0:
+            kvp["timeout"] = self.timeout
+        for attr in ("certFingerprints", "staticChannels"):
+            val = getattr(self, attr)
+            if val and isinstance(val, str) and val.strip():
+                kvp[attr] = val.strip()
+        if isinstance(self.wol, WolConnectionSettings):
+            kvp.update(self.wol.to_dict())
+        if isinstance(self.recordingFilter, RecordingFilterConnectionSettings):
+            kvp.update(self.recordingFilter.to_dict())
 
         return kvp
 
@@ -2377,6 +2833,10 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         return rec_json
 
 # field type: pamRemoteBrowserSettings
+# RBI clipboard data size limits (name -> bytes), as offered by the Vault UI (ClipboardSettings.tsx).
+# KCM libguac-client-http cef_main.c log levels
+RBI_CEF_LOG_LEVELS = ("default", "verbose", "debug", "info", "warning", "error", "fatal", "disable")
+
 class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings):
     protocol = ConnectionProtocol.HTTP
     def __init__(
@@ -2387,6 +2847,7 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         recordingIncludeKeys: Optional[bool] = None,
         disableCopy: Optional[bool] = None,
         disablePaste: Optional[bool] = None,
+        clipboardBufferSize: Optional[int] = None,
         allowUrlManipulation: Optional[bool] = None,
         allowedUrlPatterns: Optional[str] = None,
         allowedResourceUrlPatterns: Optional[str] = None,
@@ -2399,10 +2860,32 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         disableAudio: Optional[bool] = None,
         audioChannels: Optional[int] = None,
         audioBps: Optional[int] = None,
-        audioSampleRate: Optional[int] = None
+        audioSampleRate: Optional[int] = None,
+        acceptLanguage: Optional[str] = None,
+        suppressJsDialogs: Optional[bool] = None,
+        readOnly: Optional[bool] = None,
+        enableWebgl: Optional[bool] = None,
+        disableWebauthn: Optional[bool] = None,
+        timezone: Optional[str] = None,
+        cefLogLevel: Optional[str] = None,
+        recordingExcludeOutput: Optional[bool] = None,
+        recordingExcludeMouse: Optional[bool] = None,
+        recordingExcludeTouch: Optional[bool] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
-        ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
+        ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste, clipboardBufferSize)
+        self.acceptLanguage = acceptLanguage  # in Web Vault (e.g. "en-US,en;q=0.9")
+        self.suppressJsDialogs = suppressJsDialogs  # in Web Vault
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow.
+        self.readOnly = readOnly
+        self.enableWebgl = enableWebgl
+        self.disableWebauthn = disableWebauthn
+        self.timezone = timezone  # IANA name
+        self.cefLogLevel = cefLogLevel  # one of RBI_CEF_LOG_LEVELS
+        self.recordingExcludeOutput = recordingExcludeOutput
+        self.recordingExcludeMouse = recordingExcludeMouse
+        self.recordingExcludeTouch = recordingExcludeTouch
         self.allowUrlManipulation = allowUrlManipulation
         self.allowedUrlPatterns = allowedUrlPatterns
         self.allowedResourceUrlPatterns = allowedResourceUrlPatterns
@@ -2438,6 +2921,7 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         if ccs:
             obj.disableCopy = ccs.disableCopy
             obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
 
         obj.allowUrlManipulation = utils.value_to_boolean(data.get("allow_url_manipulation", None))
         obj.allowedUrlPatterns = multiline_to_str(parse_multiline(data, "allowed_url_patterns", "Error parsing allowed_url_patterns"))
@@ -2480,6 +2964,27 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
                     obj.audioSampleRate = parsed
             except (TypeError, ValueError): logging.warning(f"ConnectionSettingsHTTP: invalid audio_sample_rate value: {val!r}")
 
+        val = data.get("accept_language", None)
+        if isinstance(val, str) and val.strip(): obj.acceptLanguage = val.strip()
+        elif val is not None and val != "": logging.warning(f"ConnectionSettingsHTTP: accept_language must be a string, got: {val!r} (skipped)")
+        obj.suppressJsDialogs = utils.value_to_boolean(data.get("suppress_js_dialogs", None))
+
+        # Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        obj.readOnly = utils.value_to_boolean(data.get("read_only", None))
+        obj.enableWebgl = utils.value_to_boolean(data.get("enable_webgl", None))
+        obj.disableWebauthn = utils.value_to_boolean(data.get("disable_webauthn", None))
+        val = data.get("timezone", None)
+        if isinstance(val, str) and val.strip(): obj.timezone = val.strip()
+        elif val is not None and val != "": logging.warning(f"ConnectionSettingsHTTP: timezone must be a string (IANA name), got: {val!r} (skipped)")
+        val = data.get("cef_log_level", None)
+        if isinstance(val, str) and val.strip().lower() in RBI_CEF_LOG_LEVELS:
+            obj.cefLogLevel = val.strip().lower()
+        elif val is not None and val != "":
+            logging.warning(f"ConnectionSettingsHTTP: cef_log_level must be one of {', '.join(RBI_CEF_LOG_LEVELS)}, got: {val!r} (skipped)")
+        obj.recordingExcludeOutput = utils.value_to_boolean(data.get("recording_exclude_output", None))
+        obj.recordingExcludeMouse = utils.value_to_boolean(data.get("recording_exclude_mouse", None))
+        obj.recordingExcludeTouch = utils.value_to_boolean(data.get("recording_exclude_touch", None))
+
         return obj
 
     def to_record_dict(self):
@@ -2502,6 +3007,8 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
             kvp["disableCopy"] = self.disableCopy
         if self.disablePaste is not None and isinstance(self.disablePaste, bool):
             kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
 
         if self.allowUrlManipulation is not None and isinstance(self.allowUrlManipulation, bool):
             kvp["allowUrlManipulation"] = self.allowUrlManipulation
@@ -2528,6 +3035,22 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
             kvp["audioBps"] = self.audioBps
         if self.audioSampleRate is not None and type(self.audioSampleRate) is int:
             kvp["audioSampleRate"] = self.audioSampleRate
+        if self.acceptLanguage and isinstance(self.acceptLanguage, str) and self.acceptLanguage.strip():
+            kvp["acceptLanguage"] = self.acceptLanguage.strip()
+        if self.suppressJsDialogs is not None and isinstance(self.suppressJsDialogs, bool):
+            kvp["suppressJsDialogs"] = self.suppressJsDialogs
+
+        # Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        for attr, key in (("readOnly", "readOnly"), ("enableWebgl", "enableWebgl"), ("disableWebauthn", "disableWebauthn"),
+                          ("recordingExcludeOutput", "recordingExcludeOutput"), ("recordingExcludeMouse", "recordingExcludeMouse"),
+                          ("recordingExcludeTouch", "recordingExcludeTouch")):
+            val = getattr(self, attr)
+            if val is not None and isinstance(val, bool):
+                kvp[key] = val
+        if self.timezone and isinstance(self.timezone, str) and self.timezone.strip():
+            kvp["timezone"] = self.timezone.strip()
+        if self.cefLogLevel and isinstance(self.cefLogLevel, str) and self.cefLogLevel in RBI_CEF_LOG_LEVELS:
+            kvp["cefLogLevel"] = self.cefLogLevel
 
         return kvp
 
@@ -2535,6 +3058,165 @@ class ConnectionSettingsHTTP(BaseConnectionSettings, ClipboardConnectionSettings
         dict = self.to_record_dict() or {}
         rec_json = json.dumps(dict)
         return rec_json
+
+# VNC display / clipboard / audio option domains (see options-vnc-plan.md "Units and allowed values")
+VNC_CURSORS = ("local", "remote")  # cursor rendered on the client (local) or the server (remote)
+VNC_COLOR_DEPTHS = (8, 16, 24, 32)  # bits per pixel
+VNC_CLIPBOARD_ENCODINGS = ("ISO8859-1", "UTF-8", "UTF-16", "CP1252", "MacRoman")
+# Encodings: the Web Vault UI offers copyrect/hextile/raw/rre/tight/zrle; the guacd VNC plugin default list
+# (zrle ultra copyrect hextile zlib corre rre raw) adds ultra, zlib and corre.
+VNC_ENCODINGS = ("copyrect", "hextile", "raw", "rre", "tight", "zrle", "ultra", "zlib", "corre")
+
+def parse_int_in_range(value: Any, key: str, low: int, high: int, owner: str = "Connection Settings") -> Optional[int]:
+    """Whole number (int or decimal string) within [low, high]; None if unset, otherwise warns and returns None."""
+    if value is None or value == "":
+        return None
+    num = None
+    if isinstance(value, bool):
+        num = None
+    elif isinstance(value, int):
+        num = value
+    elif isinstance(value, str) and value.strip().isdecimal():
+        num = int(value.strip())
+    if num is not None and low <= num <= high:
+        return num
+    logging.warning(f"{owner}: {key} must be a whole number {low}-{high}, got: {value!r} (skipped)")
+    return None
+
+def parse_vnc_encodings(value: Any, owner: str = "ConnectionSettingsVNC") -> Optional[str]:
+    """Space/comma separated string or a list of encoding names -> space separated lowercase string (guacd `encodings`)."""
+    if value is None or value == "" or value == []:
+        return None
+    if isinstance(value, str):
+        items = value.replace(",", " ").split()
+    elif isinstance(value, list):
+        items = [str(x).strip() for x in value if x is not None and str(x).strip()]
+    else:
+        logging.warning(f"{owner}: encodings must be a space separated string or a list, got: {value!r} (skipped)")
+        return None
+    good: List[str] = []
+    bad: List[str] = []
+    for item in items:
+        name = item.lower()
+        if name in VNC_ENCODINGS:
+            if name not in good: good.append(name)
+        else:
+            bad.append(item)
+    if bad:
+        logging.warning(f"{owner}: unknown encodings skipped: {', '.join(bad)} (allowed: {', '.join(VNC_ENCODINGS)})")
+    return " ".join(good) if good else None
+
+_WOL_MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$")
+
+class WolConnectionSettings:
+    """Wake-on-LAN (wol-*) guacd arguments - shared by the guacd protocols that declare them (RDP, SSH, VNC, Telnet, databases).
+    NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented in README.md
+    until the Web Vault adds them and the other clients follow (to be officially enabled on all clients in sync)."""
+    def __init__(self, wolSendPacket: Optional[bool] = None, wolMacAddr: Optional[str] = None,
+                 wolBroadcastAddr: Optional[str] = None, wolUdpPort: Optional[int] = None,
+                 wolWaitTime: Optional[int] = None):
+        self.wolSendPacket = wolSendPacket
+        self.wolMacAddr = wolMacAddr  # MAC address of the remote host, e.g. 00:11:22:33:44:55
+        self.wolBroadcastAddr = wolBroadcastAddr  # guacd default 255.255.255.255
+        self.wolUdpPort = wolUdpPort  # 1-65535, guacd default 9
+        self.wolWaitTime = wolWaitTime  # seconds to wait after sending the packet before connecting
+
+    def is_empty(self) -> bool:
+        return all(v is None for v in vars(self).values())
+
+    @classmethod
+    def load(cls, data: Union[str, dict], owner: str = "Connection Settings"):
+        import ipaddress
+        obj = cls()
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: logging.error(f"WoL Connection Settings failed to load from: {str(data)[:80]}")
+        if not isinstance(data, dict): return obj
+
+        obj.wolSendPacket = utils.value_to_boolean(data.get("wol_send_packet", None))
+        val = data.get("wol_mac_addr", None)
+        if isinstance(val, str) and val.strip():
+            if _WOL_MAC_RE.match(val.strip()): obj.wolMacAddr = val.strip()
+            else: logging.warning(f"{owner}: wol_mac_addr must look like 00:11:22:33:44:55, got: {val!r} (skipped)")
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: wol_mac_addr must be a string, got: {val!r} (skipped)")
+        val = data.get("wol_broadcast_addr", None)
+        if isinstance(val, str) and val.strip():
+            try:
+                ipaddress.ip_address(val.strip())
+                obj.wolBroadcastAddr = val.strip()
+            except ValueError:
+                logging.warning(f"{owner}: wol_broadcast_addr must be an IP address, got: {val!r} (skipped)")
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: wol_broadcast_addr must be a string, got: {val!r} (skipped)")
+        obj.wolUdpPort = parse_int_in_range(data.get("wol_udp_port", None), "wol_udp_port", 1, 65535, owner)
+        obj.wolWaitTime = parse_int_in_range(data.get("wol_wait_time", None), "wol_wait_time", 0, 2147483647, owner)
+        if obj.wolSendPacket and not obj.wolMacAddr:
+            logging.warning(f"{owner}: wol_send_packet is true but wol_mac_addr is missing or invalid - guacd will not send the WoL packet")
+        return obj
+
+    def to_dict(self):
+        dict: Dict[str, Any] = {}
+        if self.wolSendPacket is not None and isinstance(self.wolSendPacket, bool):
+            dict["wolSendPacket"] = self.wolSendPacket
+        if self.wolMacAddr and isinstance(self.wolMacAddr, str) and self.wolMacAddr.strip():
+            dict["wolMacAddr"] = self.wolMacAddr.strip()
+        if self.wolBroadcastAddr and isinstance(self.wolBroadcastAddr, str) and self.wolBroadcastAddr.strip():
+            dict["wolBroadcastAddr"] = self.wolBroadcastAddr.strip()
+        if self.wolUdpPort is not None and type(self.wolUdpPort) is int:
+            dict["wolUdpPort"] = self.wolUdpPort
+        if self.wolWaitTime is not None and type(self.wolWaitTime) is int:
+            dict["wolWaitTime"] = self.wolWaitTime
+        return dict
+
+class RecordingFilterConnectionSettings:
+    """Session recording filters (recording-exclude-output, recording-exclude-mouse, recording-include-clipboard) - shared by the
+    guacd protocols that declare them.
+    NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented in README.md
+    until the Web Vault adds them and the other clients follow (to be officially enabled on all clients in sync).
+    recording-include-clipboard: server support unverified (not declared by the Rust guacd emulation)."""
+    def __init__(self, recordingExcludeOutput: Optional[bool] = None, recordingExcludeMouse: Optional[bool] = None,
+                 recordingIncludeClipboard: Optional[bool] = None, recordingExcludeTouch: Optional[bool] = None):
+        self.recordingExcludeOutput = recordingExcludeOutput
+        self.recordingExcludeMouse = recordingExcludeMouse
+        self.recordingIncludeClipboard = recordingIncludeClipboard
+        self.recordingExcludeTouch = recordingExcludeTouch  # recording-exclude-touch: declared by RDP (and RBI) only
+        # [Do not remove] NOT processed on purpose (as of 2026-11-03):
+        #   recording_path / recording_name / create_recording_path / recording_write_existing - the Gateway owns where session
+        #     recordings are stored and blocks these arguments (it never forwards them to guacd), so a value here would be
+        #     silently dropped. Turn session recording on/off with pam_settings.options (graphical_session_recording /
+        #     text_session_recording) instead.
+        # self.recordingPath = None
+        # self.recordingName = None
+        # self.createRecordingPath = None
+        # self.recordingWriteExisting = None
+
+    def is_empty(self) -> bool:
+        return all(v is None for v in vars(self).values())
+
+    @classmethod
+    def load(cls, data: Union[str, dict], touch: bool = False, clipboard: bool = True):
+        """touch=True also reads recording_exclude_touch (only the RDP plugin declares recording-exclude-touch);
+        clipboard=False skips recording_include_clipboard (the database plugins do not declare it)."""
+        obj = cls()
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: logging.error(f"Recording Filter Connection Settings failed to load from: {str(data)[:80]}")
+        if not isinstance(data, dict): return obj
+
+        obj.recordingExcludeOutput = utils.value_to_boolean(data.get("recording_exclude_output", None))
+        obj.recordingExcludeMouse = utils.value_to_boolean(data.get("recording_exclude_mouse", None))
+        if clipboard:
+            obj.recordingIncludeClipboard = utils.value_to_boolean(data.get("recording_include_clipboard", None))
+        if touch:
+            obj.recordingExcludeTouch = utils.value_to_boolean(data.get("recording_exclude_touch", None))
+        return obj
+
+    def to_dict(self):
+        dict: Dict[str, Any] = {}
+        for attr in ("recordingExcludeOutput", "recordingExcludeMouse", "recordingIncludeClipboard", "recordingExcludeTouch"):
+            val = getattr(self, attr)
+            if val is not None and isinstance(val, bool):
+                dict[attr] = val
+        return dict
 
 class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings):
     protocol = ConnectionProtocol.VNC
@@ -2548,13 +3230,48 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
         disablePaste: Optional[bool] = None,
         destHost: Optional[str] = None,
         destPort: Optional[str] = None,
-        sftp: Optional[SFTPConnectionSettings] = None
+        sftp: Optional[SFTPConnectionSettings] = None,
+        disableDisplayResize: Optional[bool] = None,
+        readOnly: Optional[bool] = None,
+        swapRedBlue: Optional[bool] = None,
+        forceLossless: Optional[bool] = None,
+        cursor: Optional[str] = None,
+        colorDepth: Optional[str] = None,
+        compressLevel: Optional[int] = None,
+        qualityLevel: Optional[int] = None,
+        encodings: Optional[str] = None,
+        clipboardEncoding: Optional[str] = None,
+        enableAudio: Optional[bool] = None,
+        audioServername: Optional[str] = None,
+        disableServerInput: Optional[bool] = None,
+        wol: Optional[WolConnectionSettings] = None,
+        recordingFilter: Optional[RecordingFilterConnectionSettings] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         self.destHost = destHost
         self.destPort = destPort
+        self.disableDisplayResize = disableDisplayResize  # disable-display-resize (VNC only; RDP uses resize-method)
         self.sftp = sftp if isinstance(sftp, SFTPConnectionSettings) else None
+        # In the Web Vault UI (VNC Display / Clipboard / Audio sections)
+        self.readOnly = readOnly  # read-only: no input accepted at all
+        self.swapRedBlue = swapRedBlue  # swap-red-blue: fixes wrong colors (blue shown as orange / red)
+        self.forceLossless = forceLossless  # force-lossless: lossless compression only
+        self.cursor = cursor  # cursor: "local" (client side, default) | "remote" (rendered on the server)
+        self.colorDepth = colorDepth  # color-depth: bits per pixel "8" | "16" | "24" | "32" (string, like the Vault)
+        # NB! compress-level / quality-level / encodings: KCM names are used on purpose, the Web Vault writes
+        # compressionLevel / displayQuality / displayEncodings instead (see the dated comments in load())
+        self.compressLevel = compressLevel  # compress-level: 0 (no compression) .. 9 (highest compression)
+        self.qualityLevel = qualityLevel  # quality-level: 0 (lowest) .. 9 (best) JPEG quality for the "tight" encoding
+        self.encodings = encodings  # encodings: space separated string (see VNC_ENCODINGS)
+        self.clipboardEncoding = clipboardEncoding  # clipboard-encoding: one of VNC_CLIPBOARD_ENCODINGS
+        self.enableAudio = enableAudio  # enable-audio: opens a second (PulseAudio) connection
+        self.audioServername = audioServername  # audio-servername: PulseAudio server name (default device when omitted)
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (to be officially enabled on all clients in sync).
+        self.disableServerInput = disableServerInput  # disable-server-input: ask the VNC server to disable its local input devices
+        self.wol = wol if isinstance(wol, WolConnectionSettings) else None  # wol-send-packet, wol-mac-addr, ...
+        self.recordingFilter = recordingFilter if isinstance(recordingFilter, RecordingFilterConnectionSettings) else None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2576,14 +3293,66 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
         if ccs:
             obj.disableCopy = ccs.disableCopy
             obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
 
         val = data.get("destination_host", None)
         if isinstance(val, str): obj.destHost = val
         val = data.get("destination_port", None)
         if isinstance(val, str): obj.destPort = val
 
+        obj.disableDisplayResize = utils.value_to_boolean(data.get("disable_display_resize", None))
+
         sftp = data.get("sftp", None)
         if isinstance(sftp, dict): obj.sftp = SFTPConnectionSettings.load(sftp)
+
+        owner = "ConnectionSettingsVNC"
+        obj.readOnly = utils.value_to_boolean(data.get("read_only", None))
+        obj.swapRedBlue = utils.value_to_boolean(data.get("swap_red_blue", None))
+        obj.forceLossless = utils.value_to_boolean(data.get("force_lossless", None))
+        val = data.get("cursor", None)
+        if isinstance(val, str) and val.strip().lower() in VNC_CURSORS:
+            obj.cursor = val.strip().lower()
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: cursor must be one of {', '.join(VNC_CURSORS)}, got: {val!r} (skipped)")
+        depth = parse_int_in_range(data.get("color_depth", None), "color_depth", 8, 32, owner)
+        if depth is not None:
+            if depth in VNC_COLOR_DEPTHS: obj.colorDepth = str(depth)
+            else: logging.warning(f"{owner}: color_depth must be one of {', '.join(str(x) for x in VNC_COLOR_DEPTHS)} (bits per pixel), got: {depth!r} (skipped)")
+        val = data.get("clipboard_encoding", None)
+        if isinstance(val, str) and val.strip():
+            canon = {x.lower(): x for x in VNC_CLIPBOARD_ENCODINGS}.get(val.strip().lower())
+            if canon: obj.clipboardEncoding = canon
+            else: logging.warning(f"{owner}: clipboard_encoding must be one of {', '.join(VNC_CLIPBOARD_ENCODINGS)}, got: {val!r} (skipped)")
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: clipboard_encoding must be a string, got: {val!r} (skipped)")
+        obj.enableAudio = utils.value_to_boolean(data.get("enable_audio", None))
+        val = data.get("audio_servername", None)
+        if isinstance(val, str) and val.strip(): obj.audioServername = val.strip()
+        elif val is not None and val != "": logging.warning(f"{owner}: audio_servername must be a string, got: {val!r} (skipped)")
+
+        # NB! compress_level / quality_level / encodings use the original KCM names ON PURPOSE.
+        # As of 2026-11-03 the Web Vault writes this option as "compressionLevel" (number 0-9). The Gateway forwards
+        # record keys unchanged and the guacd client only strips "-"/"_" and lowercases them, so it ends up as
+        # "compressionlevel", which matches no guacd argument (guacd expects "compress-level" -> "compresslevel").
+        # The Vault value is therefore ignored (maps to nothing) until the Vault/Gateway side is aligned.
+        # Data keys are independent of UI labels, so this can be revisited without changing the UI.
+        obj.compressLevel = parse_int_in_range(data.get("compress_level", None), "compress_level", 0, 9, owner)
+        # NB! As of 2026-11-03 the Web Vault writes this option as "displayQuality" (number 0-9), which the Gateway/guacd
+        # normalize to "displayquality" - no guacd argument matches it (guacd expects "quality-level" -> "qualitylevel").
+        # The Vault value is ignored until the Vault/Gateway side is aligned.
+        obj.qualityLevel = parse_int_in_range(data.get("quality_level", None), "quality_level", 0, 9, owner)
+        # NB! As of 2026-11-03 the Web Vault writes this option as "displayEncodings" (array of lowercase names, the UI stores
+        # one element), which becomes "displayencodings" in GW/guacd - no guacd argument matches it (guacd expects
+        # "encodings", a space separated STRING, so the value type differs too). The Vault value is ignored until aligned.
+        obj.encodings = parse_vnc_encodings(data.get("encodings", None), owner)
+
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented in
+        # README.md until the Web Vault adds them and the other clients follow (to be officially enabled on all clients in sync).
+        obj.disableServerInput = utils.value_to_boolean(data.get("disable_server_input", None))
+        wol = WolConnectionSettings.load(data, owner)
+        if not wol.is_empty(): obj.wol = wol
+        rfs = RecordingFilterConnectionSettings.load(data)
+        if not rfs.is_empty(): obj.recordingFilter = rfs
 
         return obj
 
@@ -2606,16 +3375,50 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
             kvp["disableCopy"] = self.disableCopy
         if self.disablePaste is not None and isinstance(self.disablePaste, bool):
             kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
 
         if self.destHost and isinstance(self.destHost, str) and self.destHost.strip():
             kvp["destHost"] = self.destHost.strip()
         if self.destPort and isinstance(self.destPort, str) and self.destPort.strip():
             kvp["destPort"] = self.destPort.strip()
+        if self.disableDisplayResize is not None and isinstance(self.disableDisplayResize, bool):
+            kvp["disableDisplayResize"] = self.disableDisplayResize
 
         if isinstance(self.sftp, SFTPConnectionSettings):
             sftp = self.sftp.to_dict()
             if sftp:
                 kvp["sftp"] = sftp
+
+        for attr in ("readOnly", "swapRedBlue", "forceLossless", "enableAudio"):
+            val = getattr(self, attr)
+            if val is not None and isinstance(val, bool):
+                kvp[attr] = val
+        if self.cursor and isinstance(self.cursor, str) and self.cursor in VNC_CURSORS:
+            kvp["cursor"] = self.cursor
+        if self.colorDepth and isinstance(self.colorDepth, str) and self.colorDepth.isdecimal() and int(self.colorDepth) in VNC_COLOR_DEPTHS:
+            kvp["colorDepth"] = self.colorDepth
+        if self.clipboardEncoding and isinstance(self.clipboardEncoding, str) and self.clipboardEncoding in VNC_CLIPBOARD_ENCODINGS:
+            kvp["clipboardEncoding"] = self.clipboardEncoding
+        if self.audioServername and isinstance(self.audioServername, str) and self.audioServername.strip():
+            kvp["audioServername"] = self.audioServername.strip()
+        # NB! KCM key names on purpose: as of 2026-11-03 the Web Vault uses compressionLevel / displayQuality /
+        # displayEncodings (array) instead; GW/guacd map those to nothing (guacd expects compress-level, quality-level,
+        # encodings) - see the dated comments in load().
+        if self.compressLevel is not None and type(self.compressLevel) is int and 0 <= self.compressLevel <= 9:
+            kvp["compressLevel"] = self.compressLevel
+        if self.qualityLevel is not None and type(self.qualityLevel) is int and 0 <= self.qualityLevel <= 9:
+            kvp["qualityLevel"] = self.qualityLevel
+        if self.encodings and isinstance(self.encodings, str) and self.encodings.strip():
+            kvp["encodings"] = self.encodings.strip()
+
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        if self.disableServerInput is not None and isinstance(self.disableServerInput, bool):
+            kvp["disableServerInput"] = self.disableServerInput
+        if isinstance(self.wol, WolConnectionSettings):
+            kvp.update(self.wol.to_dict())
+        if isinstance(self.recordingFilter, RecordingFilterConnectionSettings):
+            kvp.update(self.recordingFilter.to_dict())
 
         return kvp
 
@@ -2624,7 +3427,27 @@ class ConnectionSettingsVNC(BaseConnectionSettings, ClipboardConnectionSettings)
         rec_json = json.dumps(dict)
         return rec_json
 
-class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettings, TerminalDisplayConnectionSettings):
+# Terminal type (TERM) of the terminal protocols (SSH, Telnet): the KCM form offers this list; guacd accepts any string
+# (sent unchanged as TERM, guacd default "linux"), the Web Vault is free text
+TERMINAL_TYPES = ("xterm", "xterm-256color", "vt220", "vt100", "ansi", "linux")
+TERMINAL_FUNC_KEYS_AND_KEYPAD = ("esc", "vt100")  # guacd func-keys-and-keypad
+
+def parse_terminal_type(data: dict, owner: str) -> Optional[str]:
+    """terminal_type: written as given; a value outside TERMINAL_TYPES only warns (guacd accepts any string)."""
+    val = data.get("terminal_type", None)
+    if isinstance(val, str) and val.strip():
+        val = val.strip()
+        if val not in TERMINAL_TYPES:
+            # A target host without a terminfo entry for it shows "unknown terminal type" / misrenders full-screen programs.
+            logging.warning(f"{owner}: terminal_type {val!r} is not one of {', '.join(TERMINAL_TYPES)} - written anyway "
+                            "(Web Vault allows free text) but the target host may not know this terminal type")
+        return val
+    if val is not None and val != "":
+        logging.warning(f"{owner}: terminal_type must be a string, got: {val!r} (skipped)")
+    return None
+
+class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettings, TerminalDisplayConnectionSettings,
+                              TerminalBehaviorConnectionSettings):
     protocol = ConnectionProtocol.TELNET
     def __init__( # pylint: disable=R0917
         self,
@@ -2640,15 +3463,34 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         usernameRegex: Optional[str] = None,
         passwordRegex: Optional[str] = None,
         loginSuccessRegex: Optional[str] = None,
-        loginFailureRegex: Optional[str] = None
+        loginFailureRegex: Optional[str] = None,
+        fontName: Optional[str] = None,
+        readOnly: Optional[bool] = None,
+        backspace: Optional[str] = None,
+        terminalType: Optional[str] = None,
+        funcKeysAndKeypad: Optional[str] = None,
+        timeout: Optional[int] = None,
+        wol: Optional[WolConnectionSettings] = None,
+        recordingFilter: Optional[RecordingFilterConnectionSettings] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
-        self.usernameRegex = usernameRegex
-        self.passwordRegex = passwordRegex
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback, fontName, readOnly)
+        TerminalBehaviorConnectionSettings.__init__(self, backspace)
+        # Login prompts / results: POSIX extended regular expressions (case-insensitive) used by guacd; guacd requires
+        # loginSuccessRegex and loginFailureRegex together (or neither) and ignores a single one
+        self.usernameRegex = usernameRegex  # guacd default "[Ll]ogin:"
+        self.passwordRegex = passwordRegex  # guacd default "[Pp]assword:"
         self.loginSuccessRegex = loginSuccessRegex
         self.loginFailureRegex = loginFailureRegex
+        # In the Web Vault UI (Telnet Terminal Behavior section); per protocol like in the Vault
+        self.terminalType = terminalType  # terminal-type: TERM sent to the server (guacd default "linux")
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        self.funcKeysAndKeypad = funcKeysAndKeypad  # func-keys-and-keypad: "esc" | "vt100"
+        self.timeout = timeout  # timeout: seconds to wait for the telnet server to respond (guacd default 10)
+        self.wol = wol if isinstance(wol, WolConnectionSettings) else None  # wol-send-packet, wol-mac-addr, ...
+        self.recordingFilter = recordingFilter if isinstance(recordingFilter, RecordingFilterConnectionSettings) else None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2670,12 +3512,19 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         if ccs:
             obj.disableCopy = ccs.disableCopy
             obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
 
         tcs = TerminalDisplayConnectionSettings.load(data)
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
             obj.scrollback = tcs.scrollback
+            obj.fontName = tcs.fontName
+            obj.readOnly = tcs.readOnly
+
+        tbs = TerminalBehaviorConnectionSettings.load(data)
+        if tbs:
+            obj.backspace = tbs.backspace
 
         val = data.get("username_regex", None)
         if isinstance(val, str): obj.usernameRegex = val
@@ -2685,6 +3534,28 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         if isinstance(val, str): obj.loginSuccessRegex = val
         val = data.get("login_failure_regex", None)
         if isinstance(val, str): obj.loginFailureRegex = val
+
+        owner = "ConnectionSettingsTelnet"
+        has_success = bool(obj.loginSuccessRegex and obj.loginSuccessRegex.strip())
+        has_failure = bool(obj.loginFailureRegex and obj.loginFailureRegex.strip())
+        if has_success != has_failure:
+            # guacd: "Both login success and login failure regexes must be provided if either is present at all"
+            logging.warning(f"{owner}: only one of login_success_regex / login_failure_regex is set - guacd requires both "
+                            "or neither and will ignore the single one (written unchanged)")
+        obj.terminalType = parse_terminal_type(data, owner)
+
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented in
+        # README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        val = data.get("func_keys_and_keypad", None)
+        if isinstance(val, str) and val.strip().lower() in TERMINAL_FUNC_KEYS_AND_KEYPAD:
+            obj.funcKeysAndKeypad = val.strip().lower()
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: func_keys_and_keypad must be one of {', '.join(TERMINAL_FUNC_KEYS_AND_KEYPAD)}, got: {val!r} (skipped)")
+        obj.timeout = parse_int_in_range(data.get("timeout", None), "timeout", 1, 2147483647, owner)
+        wol = WolConnectionSettings.load(data, owner)
+        if not wol.is_empty(): obj.wol = wol
+        rfs = RecordingFilterConnectionSettings.load(data)
+        if not rfs.is_empty(): obj.recordingFilter = rfs
 
         return obj
 
@@ -2707,6 +3578,8 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
             kvp["disableCopy"] = self.disableCopy
         if self.disablePaste is not None and isinstance(self.disablePaste, bool):
             kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
 
         if self.colorScheme and isinstance(self.colorScheme, str) and self.colorScheme.strip():
             kvp["colorScheme"] = self.colorScheme.strip()
@@ -2714,6 +3587,14 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
             kvp["fontSize"] = str(self.fontSize)
         if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
             kvp["scrollback"] = self.scrollback
+        if self.fontName and isinstance(self.fontName, str) and self.fontName.strip():
+            kvp["fontName"] = self.fontName.strip()
+        if self.readOnly is not None and isinstance(self.readOnly, bool):
+            kvp["readOnly"] = self.readOnly
+        if self.backspace and isinstance(self.backspace, str) and self.backspace in TERMINAL_BACKSPACE_VALUES:
+            kvp["backspace"] = self.backspace
+        if self.terminalType and isinstance(self.terminalType, str) and self.terminalType.strip():
+            kvp["terminalType"] = self.terminalType.strip()
         if self.usernameRegex and isinstance(self.usernameRegex, str) and self.usernameRegex.strip():
             kvp["usernameRegex"] = self.usernameRegex.strip()
         if self.passwordRegex and isinstance(self.passwordRegex, str) and self.passwordRegex.strip():
@@ -2723,6 +3604,16 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         if self.loginFailureRegex and isinstance(self.loginFailureRegex, str) and self.loginFailureRegex.strip():
             kvp["loginFailureRegex"] = self.loginFailureRegex.strip()
 
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        if self.funcKeysAndKeypad and isinstance(self.funcKeysAndKeypad, str) and self.funcKeysAndKeypad in TERMINAL_FUNC_KEYS_AND_KEYPAD:
+            kvp["funcKeysAndKeypad"] = self.funcKeysAndKeypad
+        if self.timeout is not None and type(self.timeout) is int and self.timeout > 0:
+            kvp["timeout"] = self.timeout
+        if isinstance(self.wol, WolConnectionSettings):
+            kvp.update(self.wol.to_dict())
+        if isinstance(self.recordingFilter, RecordingFilterConnectionSettings):
+            kvp.update(self.recordingFilter.to_dict())
+
         return kvp
 
     def to_record_json(self):
@@ -2730,7 +3621,8 @@ class ConnectionSettingsTelnet(BaseConnectionSettings, ClipboardConnectionSettin
         rec_json = json.dumps(dict)
         return rec_json
 
-class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings, TerminalDisplayConnectionSettings):
+class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings, TerminalDisplayConnectionSettings,
+                            TerminalBehaviorConnectionSettings):
     protocol = ConnectionProtocol.SSH
     def __init__( # pylint: disable=R0917
         self,
@@ -2745,14 +3637,48 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         scrollback: Optional[int] = None,
         hostKey: Optional[str] = None,
         command: Optional[str] = None,
-        sftp: Optional[SFTPRootDirectorySettings] = None
+        sftp: Optional[SFTPRootDirectorySettings] = None,
+        fontName: Optional[str] = None,
+        readOnly: Optional[bool] = None,
+        backspace: Optional[str] = None,
+        terminalType: Optional[str] = None,
+        locale: Optional[str] = None,
+        timezone: Optional[str] = None,
+        serverAliveInterval: Optional[int] = None,
+        funcKeysAndKeypad: Optional[str] = None,
+        timeout: Optional[int] = None,
+        wol: Optional[WolConnectionSettings] = None,
+        recordingFilter: Optional[RecordingFilterConnectionSettings] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback, fontName, readOnly)
+        TerminalBehaviorConnectionSettings.__init__(self, backspace)
         self.hostKey = hostKey
         self.command = command
         self.sftp = sftp if isinstance(sftp, SFTPRootDirectorySettings) else None
+        # In the Web Vault UI (SSH Session / Environment and Terminal Behavior sections)
+        self.terminalType = terminalType  # terminal-type: TERM sent in the PTY request (Web Vault: free text)
+        self.locale = locale  # locale: $LANG, e.g. en_US.UTF-8
+        self.timezone = timezone  # timezone: $TZ, IANA name e.g. America/New_York
+        self.serverAliveInterval = serverAliveInterval  # server-alive-interval: seconds; 0 = disabled, minimum effective 2
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        self.funcKeysAndKeypad = funcKeysAndKeypad  # func-keys-and-keypad: "esc" | "vt100"
+        self.timeout = timeout  # timeout: seconds to wait for the SSH server to respond before aborting (guacd default 10)
+        self.wol = wol if isinstance(wol, WolConnectionSettings) else None  # wol-send-packet, wol-mac-addr, ...
+        self.recordingFilter = recordingFilter if isinstance(recordingFilter, RecordingFilterConnectionSettings) else None
+        # [Do not remove] enable_agent (guacd enable-agent) is NOT processed on purpose (as of 2026-11-03): it makes guacd
+        #   forward the connection's own authentication key to the target host as an SSH agent, so anyone with access on the
+        #   target can use that key onward during the session. It is not in the KCM connection form, the upstream manual or
+        #   the Web Vault UI, so no client offers it; enabling it is a security decision, not a convenience option.
+        #   Revisit only together with the Vault and Gateway owners.
+        # self.enableAgent = None
+        # [Do not remove] clipboard_encoding for SSH is NOT processed on purpose (as of 2026-11-03): the Web Vault SSH record
+        #   type declares clipboardEncoding but the SSH UI never shows it, and the guacd SSH plugin has no clipboard-encoding
+        #   argument (it exists for VNC only), so the guacd client would discard the key with a warning. Writing it would look
+        #   configured but do nothing. Revisit if the SSH plugin or the Vault starts using it.
+        # self.clipboardEncoding = None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2774,12 +3700,19 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         if ccs:
             obj.disableCopy = ccs.disableCopy
             obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
 
         tcs = TerminalDisplayConnectionSettings.load(data)
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
             obj.scrollback = tcs.scrollback
+            obj.fontName = tcs.fontName
+            obj.readOnly = tcs.readOnly
+
+        tbs = TerminalBehaviorConnectionSettings.load(data)
+        if tbs:
+            obj.backspace = tbs.backspace
 
         val = data.get("public_host_key", None)
         if isinstance(val, str): obj.hostKey = val
@@ -2787,6 +3720,33 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         if isinstance(val, str): obj.command = val
         sftp = data.get("sftp", None)
         if isinstance(sftp, dict): obj.sftp = SFTPRootDirectorySettings.load(sftp)
+
+        owner = "ConnectionSettingsSSH"
+        obj.terminalType = parse_terminal_type(data, owner)
+        val = data.get("locale", None)
+        if isinstance(val, str) and val.strip(): obj.locale = val.strip()
+        elif val is not None and val != "": logging.warning(f"{owner}: locale must be a string (e.g. en_US.UTF-8), got: {val!r} (skipped)")
+        val = data.get("timezone", None)
+        if isinstance(val, str) and val.strip(): obj.timezone = val.strip()
+        elif val is not None and val != "": logging.warning(f"{owner}: timezone must be a string (IANA name), got: {val!r} (skipped)")
+        interval = parse_int_in_range(data.get("server_alive_interval", None), "server_alive_interval", 0, 2147483647, owner)
+        if interval == 1:
+            logging.warning(f"{owner}: server_alive_interval 1 is below the minimum of 2 seconds - stored as 2 (0 disables keepalive)")
+            interval = 2
+        obj.serverAliveInterval = interval
+
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented in
+        # README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        val = data.get("func_keys_and_keypad", None)
+        if isinstance(val, str) and val.strip().lower() in TERMINAL_FUNC_KEYS_AND_KEYPAD:
+            obj.funcKeysAndKeypad = val.strip().lower()
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: func_keys_and_keypad must be one of {', '.join(TERMINAL_FUNC_KEYS_AND_KEYPAD)}, got: {val!r} (skipped)")
+        obj.timeout = parse_int_in_range(data.get("timeout", None), "timeout", 1, 2147483647, owner)
+        wol = WolConnectionSettings.load(data, owner)
+        if not wol.is_empty(): obj.wol = wol
+        rfs = RecordingFilterConnectionSettings.load(data)
+        if not rfs.is_empty(): obj.recordingFilter = rfs
 
         return obj
 
@@ -2809,6 +3769,8 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
             kvp["disableCopy"] = self.disableCopy
         if self.disablePaste is not None and isinstance(self.disablePaste, bool):
             kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
 
         if self.colorScheme and isinstance(self.colorScheme, str) and self.colorScheme.strip():
             kvp["colorScheme"] = self.colorScheme.strip()
@@ -2816,6 +3778,20 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
             kvp["fontSize"] = str(self.fontSize)
         if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
             kvp["scrollback"] = self.scrollback
+        if self.fontName and isinstance(self.fontName, str) and self.fontName.strip():
+            kvp["fontName"] = self.fontName.strip()
+        if self.readOnly is not None and isinstance(self.readOnly, bool):
+            kvp["readOnly"] = self.readOnly
+        if self.backspace and isinstance(self.backspace, str) and self.backspace in TERMINAL_BACKSPACE_VALUES:
+            kvp["backspace"] = self.backspace
+        if self.terminalType and isinstance(self.terminalType, str) and self.terminalType.strip():
+            kvp["terminalType"] = self.terminalType.strip()
+        if self.locale and isinstance(self.locale, str) and self.locale.strip():
+            kvp["locale"] = self.locale.strip()
+        if self.timezone and isinstance(self.timezone, str) and self.timezone.strip():
+            kvp["timezone"] = self.timezone.strip()
+        if self.serverAliveInterval is not None and type(self.serverAliveInterval) is int and self.serverAliveInterval >= 0:
+            kvp["serverAliveInterval"] = self.serverAliveInterval
         if self.hostKey and isinstance(self.hostKey, str) and self.hostKey.strip():
             kvp["hostKey"] = self.hostKey.strip()
         if self.command and isinstance(self.command, str) and self.command.strip():
@@ -2826,6 +3802,16 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
             if srds:
                 kvp["sftp"] = srds
 
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        if self.funcKeysAndKeypad and isinstance(self.funcKeysAndKeypad, str) and self.funcKeysAndKeypad in TERMINAL_FUNC_KEYS_AND_KEYPAD:
+            kvp["funcKeysAndKeypad"] = self.funcKeysAndKeypad
+        if self.timeout is not None and type(self.timeout) is int and self.timeout > 0:
+            kvp["timeout"] = self.timeout
+        if isinstance(self.wol, WolConnectionSettings):
+            kvp.update(self.wol.to_dict())
+        if isinstance(self.recordingFilter, RecordingFilterConnectionSettings):
+            kvp.update(self.recordingFilter.to_dict())
+
         return kvp
 
     def to_record_json(self):
@@ -2833,7 +3819,8 @@ class ConnectionSettingsSSH(BaseConnectionSettings, ClipboardConnectionSettings,
         rec_json = json.dumps(dict)
         return rec_json
 
-class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnectionSettings):
+class ConnectionSettingsKubernetes(BaseConnectionSettings, ClipboardConnectionSettings, TerminalDisplayConnectionSettings,
+                                 TerminalBehaviorConnectionSettings):
     protocol = ConnectionProtocol.KUBERNETES
     def __init__( # pylint: disable=R0917
         self,
@@ -2850,10 +3837,22 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         pod: Optional[str] = None,
         container: Optional[str] = None,
         clientCert: Optional[str] = None,
-        clientKey: Optional[str] = None
+        clientKey: Optional[str] = None,
+        useSSL: Optional[bool] = None,
+        execCommand: Optional[str] = None,
+        fontName: Optional[str] = None,
+        readOnly: Optional[bool] = None,
+        backspace: Optional[str] = None,
+        disableCopy: Optional[bool] = None,
+        disablePaste: Optional[bool] = None,
+        terminalType: Optional[str] = None,
+        funcKeysAndKeypad: Optional[str] = None,
+        recordingFilter: Optional[RecordingFilterConnectionSettings] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
+        ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback, fontName, readOnly)
+        TerminalBehaviorConnectionSettings.__init__(self, backspace)
         self.ignoreCert = ignoreCert
         self.caCert = caCert
         self.namespace = namespace
@@ -2861,6 +3860,14 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         self.container = container
         self.clientCert = clientCert
         self.clientKey = clientKey
+        self.useSSL = useSSL  # use-ssl: use SSL/TLS for the connection to the Kubernetes API server
+        # exec-command: command to run in the container (omitted = the default shell). KCM name on purpose, see load().
+        self.execCommand = execCommand
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        self.terminalType = terminalType  # terminal-type: TERM sent to the container (guacd default "linux")
+        self.funcKeysAndKeypad = funcKeysAndKeypad  # func-keys-and-keypad: "esc" | "vt100"
+        self.recordingFilter = recordingFilter if isinstance(recordingFilter, RecordingFilterConnectionSettings) else None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2878,11 +3885,23 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
             obj.launch_credentials = getattr(bcs, "launch_credentials", None)
             obj.launchRecordUid = getattr(bcs, "launchRecordUid", None)
 
+        ccs = ClipboardConnectionSettings.load(data)
+        if ccs:
+            obj.disableCopy = ccs.disableCopy
+            obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
+
         tcs = TerminalDisplayConnectionSettings.load(data)
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
             obj.scrollback = tcs.scrollback
+            obj.fontName = tcs.fontName
+            obj.readOnly = tcs.readOnly
+
+        tbs = TerminalBehaviorConnectionSettings.load(data)
+        if tbs:
+            obj.backspace = tbs.backspace
 
         val = data.get("namespace", None)
         if isinstance(val, str): obj.namespace = val
@@ -2894,6 +3913,26 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         obj.caCert = multiline_to_str(parse_multiline(data, "ca_certificate", "Error parsing ca_certificate"))
         obj.clientCert = multiline_to_str(parse_multiline(data, "client_certificate", "Error parsing client_certificate"))
         obj.clientKey = multiline_to_str(parse_multiline(data, "client_key", "Error parsing client_key"))
+
+        owner = "ConnectionSettingsKubernetes"
+        obj.useSSL = utils.value_to_boolean(data.get("use_ssl", None))
+        # NB! exec_command uses the KCM name ON PURPOSE. As of 2026-11-03 the Web Vault writes this option as "command".
+        # The Gateway forwards record keys unchanged and the guacd client only strips "-"/"_" and lowercases them, so it
+        # ends up as "command", which matches no guacd argument (guacd expects "exec-command" -> "execcommand"), and the
+        # Gateway has no alias for it. The Vault value is therefore ignored (maps to nothing) until the Vault/Gateway side
+        # is aligned. Data keys are independent of UI labels, so this can be revisited without changing the UI.
+        obj.execCommand = parse_str_setting(data, "exec_command", owner)
+
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented in
+        # README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        obj.terminalType = parse_terminal_type(data, owner)
+        val = data.get("func_keys_and_keypad", None)
+        if isinstance(val, str) and val.strip().lower() in TERMINAL_FUNC_KEYS_AND_KEYPAD:
+            obj.funcKeysAndKeypad = val.strip().lower()
+        elif val is not None and val != "":
+            logging.warning(f"{owner}: func_keys_and_keypad must be one of {', '.join(TERMINAL_FUNC_KEYS_AND_KEYPAD)}, got: {val!r} (skipped)")
+        rfs = RecordingFilterConnectionSettings.load(data)
+        if not rfs.is_empty(): obj.recordingFilter = rfs
 
         return obj
 
@@ -2912,6 +3951,12 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
             kvp["allowSupplyUser"] = self.allowSupplyUser
         if self.recordingIncludeKeys is not None and isinstance(self.recordingIncludeKeys, bool):
             kvp["recordingIncludeKeys"] = self.recordingIncludeKeys
+        if self.disableCopy is not None and isinstance(self.disableCopy, bool):
+            kvp["disableCopy"] = self.disableCopy
+        if self.disablePaste is not None and isinstance(self.disablePaste, bool):
+            kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
         if self.colorScheme and isinstance(self.colorScheme, str) and self.colorScheme.strip():
             kvp["colorScheme"] = self.colorScheme.strip()
         if self.fontSize and type(self.fontSize) is int and self.fontSize > 4:
@@ -2933,6 +3978,26 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
             kvp["clientCert"] = self.clientCert.strip()
         if self.clientKey and isinstance(self.clientKey, str) and self.clientKey.strip():
             kvp["clientKey"] = self.clientKey.strip()
+        if self.useSSL is not None and isinstance(self.useSSL, bool):
+            kvp["useSSL"] = self.useSSL
+        # NB! KCM key name on purpose: as of 2026-11-03 the Web Vault uses "command" instead; GW/guacd map that to
+        # nothing (guacd expects exec-command) - see the dated comment in load().
+        if self.execCommand and isinstance(self.execCommand, str) and self.execCommand.strip():
+            kvp["execCommand"] = self.execCommand.strip()
+        if self.fontName and isinstance(self.fontName, str) and self.fontName.strip():
+            kvp["fontName"] = self.fontName.strip()
+        if self.readOnly is not None and isinstance(self.readOnly, bool):
+            kvp["readOnly"] = self.readOnly
+        if self.backspace and isinstance(self.backspace, str) and self.backspace in TERMINAL_BACKSPACE_VALUES:
+            kvp["backspace"] = self.backspace
+
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        if self.terminalType and isinstance(self.terminalType, str) and self.terminalType.strip():
+            kvp["terminalType"] = self.terminalType.strip()
+        if self.funcKeysAndKeypad and isinstance(self.funcKeysAndKeypad, str) and self.funcKeysAndKeypad in TERMINAL_FUNC_KEYS_AND_KEYPAD:
+            kvp["funcKeysAndKeypad"] = self.funcKeysAndKeypad
+        if isinstance(self.recordingFilter, RecordingFilterConnectionSettings):
+            kvp.update(self.recordingFilter.to_dict())
 
         return kvp
 
@@ -2941,7 +4006,18 @@ class ConnectionSettingsKubernetes(BaseConnectionSettings, TerminalDisplayConnec
         rec_json = json.dumps(dict)
         return rec_json
 
+# Database launch options (Web Vault KeeperDB section): dbConnectionMethod and rbiSettings.sessionPersistence
+DB_CONNECTION_METHODS = {"cli": "cli", "keeperdb": "keeperDB", "both": "both"}  # input (lowercase) -> record value
+DB_SESSION_PERSISTENCE = ("none", "user", "resource")  # none = incognito, user = profile per user and resource, resource = shared
+# sql-server TDS protocol versions offered by the KCM form (guacd plugin default "7.4")
+SQL_SERVER_PROTOCOL_VERSIONS = ("7.0", "7.1", "7.2", "7.3", "7.4", "8.0")
+
 class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnectionSettings):
+    # Protocols without a guacd CLI plugin (everything except mysql, postgresql, sql-server) are KeeperDB-only: the Web Vault
+    # shows them as keeperDB whatever is stored and writes dbConnectionMethod=keeperDB on save, while the Gateway reads only
+    # the stored value - so the record must carry it (see load()).
+    keeperDbOnly = True
+
     def __init__( # pylint: disable=R0917
         self,
         port: Optional[str] = None,  # Override port from host
@@ -2952,13 +4028,17 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
         disablePaste: Optional[bool] = None,
         database: Optional[str] = None,
         disableCsvExport: Optional[bool] = None,
-        disableCsvImport: Optional[bool] = None
+        disableCsvImport: Optional[bool] = None,
+        dbConnectionMethod: Optional[str] = None,
+        sessionPersistence: Optional[str] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
         self.database = database
         self.disableCsvExport = disableCsvExport
         self.disableCsvImport = disableCsvImport
+        self.dbConnectionMethod = dbConnectionMethod  # "cli" | "keeperDB" | "both" (always "keeperDB" for KeeperDB-only protocols)
+        self.sessionPersistence = sessionPersistence  # "none" | "user" | "resource" -> rbiSettings.sessionPersistence (KeeperDB sessions)
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2980,13 +4060,47 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
         if ccs:
             obj.disableCopy = ccs.disableCopy
             obj.disablePaste = ccs.disablePaste
+            obj.clipboardBufferSize = ccs.clipboardBufferSize
 
         val = data.get("default_database", None)
         if isinstance(val, str): obj.database = val
         obj.disableCsvExport = utils.value_to_boolean(data.get("disable_csv_export", None))
         obj.disableCsvImport = utils.value_to_boolean(data.get("disable_csv_import", None))
 
+        # Only a concrete protocol class applies the launch options: the CLI-capable classes call
+        # BaseDatabaseConnectionSettings.load() for the common fields and apply them with their own class settings.
+        if getattr(cls, "protocol", None) is not None:
+            cls._apply_launch_options(obj, data)
+
         return obj
+
+    @classmethod
+    def _apply_launch_options(cls, obj, data: dict):
+        """db_connection_method / session_persistence (Web Vault KeeperDB section), using cls.keeperDbOnly."""
+        protocol = getattr(cls, "protocol", None)
+        pname = protocol.value if isinstance(protocol, ConnectionProtocol) else "database"
+        owner = f"Database Connection Settings ({pname})"
+        raw = data.get("db_connection_method", None)
+        method = DB_CONNECTION_METHODS.get(raw.strip().lower()) if isinstance(raw, str) else None
+        given = raw is not None and raw != ""
+        if cls.keeperDbOnly:
+            # Replace on the record (import and extend alike): the Gateway needs the stored keeperDB value.
+            if given and method != "keeperDB":
+                logging.warning(f"{owner}: db_connection_method {raw!r} is not possible for {pname} (KeeperDB-only) - "
+                                "replaced with the required 'keeperDB'")
+            obj.dbConnectionMethod = "keeperDB"
+        else:
+            if given and method is None:
+                logging.warning(f"{owner}: db_connection_method must be one of cli, keeperDB, both, got: {raw!r} (skipped)")
+            obj.dbConnectionMethod = method
+        raw = data.get("session_persistence", None)
+        if isinstance(raw, str) and raw.strip().lower() in DB_SESSION_PERSISTENCE:
+            obj.sessionPersistence = raw.strip().lower()
+            if obj.dbConnectionMethod in (None, "cli"):
+                logging.warning(f"{owner}: session_persistence only applies to KeeperDB sessions (db_connection_method keeperDB or both) "
+                                "- it has no effect with cli")
+        elif raw is not None and raw != "":
+            logging.warning(f"{owner}: session_persistence must be one of {', '.join(DB_SESSION_PERSISTENCE)}, got: {raw!r} (skipped)")
 
     def to_record_dict(self):
         kvp: Dict[str, Any] = {}
@@ -3007,12 +4121,18 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
             kvp["disableCopy"] = self.disableCopy
         if self.disablePaste is not None and isinstance(self.disablePaste, bool):
             kvp["disablePaste"] = self.disablePaste
+        if self.clipboardBufferSize is not None and type(self.clipboardBufferSize) is int:
+            kvp["clipboardBufferSize"] = self.clipboardBufferSize
         if self.disableCsvExport is not None and isinstance(self.disableCsvExport, bool):
             kvp["disableCsvExport"] = self.disableCsvExport
         if self.disableCsvImport is not None and isinstance(self.disableCsvImport, bool):
             kvp["disableCsvImport"] = self.disableCsvImport
         if self.database and isinstance(self.database, str) and self.database.strip():
             kvp["database"] = self.database.strip()
+        if self.dbConnectionMethod in ("cli", "keeperDB", "both"):
+            kvp["dbConnectionMethod"] = self.dbConnectionMethod
+        if self.sessionPersistence in DB_SESSION_PERSISTENCE:
+            kvp["rbiSettings"] = {"sessionPersistence": self.sessionPersistence}
 
         return kvp
 
@@ -3023,6 +4143,7 @@ class BaseDatabaseConnectionSettings(BaseConnectionSettings, ClipboardConnection
 
 class CliCapableDatabaseConnectionSettings(BaseDatabaseConnectionSettings, TerminalDisplayConnectionSettings):
     """mysql/postgresql/sql-server: CLI-capable DB protocols with terminal display (mirrors WV)."""
+    keeperDbOnly = False
 
     def __init__( # pylint: disable=R0917
         self,
@@ -3038,11 +4159,22 @@ class CliCapableDatabaseConnectionSettings(BaseDatabaseConnectionSettings, Termi
         colorScheme: Optional[str] = None,
         fontSize: Optional[int] = None,
         scrollback: Optional[int] = None,
+        fontName: Optional[str] = None,
+        readOnly: Optional[bool] = None,
+        dbConnectionMethod: Optional[str] = None,
+        sessionPersistence: Optional[str] = None,
+        wol: Optional[WolConnectionSettings] = None,
+        recordingFilter: Optional[RecordingFilterConnectionSettings] = None
     ):
         BaseDatabaseConnectionSettings.__init__(
             self, port, allowSupplyUser, userRecords, recordingIncludeKeys,
-            disableCopy, disablePaste, database, disableCsvExport, disableCsvImport)
-        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback)
+            disableCopy, disablePaste, database, disableCsvExport, disableCsvImport,
+            dbConnectionMethod, sessionPersistence)
+        TerminalDisplayConnectionSettings.__init__(self, colorScheme, fontSize, scrollback, fontName, readOnly)
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        self.wol = wol if isinstance(wol, WolConnectionSettings) else None  # wol-send-packet, wol-mac-addr, ..., wol-udp-port
+        self.recordingFilter = recordingFilter if isinstance(recordingFilter, RecordingFilterConnectionSettings) else None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -3059,17 +4191,29 @@ class CliCapableDatabaseConnectionSettings(BaseDatabaseConnectionSettings, Termi
             obj.recordingIncludeKeys = bdcs.recordingIncludeKeys
             obj.disableCopy = bdcs.disableCopy
             obj.disablePaste = bdcs.disablePaste
+            obj.clipboardBufferSize = bdcs.clipboardBufferSize
             obj.database = bdcs.database
             obj.disableCsvExport = bdcs.disableCsvExport
             obj.disableCsvImport = bdcs.disableCsvImport
             obj.launch_credentials = getattr(bdcs, "launch_credentials", None)
             obj.launchRecordUid = getattr(bdcs, "launchRecordUid", None)
+        cls._apply_launch_options(obj, data)
 
         tcs = TerminalDisplayConnectionSettings.load(data)
         if tcs:
             obj.colorScheme = tcs.colorScheme
             obj.fontSize = tcs.fontSize
             obj.scrollback = tcs.scrollback
+            obj.fontName = tcs.fontName
+            obj.readOnly = tcs.readOnly
+
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        pr = getattr(cls, "protocol", None)
+        owner = f"Database Connection Settings ({pr.value if isinstance(pr, ConnectionProtocol) else 'database'})"
+        wol = WolConnectionSettings.load(data, owner)
+        if not wol.is_empty(): obj.wol = wol
+        rfs = RecordingFilterConnectionSettings.load(data, clipboard=False)  # recording-include-clipboard: not a database plugin arg
+        if not rfs.is_empty(): obj.recordingFilter = rfs
 
         return obj
 
@@ -3080,17 +4224,65 @@ class CliCapableDatabaseConnectionSettings(BaseDatabaseConnectionSettings, Termi
             kvp["fontSize"] = str(self.fontSize)
         if self.scrollback is not None and type(self.scrollback) is int and self.scrollback > 0:
             kvp["scrollback"] = self.scrollback
+        if self.fontName and isinstance(self.fontName, str) and self.fontName.strip():
+            kvp["fontName"] = self.fontName.strip()
+        if self.readOnly is not None and isinstance(self.readOnly, bool):
+            kvp["readOnly"] = self.readOnly
 
     def to_record_dict(self):
         kvp = super().to_record_dict()
         self._apply_terminal_display_to_record_dict(kvp)
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        if isinstance(self.wol, WolConnectionSettings):
+            kvp.update(self.wol.to_dict())
+        if isinstance(self.recordingFilter, RecordingFilterConnectionSettings):
+            kvp.update(self.recordingFilter.to_dict())
         return kvp
 
 class ConnectionSettingsSqlServer(CliCapableDatabaseConnectionSettings):
     protocol = ConnectionProtocol.SQLSERVER
+
+    def __init__(self, *args, protocolVersion: Optional[str] = None, forceEncryption: Optional[bool] = None,
+                 disableCertHostnameVerification: Optional[bool] = None, caCertificate: Optional[str] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # NB! Not in the Web Vault UI yet (KCM / guacd only; the Gateway forwards them) - deliberately NOT documented
+        # in README.md until the Web Vault adds them and the other clients follow (officially enabled on all clients in sync).
+        self.protocolVersion = protocolVersion  # protocol-version: TDS version, one of SQL_SERVER_PROTOCOL_VERSIONS (default 7.4)
+        self.forceEncryption = forceEncryption  # force-encryption: require an encrypted connection
+        self.disableCertHostnameVerification = disableCertHostnameVerification  # disable-cert-hostname-verification
+        self.caCertificate = caCertificate  # ca-certificate: PEM CA certificate (multi-line)
+
+    @classmethod
+    def load(cls, data: Union[str, dict]):
+        obj = super().load(data)
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: return obj
+        if not isinstance(obj, cls) or not isinstance(data, dict): return obj
+
+        owner = "Database Connection Settings (sql-server)"
+        val = data.get("protocol_version", None)
+        if val is not None and val != "":
+            ver = str(val).strip()
+            if ver.isdecimal(): ver += ".0"
+            if ver in SQL_SERVER_PROTOCOL_VERSIONS: obj.protocolVersion = ver
+            else: logging.warning(f"{owner}: protocol_version must be one of {', '.join(SQL_SERVER_PROTOCOL_VERSIONS)}, got: {val!r} (skipped)")
+        obj.forceEncryption = utils.value_to_boolean(data.get("force_encryption", None))
+        obj.disableCertHostnameVerification = utils.value_to_boolean(data.get("disable_cert_hostname_verification", None))
+        obj.caCertificate = multiline_to_str(parse_multiline(data, "ca_certificate", "Error parsing ca_certificate"))
+        return obj
+
     def to_record_dict(self):
         d = super().to_record_dict()
         d["protocol"] = ConnectionProtocol.SQLSERVER.value  # pylint: disable=E1101
+        # NB! Not in the Web Vault UI yet (see __init__) - KCM / guacd only
+        if self.protocolVersion and self.protocolVersion in SQL_SERVER_PROTOCOL_VERSIONS:
+            d["protocolVersion"] = self.protocolVersion
+        if self.forceEncryption is not None and isinstance(self.forceEncryption, bool):
+            d["forceEncryption"] = self.forceEncryption
+        if self.disableCertHostnameVerification is not None and isinstance(self.disableCertHostnameVerification, bool):
+            d["disableCertHostnameVerification"] = self.disableCertHostnameVerification
+        if self.caCertificate and isinstance(self.caCertificate, str) and self.caCertificate.strip():
+            d["caCertificate"] = self.caCertificate.strip()
         return d
 
 class ConnectionSettingsPostgreSQL(CliCapableDatabaseConnectionSettings):
@@ -3181,9 +4373,24 @@ PamConnectionSettings = Optional[
 ]
 
 class PamPortForwardSettings:
-    def __init__(self, port: Optional[str] = None, reusePort: Optional[bool] = None):
+    def __init__(
+        self,
+        port: Optional[str] = None,
+        reusePort: Optional[bool] = None,
+        useSpecifiedLocalPort: Optional[bool] = None,
+        localPort: Optional[str] = None,
+        allowKeeperDBProxy: Optional[bool] = None,
+        allowKeeperRDPProxy: Optional[bool] = None,
+        allowKeeperSSHProxy: Optional[bool] = None,
+    ):
         self.port = port  # Override Port from host
         self.reusePort = reusePort  # Attempt to use the last connected port if available
+        self.useSpecifiedLocalPort = useSpecifiedLocalPort  # Vault only: use localPort (off = generate local port)
+        self.localPort = localPort  # Vault only: local port number (string of digits)
+        # Keeper proxy gates (Gateway reads them); each applies to a set of protocols only
+        self.allowKeeperDBProxy = allowKeeperDBProxy  # KeeperDB Proxy: databases (see port_forward_validation.KEEPER_DB_PROXY_PROTOCOLS)
+        self.allowKeeperRDPProxy = allowKeeperRDPProxy  # KeeperRDP Proxy: RDP
+        self.allowKeeperSSHProxy = allowKeeperSSHProxy  # KeeperSSH Proxy: SSH
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -3194,6 +4401,14 @@ class PamPortForwardSettings:
 
         obj.port = data.get("port", None)
         obj.reusePort = utils.value_to_boolean(data.get("reuse_port", None))
+        obj.useSpecifiedLocalPort = utils.value_to_boolean(data.get("use_specified_local_port", None))
+        local_port = data.get("local_port", None)
+        if isinstance(local_port, int) and not isinstance(local_port, bool):
+            local_port = str(local_port)
+        obj.localPort = local_port if isinstance(local_port, str) and local_port.strip() else None
+        obj.allowKeeperDBProxy = utils.value_to_boolean(data.get("allow_keeper_db_proxy", None))
+        obj.allowKeeperRDPProxy = utils.value_to_boolean(data.get("allow_keeper_rdp_proxy", None))
+        obj.allowKeeperSSHProxy = utils.value_to_boolean(data.get("allow_keeper_ssh_proxy", None))
         return obj
 
     def to_record_dict(self):
@@ -3202,6 +4417,17 @@ class PamPortForwardSettings:
             dict["port"] = self.port.strip()
         if self.reusePort is not None and isinstance(self.reusePort, bool):
             dict["reusePort"] = self.reusePort
+        if self.useSpecifiedLocalPort is not None and isinstance(self.useSpecifiedLocalPort, bool):
+            dict["useSpecifiedLocalPort"] = self.useSpecifiedLocalPort
+        if self.localPort and isinstance(self.localPort, str) and self.localPort.strip():
+            dict["localPort"] = self.localPort.strip()
+        # Keeper proxy gates live in portForward only (never in the legacy connection section)
+        if self.allowKeeperDBProxy is not None and isinstance(self.allowKeeperDBProxy, bool):
+            dict["allowKeeperDBProxy"] = self.allowKeeperDBProxy
+        if self.allowKeeperRDPProxy is not None and isinstance(self.allowKeeperRDPProxy, bool):
+            dict["allowKeeperRDPProxy"] = self.allowKeeperRDPProxy
+        if self.allowKeeperSSHProxy is not None and isinstance(self.allowKeeperSSHProxy, bool):
+            dict["allowKeeperSSHProxy"] = self.allowKeeperSSHProxy
         return dict
 
     def to_record_json(self):
@@ -3273,6 +4499,7 @@ class PamSettingsFieldData:
         self.jit_settings = jit_settings
         self.ai_settings = ai_settings
         self.workflow = workflow  # not on record nor in DAG; applied via Krouter
+        self.sftp_warnings: List[str] = []  # import-time only, logged by validate_record
 
     # PamConnectionSettings excludes ConnectionSettingsHTTP
     pam_connection_classes = [
@@ -3350,6 +4577,8 @@ class PamSettingsFieldData:
         if not isinstance(cdata, dict):
             logging.warning(f"""PAM Settings: Connection must be a JSON object - skipping... "{str(cdata)[:24]}" """)
         obj.connection = cls.get_connection_class(cdata)
+        if isinstance(cdata, dict):
+            obj.sftp_warnings = sftp_import_warnings(cdata)
         if not obj.connection and cdata and isinstance(cdata, dict):
             logging.error(f"PAM Settings failed to load from: {str(cdata)[:80]}...")
 
