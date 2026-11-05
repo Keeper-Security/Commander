@@ -34,8 +34,8 @@ from typing import Iterator, List, Optional, Union, Dict, Tuple, Set, Iterable
 from urllib.parse import urlparse, parse_qs
 
 from .encryption_reader import EncryptionReader
-from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, BaseExporter,
-                       BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder,
+from .importer import (importer_for_format, exporter_for_format, path_components, PathDelimiter, normalize_folder_path, BaseExporter,
+                       BaseImporter, Record as ImportRecord, RecordField as ImportRecordField, Folder as ImportFolder, EmptyFolder as ImportEmptyFolder,
                        SharedFolder as ImportSharedFolder, Permission as ImportPermission, BytesAttachment,
                        Attachment as ImportAttachment, RecordSchemaField, File as ImportFile, Team as ImportTeam,
                        RecordReferences, FIELD_TYPE_ONE_TIME_CODE, TWO_FACTOR_CODE)
@@ -299,6 +299,47 @@ def _byte_length(value):
     return 0
 
 
+def find_empty_folders(params, exported_folder_uids, folder_filter=None, include_shared=False):
+    # type: (KeeperParams, Set[str], Optional[Set[str]], bool) -> List[str]
+    """Return uids of the folders that need an explicit entry in an export.
+
+    A folder qualifies when none of the exported records is in it and no folder below it is already exported
+    (a folder's parents are re-created from its path on import). It is judged by the records actually exported,
+    not by the folder's content, so folders whose records were filtered out (--owned-only) or skipped qualify.
+    Shared folders are included only when *include_shared* is set, i.e. the format has no shared folder section.
+    """
+    types = {BaseFolderNode.UserFolderType, BaseFolderNode.SharedFolderFolderType,
+             BaseFolderNode.NestedShareFolderType}
+    if include_shared:
+        types.add(BaseFolderNode.SharedFolderType)
+
+    def ancestors(uid):
+        seen = set()
+        folder = params.folder_cache.get(uid)
+        while folder is not None and folder.parent_uid and folder.parent_uid not in seen:
+            seen.add(folder.parent_uid)
+            folder = params.folder_cache.get(folder.parent_uid)
+        return seen
+
+    def depth(uid):
+        return len(ancestors(uid))
+
+    covered = set()     # type: Set[str]
+    for uid in exported_folder_uids:
+        covered.update(ancestors(uid))
+
+    candidates = [uid for uid, f in params.folder_cache.items()
+                  if f.type in types and uid not in exported_folder_uids
+                  and (not folder_filter or uid in folder_filter)]
+    result = []
+    for uid in sorted(candidates, key=depth, reverse=True):     # deepest first, so a leaf covers its parents
+        if uid in covered:
+            continue
+        result.append(uid)
+        covered.update(ancestors(uid))
+    return result
+
+
 def export(params, file_format, filename, **kwargs):
     # type: (KeeperParams, str, str, ...) -> None
     """Export data from Vault to a file in an assortment of formats."""
@@ -402,6 +443,7 @@ def export(params, file_format, filename, **kwargs):
         record_list = params.record_cache
     service_mode_record_count = 0
     service_mode_input_bytes = 0
+    exported_folder_uids = set()    # type: Set[str]
     for record_uid in record_list:
         if record_filter or folder_path:
             if record_uid not in record_filter:
@@ -503,6 +545,7 @@ def export(params, file_format, filename, **kwargs):
                     if rec.folders is None:
                         rec.folders = []
                     rec.folders.append(export_folder)
+                    exported_folder_uids.add(folder_uid)
 
             to_export.append(rec)
         # elif record_version == 4:
@@ -517,6 +560,17 @@ def export(params, file_format, filename, **kwargs):
         #         to_export.append(file)
 
     rec_count = len(to_export) - sf_count
+
+    if kwargs.get('include_empty_folders'):
+        if exporter.has_empty_folders():
+            for folder_uid in find_empty_folders(params, exported_folder_uids, folder_filter,
+                                                 include_shared=not exporter.has_shared_folders()):
+                empty = ImportEmptyFolder()
+                empty.folders.append(get_import_folder(params, folder_uid, None))
+                to_export.append(empty)
+        else:
+            logging.warning('Export to %s format does not support --include-empty-folders. Empty folders are '
+                            'not exported.', file_format)
 
     args = {}
     file_password = kwargs.get('file_password')
@@ -843,6 +897,7 @@ def _import(params, file_format, filename, **kwargs):
     secret_ids = kwargs.get('secret_ids')
     target_node = kwargs.get('target_node')
     folder_depth = kwargs.get('folder_depth')
+    include_empty_folders = kwargs.get('include_empty_folders') is True
     cyberark_skip = {
         x.strip().lower()
         for x in str(kwargs.get('skip') or '').split(',')
@@ -851,6 +906,10 @@ def _import(params, file_format, filename, **kwargs):
     skip_team = kwargs.get('skip_team') is True or 'team' in cyberark_skip
     skip_role = kwargs.get('skip_role') is True or 'role' in cyberark_skip
     skip_user = kwargs.get('skip_user') is True or 'user' in cyberark_skip
+    add_users = kwargs.get('add_users') is True
+    add_teams = kwargs.get('add_teams') is True
+    kdbx_password = kwargs.get('kdbx_password')
+    kdbx_key_file = kwargs.get('kdbx_key_file')
 
     import_into_raw = kwargs.get('import_into') or ''
     import_into = import_into_raw
@@ -860,6 +919,12 @@ def _import(params, file_format, filename, **kwargs):
     no_shortcuts = kwargs.get('no_shortcuts') or False
 
     importer = importer_for_format(file_format)()  # type: BaseImporter
+    if add_users and not importer.support_add_users():
+        logging.warning('--add-users is not supported for --format=%s; ignoring', file_format)
+        add_users = False
+    if add_teams and not importer.support_add_teams():
+        logging.warning('--add-teams is not supported for --format=%s; ignoring', file_format)
+        add_teams = False
     verbose_import_summary = importer.verbose_import_summary
     show_skipped = show_skipped or verbose_import_summary
 
@@ -869,6 +934,7 @@ def _import(params, file_format, filename, **kwargs):
 
     folders = []        # type: List[ImportSharedFolder]
     records = []        # type: List[ImportRecord]
+    empty_folders = []  # type: List[ImportEmptyFolder]
     files = []          # type: List[ImportFile]
 
     filter_folder_lower = filter_folder.lower() if isinstance(filter_folder, str) else ''
@@ -879,8 +945,12 @@ def _import(params, file_format, filename, **kwargs):
     for x in importer.execute(filename, params=params, users_only=import_users, filter_folder=filter_folder,
                               old_domain=old_domain, new_domain=new_domain, tmpdir=tmpdir, secret_ids=secret_ids,
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
-                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user):
-        if isinstance(x, ImportRecord):
+                              skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
+                              kdbx_password=kdbx_password, kdbx_key_file=kdbx_key_file,
+                              add_users=add_users, add_teams=add_teams):
+        if isinstance(x, ImportEmptyFolder) and not include_empty_folders:
+            continue
+        if isinstance(x, (ImportRecord, ImportEmptyFolder)):
             if filter_folder and not importer.support_folder_filter():
                 if not x.folders:
                     continue
@@ -923,6 +993,10 @@ def _import(params, file_format, filename, **kwargs):
                             f.path = PathDelimiter.join([import_into, f.path])
                         else:
                             f.path = import_into
+
+            if isinstance(x, ImportEmptyFolder):
+                empty_folders.append(x)
+                continue
 
             if record_type and not x.type:
                 x.type = record_type
@@ -986,9 +1060,9 @@ def _import(params, file_format, filename, **kwargs):
 
     if use_nsf:
         from .nsf_import import ensure_nsf_record_folders, flatten_record_folder_paths
-        flatten_record_folder_paths(records)
+        flatten_record_folder_paths(records + empty_folders)
         default_nsf = import_into if (import_into and not nsf_base_parent) else None
-        ensure_nsf_record_folders(records, folders, default_nsf)
+        ensure_nsf_record_folders(records + empty_folders, folders, default_nsf)
 
     # Importers with verbose summaries also emit a clear message when the target
     # folder(s) already exist in Keeper.
@@ -1144,10 +1218,10 @@ def _import(params, file_format, filename, **kwargs):
     if use_nsf:
         from .nsf_import import prepare_nsf_folders
         if not dry_run:
-            _created, folder_mapping = prepare_nsf_folders(params, folders, records, nsf_base_parent,
+            _created, folder_mapping = prepare_nsf_folders(params, folders, records + empty_folders, nsf_base_parent,
                                                             folder_depth=folder_depth)
     else:
-        folder_add = prepare_folder_add(params, folders, records, manage_users, manage_records, can_edit, can_share)
+        folder_add = prepare_folder_add(params, folders, records + empty_folders, manage_users, manage_records, can_edit, can_share)
         if folder_add:
             if not dry_run:
                 fol_rs, _ = execute_import_folder_record(params, folder_add, None)
@@ -1485,6 +1559,7 @@ def _import(params, file_format, filename, **kwargs):
                 sfu_rqs = None
 
         sync_down.sync_down(params)
+        grant_imported_record_shares(params, records)
 
         # upload attachments
         v2_atts = []
@@ -2994,6 +3069,187 @@ def prepare_folder_permission(params, folders, full_sync, unsafe=False):
                 folder_permissions.append(request_v3)
 
     return folder_permissions
+
+
+def locate_secret_share_records(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> List[ImportRecord]
+    """Find Keeper records for secret-level shares by folder path and title.
+
+    Record JSON is parsed once while the index is built. Each secret then
+    looks up (normalized folder path, title) instead of parsing again.
+    """
+    record_cache = getattr(params, 'record_cache', None) or {}
+    folder_records = getattr(params, 'subfolder_record_cache', None) or {}
+    record_index = {}
+    unreadable = 0
+    for folder_uid, record_uids in folder_records.items():
+        folder_path = normalize_folder_path(get_folder_path(params, folder_uid))
+        for record_uid in record_uids or []:
+            cached = record_cache.get(record_uid)
+            if not isinstance(cached, dict):
+                unreadable += 1
+                continue
+            raw = cached.get('data_unencrypted') or '{}'
+            if isinstance(raw, bytes):
+                raw = raw.decode('utf-8', errors='replace')
+            try:
+                title = (json.loads(raw).get('title') or '').strip().casefold()
+            except Exception:
+                unreadable += 1
+                continue
+            bucket = record_index.setdefault((folder_path, title), [])
+            if record_uid in bucket:
+                logging.info('Record %s is listed more than once under "%s"; it is matched once',
+                             record_uid, folder_path or '(root)')
+                continue
+            bucket.append(record_uid)
+    if unreadable:
+        logging.warning('%d Keeper record(s) could not be read and were not matched to secrets', unreadable)
+
+    located = []
+    for rec in records:
+        if not getattr(rec, 'shares', None):
+            continue
+        title = (rec.title or '').strip().casefold()
+        folder_paths = list(dict.fromkeys(normalize_folder_path(folder.path) for folder in rec.folders or [])) or ['']
+        folder_path = ', '.join(folder_paths)
+        found = list(dict.fromkeys(
+            record_uid for path in folder_paths for record_uid in record_index.get((path, title), [])))
+        if not found:
+            logging.warning('No Keeper record for secret "%s" in "%s"', rec.title, folder_path)
+            continue
+        if len(found) > 1:
+            logging.warning(
+                'Secret "%s" matches %d records in "%s"; sharing each of them',
+                rec.title, len(found), folder_path)
+        for record_uid in found:
+            shared = rec if record_uid == found[0] else copy.copy(rec)
+            shared.uid = record_uid
+            located.append(shared)
+    return located
+
+
+def existing_enterprise_emails(params):
+    # type: (KeeperParams) -> Optional[set]
+    """Load Keeper enterprise users before any secret share is granted.
+
+    Returns None when the enterprise user list cannot be loaded. An empty
+    set means the list loaded and no users are present.
+    """
+    try:
+        api.query_enterprise(params)
+    except Exception as exc:
+        logging.warning('Could not load Keeper users before secret shares: %s', exc)
+        return None
+    enterprise_data = getattr(params, 'enterprise', None)
+    if not isinstance(enterprise_data, dict):
+        logging.warning('Could not load Keeper users before secret shares')
+        return None
+    emails = set()
+    for user in enterprise_data.get('users') or []:
+        if not isinstance(user, dict):
+            continue
+        email = (user.get('email') or user.get('username') or '').strip()
+        if email:
+            emails.add(email.casefold())
+    return emails
+
+
+def shares_for_existing_users(records, existing_emails):
+    # type: (List[ImportRecord], set) -> List[ImportRecord]
+    """Keep secret shares whose email is already a Keeper user."""
+    kept = []
+    for rec in records:
+        shares = []
+        for share in rec.shares or []:
+            email = (getattr(share, 'name', None) or '').strip()
+            if email and email.casefold() in existing_emails:
+                shares.append(share)
+            elif email:
+                logging.warning('Secret "%s": %s is not a Keeper user; share skipped', rec.title, email)
+        if not shares:
+            continue
+        scoped = copy.copy(rec)
+        scoped.shares = shares
+        kept.append(scoped)
+    return kept
+
+
+def apply_secret_share_records(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> None
+    """Grant secret-level record shares loaded from a membership file.
+
+    The Keeper enterprise user list is loaded first. A share is granted only
+    for an email that is already in that list.
+    """
+    pending = [rec for rec in records if getattr(rec, 'shares', None)]
+    if not pending:
+        return
+    existing = existing_enterprise_emails(params)
+    if existing is None:
+        return
+    pending = shares_for_existing_users(pending, existing)
+    if not pending:
+        return
+    sync_down.sync_down(params)
+    grant_imported_record_shares(params, locate_secret_share_records(params, pending))
+
+
+def grant_imported_record_shares(params, records):
+    # type: (KeeperParams, List[ImportRecord]) -> None
+    """Grant per-user record shares from a secret permission list.
+
+    Each share is an email plus can_edit and can_share, which is the same
+    grant ``share-record`` writes. Folder membership is not changed here.
+    """
+    pending = [rec for rec in records if getattr(rec, 'shares', None) and rec.uid]
+    if not pending:
+        return
+    from ..commands.register import ShareRecordCommand
+    from ..error import CommandError
+
+    owner_email = (getattr(params, 'user', None) or '').strip().casefold()
+
+    def grant_bucket(record, emails, can_edit, can_share):
+        request = ShareRecordCommand.prep_request(params, {
+            'record': record.uid,
+            'email': emails,
+            'action': 'grant',
+            'can_edit': can_edit,
+            'can_share': can_share,
+        })
+        if request is not None:
+            ShareRecordCommand.send_requests(params, [request])
+
+    for rec in pending:
+        buckets = {}
+        for share in rec.shares:
+            email = (getattr(share, 'name', None) or '').strip()
+            if '@' not in email:
+                continue
+            if owner_email and email.casefold() == owner_email:
+                continue
+            key = (bool(share.can_edit), bool(share.can_share))
+            emails = buckets.setdefault(key, [])
+            if email not in emails:
+                emails.append(email)
+        for (can_edit, can_share), emails in buckets.items():
+            try:
+                grant_bucket(rec, emails, can_edit, can_share)
+            except CommandError as exc:
+                if len(emails) == 1:
+                    logging.warning('Secret share for "%s": %s', rec.title, getattr(exc, 'message', exc))
+                    continue
+                for email in emails:
+                    try:
+                        grant_bucket(rec, [email], can_edit, can_share)
+                    except CommandError as one_exc:
+                        logging.warning(
+                            'Secret share for "%s": %s', rec.title, getattr(one_exc, 'message', one_exc))
+                    except Exception as one_exc:
+                        logging.warning('Secret share for "%s": %s', rec.title, one_exc)
+            except Exception as exc:
+                logging.warning('Secret share for "%s": %s', rec.title, exc)
 
 
 def prepare_record_permission(params, records):   # type: (KeeperParams, List[ImportRecord]) -> Dict[str, List[folder_pb2.SharedFolderUpdateRecord]]

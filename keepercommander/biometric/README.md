@@ -1,12 +1,12 @@
 # Biometric Authentication
 
-## Secure Authentication with Platform Biometrics for Keeper Commander
+## Secure Authentication with Passkeys for Keeper Commander
 
-The Biometric Authentication module for Keeper Commander enables users to authenticate using platform-specific biometric methods such as Windows Hello and Touch ID. This module provides a secure, convenient alternative to password-based authentication while maintaining the highest security standards through FIDO2/WebAuthn protocols.
+The Biometric Authentication module for Keeper Commander enables users to authenticate using Windows Hello, Touch ID, or a roaming FIDO2 security key such as a YubiKey. User verification (a key PIN or authenticator biometrics) is required; a touch-only U2F key is not sufficient for passkey login.
 
 ### Core Functionality
 
-- **Cross-Platform Support**: Windows Hello and Touch ID integration 
+- **Authenticator Support**: Windows native WebAuthn (Hello and security keys), macOS Touch ID and USB FIDO2 security keys
 - **WebAuthn Protocol**: FIDO2-compliant authentication implementation  
 - **Secure Credential Storage**: Platform-native secure storage (Windows Hello, macOS Keychain) 
 - **Device Trust Management**: Required device registration for security   
@@ -19,9 +19,9 @@ The Biometric Authentication module for Keeper Commander enables users to authen
 
 ### OS-Level Biometric Setup
 
-**Before using biometric authentication with Keeper Commander, you must have biometric credentials already configured in your operating system:**
+**For platform authentication**, configure Windows Hello or Touch ID as described below. **For security-key authentication**, platform biometrics are not required. Connect a FIDO2 key with resident passkey support and configure its PIN or built-in biometrics using the vendor's tools before registering it.
 
-#### Windows Requirements:
+#### Windows Hello Requirements (not needed for security keys):
 - **Windows 11** (required for biometric authentication support)
 - **Windows Hello must be set up** in Windows Settings
 - Navigate to: `Settings > Accounts > Sign-in options > Windows Hello`
@@ -32,7 +32,7 @@ The Biometric Authentication module for Keeper Commander enables users to authen
 - Hardware requirements:
   - Compatible biometric hardware (fingerprint reader, IR camera, etc.)
 
-#### macOS Requirements:
+#### Touch ID Requirements (not needed for security keys):
 - **Touch ID must be enabled** in System Preferences
 - Navigate to: `System Preferences > Touch ID & Password`
 - Add your fingerprint(s) to the system
@@ -44,8 +44,10 @@ The Biometric Authentication module for Keeper Commander enables users to authen
 Install the required Python packages:
 
 ```bash
-pip install cbor2 pyobjc-framework-LocalAuthentication fido2
+pip install fido2
 ```
+
+For Touch ID on macOS, also install `cbor2` and `pyobjc-framework-LocalAuthentication`. The macOS security-key path uses USB HID via `fido2`; NFC, Bluetooth, and phone/QR-code hybrid authentication are not implemented by this path. Windows uses the authenticator options provided by its native WebAuthn dialog.
 
 ---
 
@@ -66,7 +68,7 @@ biometric register
 ```
 
 You'll be prompted to:
-- Complete biometric authentication (Touch ID/Windows Hello)
+- Complete authenticator verification (Touch ID/Windows Hello or security-key PIN/biometrics and touch)
 - Provide a friendly name for the credential (optional)
 
 Example with custom settings:
@@ -74,6 +76,23 @@ Example with custom settings:
 ```bash
 biometric register --name "My MacBook"
 ```
+
+### Using a roaming security key
+
+Connect the USB key before running the commands:
+
+```bash
+biometric register --name "My YubiKey"
+this-device register
+biometric verify
+biometric verify --purpose vault
+```
+
+On Windows, choose the security key in the native WebAuthn dialog. **For registration on macOS**, when Touch ID and a connected key are both available, Commander prompts `Use Touch ID or a security key? [t/s]`; choose `s` to create the credential on the key. When only a key is available, it is used directly. If several USB keys are attached during registration, select one by number.
+
+**For login, verification, and vault re-authentication on macOS**, Commander listens for eligible Touch ID and connected FIDO2 keys concurrently. Complete Touch ID or touch your security key; no `t/s` or key-number choice is required. The first authenticator you interact with selects the path and cancels the other attempts. If a key wins, its PIN/biometric verification happens after the other attempts have stopped. You may need to touch the key again to complete authentication after PIN entry. If only one authenticator is available, it is used directly. Once selected, a PIN error or cancellation does not silently fall back to another authenticator.
+
+You can add a security key alongside an existing platform credential. Registration and authentication request all supported authenticator types; enterprise restrictions are applied by the server. `RESTRICT_PLATFORM_PASSKEY_LOGIN` excludes platform credentials, and `RESTRICT_CROSS_PLATFORM_PASSKEY_LOGIN` excludes roaming credentials.
 
 #### 2. Device Registration (Mandatory)
 
@@ -144,16 +163,21 @@ Display all registered biometric authentication methods:
 biometric list
 ```
 
+`Name` is the authenticator model/provider resolved from its AAGUID, matching Web Vault's **Settings > Security > Manage Passkeys**. A custom registration label appears separately as `Friendly Name`. Unrecognized or missing AAGUIDs display `Unknown Authenticator`.
+
+The bundled `resources/passkey_aaguid_names.json` is a names-only snapshot of the [combined AAGUID registry](https://github.com/passkeydeveloper/passkey-authenticator-aaguids/blob/main/combined_aaguid.json) used by Web Vault. It includes hardware authenticator metadata and requires no runtime network lookup. Refresh it from the registry by retaining each AAGUID and its entry's `name`, omitting icons.
+
 **Sample Output:**
 
 ```
 Registered Biometric Authentication Methods:
 ----------------------------------------------------------------------
-Name: Commander CLI (MacBook)
+Name: YubiKey 5 FIPS Series with NFC
+Friendly Name: My security key
 Created: December 20, 2023
 Last Used: Today
 ----------------------------------------------------------------------
-Name: iCloud Keychain
+Name: Apple Passwords
 Created: December 18, 2023
 Last Used: July 10, 2025
 ----------------------------------------------------------------------
@@ -277,12 +301,11 @@ Message: Passkey friendly name was successfully updated
 - Windows Hello Face recognition
 - Windows Hello Fingerprint  
 - Windows Hello PIN (as backup)
-- WebAuthn support via Windows Hello
+- Roaming FIDO2 security keys through native Windows WebAuthn
 
 **Setup Requirements:**
 - Windows 11 (required for biometric authentication support)
-- Windows Hello configured in Settings > Accounts > Sign-in options
-- At least one enrolled biometric factor (Face/Fingerprint) OR PIN
+- Windows Hello configured in Settings > Accounts > Sign-in options **or** a FIDO2 security key with user verification configured
 - Compatible biometric hardware (for Face/Fingerprint)
 - Administrative privileges for initial Windows Hello setup
 
@@ -290,10 +313,12 @@ Message: Passkey friendly name was successfully updated
 
 **Supported Methods:**
 - Touch ID
+- USB FIDO2 security keys (PIN or authenticator biometrics required)
 - Custom macOS WebAuthn client integration
 - Keychain-based credential management
 
 **Setup Requirements:**
+- A connected USB FIDO2 key with resident passkey support and PIN/biometrics configured, **or** the following Touch ID setup:
 - Touch ID enabled in System Preferences > Touch ID & Password
 - At least one enrolled fingerprint in system settings
 - Compatible Mac with Touch ID sensor (MacBook Pro 2016+, MacBook Air 2018+, iMac with Touch ID, etc.)
@@ -304,6 +329,10 @@ Message: Passkey friendly name was successfully updated
 ## Troubleshooting
 
 ### Common Issues
+
+#### "This security key already has a passkey registered" Error
+
+The key has a credential matching the registration request's `excludeCredentials` list, often because it was already registered through Web Vault. This is not a PIN error, and Commander has not created a new passkey or enabled login based on the failed registration. Use `biometric list` to inspect registered passkeys and `biometric verify` to test the existing key, or register a different key. Do not reset the security key or unregister other passkeys merely to resolve this message.
 
 #### "Authentication failed" Error
 

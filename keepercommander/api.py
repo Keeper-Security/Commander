@@ -108,7 +108,7 @@ def accept_account_transfer_consent(params):     # type: (KeeperParams) -> bool
         responses = execute_batch(params, requests)
         if isinstance(responses, list):
             for response in responses:
-                if response['result_code'] != 'success':
+                if response['result'] != 'success':
                     logging.warning('Account Transfer policy acceptance error: %s',
                                     response.get('message') or response['result_code'])
                     ok = False

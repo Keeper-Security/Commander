@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from typing import Union, Optional, Tuple, Any, Dict, Set, Iterable
 
 from ..importer import (
-    BaseImporter, Record, Folder, RecordField, RecordReferences, SharedFolder, Attachment
+    BaseImporter, Record, Folder, EmptyFolder, RecordField, RecordReferences, SharedFolder, Attachment
 )
 from ... import utils
 from ...params import KeeperParams
@@ -91,6 +91,14 @@ class OnePasswordImporter(BaseImporter):
                                 yield sf
                             elif vault_type == 'U':
                                 vault_name = name
+
+                        if vault_name and not is_shared and not any(
+                                x.get('trashed') is not True for x in vault.get('items', [])):
+                            empty = EmptyFolder()
+                            fol = Folder()
+                            fol.path = vault_name
+                            empty.folders.append(fol)
+                            yield empty
 
                         vault_records = {}
                         references = {}   # type: Dict[str, Set[str]]

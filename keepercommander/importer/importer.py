@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import os.path
+import zipfile
 from contextlib import contextmanager
 from typing import List, Optional, Union, Dict, Iterable, Type, Any
 
@@ -23,6 +24,17 @@ from ..error import CommandError
 from ..params import KeeperParams
 
 PathDelimiter = '\\'
+
+
+def normalize_folder_path(path):
+    # type: (Optional[str]) -> str
+    """Fold a Delinea or Keeper folder path into one comparable key.
+
+    Secret Server paths use a leading backslash. Keeper paths built from
+    folder names do not. Both separators are treated as backslash.
+    """
+    text = (path or '').replace('/', '\\').strip()
+    return text.strip('\\').casefold()
 TWO_FACTOR_CODE = 'TFC:Keeper'
 FIELD_TYPE_ONE_TIME_CODE = 'oneTimeCode'
 
@@ -122,6 +134,15 @@ class Permission:
         self.role = None  # NSF role name: viewer, content-manager, full-manager, …
 
 
+class RecordShare:
+    """Direct record share produced by an importer. name is an email."""
+
+    def __init__(self, name, can_edit, can_share):
+        self.name = name
+        self.can_edit = can_edit
+        self.can_share = can_share
+
+
 class SharedFolder:
     def __init__(self):
         self.uid = None
@@ -194,6 +215,12 @@ class Folder:
         return path
 
 
+class EmptyFolder:
+    """A folder that holds no records. Carried so that an export/import round trip keeps the folder structure."""
+    def __init__(self):
+        self.folders = []   # type: List[Folder]
+
+
 class RecordField:
     def __init__(self, type=None, label=None, value=None):
         self.type = type    # type: Optional[str]
@@ -255,6 +282,7 @@ class Record:
         self.last_modified = 0
         self.fields = []         # type: List[RecordField]
         self.folders = None      # type: Optional[List[Folder]]
+        self.shares = None       # type: Optional[List[RecordShare]]
         self.attachments = None  # type: Optional[List[Attachment]]
         self.references = None   # type: Optional[List[RecordReferences]]
         self.schema = None       # type: Optional[List[RecordSchemaField]]
@@ -331,6 +359,18 @@ class BaseImporter(abc.ABC):
         return ''
 
     def support_folder_filter(self):
+        return False
+
+    def support_add_users(self):
+        """
+        Indicates if this importer can provision source users as Keeper Enterprise users
+        """
+        return False
+
+    def support_add_teams(self):
+        """
+        Indicates if this importer can create Keeper teams from source groups
+        """
         return False
 
     @staticmethod
@@ -421,6 +461,42 @@ class BaseImporter(abc.ABC):
         return fl
 
 
+def detect_file_format(path):   # type: (str) -> Optional[str]
+    """Best-effort guess of an import file's real format: 'json', 'csv', 'zip', or None when unsure."""
+    try:
+        if zipfile.is_zipfile(path):
+            return 'zip'
+        with open(path, 'rb') as f:
+            head = f.read(65536)
+    except OSError:
+        return None
+    text = head.decode('utf-8-sig', errors='ignore').lstrip()
+    if not text:
+        return None
+    if text[0] in '{[':
+        try:
+            with open(path, 'r', encoding='utf-8-sig') as f:
+                json.load(f)
+            return 'json'
+        except (ValueError, OSError):
+            pass
+    first_line = text.partition('\n')[0]
+    if path.lower().endswith('.csv') or ',' in first_line:
+        return 'csv'
+    return None
+
+
+def ensure_file_format(path, expected):     # type: (str, str) -> None
+    """Raise a clear error when *path* is recognizably a different format than the one requested with --format."""
+    actual = detect_file_format(path)
+    if actual == 'zip':     # Commander's zip export is a JSON export with attachments
+        actual = 'json'
+    if actual and actual != expected:
+        raise CommandError('', f'Error: Invalid file format.\n'
+                               f'The specified format is {expected.upper()}, but the provided file is {actual.upper()}.\n'
+                               f'Please use --format {actual} for this file.')
+
+
 class BaseFileImporter(BaseImporter, abc.ABC):
     def __init__(self):
         super(BaseFileImporter, self).__init__()
@@ -502,6 +578,9 @@ class BaseExporter(abc.ABC):
         pass
 
     def has_shared_folders(self):
+        return False
+
+    def has_empty_folders(self):
         return False
 
     def has_attachments(self):

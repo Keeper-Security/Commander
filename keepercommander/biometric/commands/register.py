@@ -13,8 +13,7 @@ import argparse
 import logging
 
 from .base import BiometricCommand
-from ..utils.constants import SUCCESS_MESSAGES, ERROR_MESSAGES
-from ...error import CommandError
+from ..utils.constants import SUCCESS_MESSAGES
 
 
 class BiometricRegisterCommand(BiometricCommand):
@@ -38,18 +37,11 @@ class BiometricRegisterCommand(BiometricCommand):
         return self._execute_with_error_handling('register biometric authentication', _register)
 
     def _validate_prerequisites(self, params, kwargs):
-        """Validate platform support and check for existing credentials"""
+        """Validate that a passkey authenticator is available."""
         self._check_platform_support(kwargs.get('force', False))
-        self._check_existing_credentials(params)
-
-    def _check_existing_credentials(self, params):
-        """Check if credential already exists for this user"""
-        if self.client.platform_handler and hasattr(self.client.platform_handler, 'storage_handler'):
-            storage_handler = getattr(self.client.platform_handler, 'storage_handler')
-            if storage_handler and hasattr(storage_handler, 'get_credential_id'):
-                existing_credential_id = storage_handler.get_credential_id(params.user)
-                if existing_credential_id:
-                    raise CommandError(None, ERROR_MESSAGES['credential_already_registered'])
+        # A local credential ID is an enabled flag, not a limit of one passkey.
+        # The server's excludeCredentials prevents duplicate registration while
+        # allowing a security key to be added alongside a platform credential.
 
     def _prepare_registration(self, params, kwargs):
         """Prepare registration data and options"""
@@ -120,4 +112,4 @@ class BiometricRegisterCommand(BiometricCommand):
             print(f'\nSuccess! Biometric authentication "{friendly_name}" has been registered.')
             print(f'\nPlease register your device using the \033[31m"this-device register"\033[0m command to set biometric authentication as your default login method.')
         else:
-            print(f'\nBiometric authentication setup incomplete. Please try again.')        
+            print(f'\nBiometric authentication setup incomplete. Please try again.')

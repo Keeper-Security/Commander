@@ -2245,7 +2245,8 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         disableAudio: Optional[bool] = None,
         resizeMethod: Optional[str] = None,
         enableWallpaper: Optional[bool] = None,
-        enableFullWindowDrag: Optional[bool] = None
+        enableFullWindowDrag: Optional[bool] = None,
+        driveRedirectionPath: Optional[str] = None
     ):
         BaseConnectionSettings.__init__(self, port, allowSupplyUser, userRecords, recordingIncludeKeys)
         ClipboardConnectionSettings.__init__(self, disableCopy, disablePaste)
@@ -2262,6 +2263,8 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         # Performance Properties
         self.enableWallpaper = enableWallpaper
         self.enableFullWindowDrag = enableFullWindowDrag
+        # Device Redirection: "none" | "user" | "resource"
+        self.driveRedirectionPath = driveRedirectionPath
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -2301,6 +2304,12 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
         obj.disableAudio = utils.value_to_boolean(data.get("disable_audio", None))
         obj.enableWallpaper = utils.value_to_boolean(data.get("enable_wallpaper", None))
         obj.enableFullWindowDrag = utils.value_to_boolean(data.get("enable_full_window_drag", None))
+
+        val = data.get("drive_redirection_path", None)
+        if isinstance(val, str) and val.strip():
+            val = val.strip().lower()
+            if val in ("none", "user", "resource"): obj.driveRedirectionPath = val
+            else: logging.warning(f"Invalid drive_redirection_path '{val}' (expected none, user or resource) - ignored")
 
         # disable_dynamic_resizing ? "" : "display-update"
         val = utils.value_to_boolean(data.get("disable_dynamic_resizing", None))
@@ -2348,6 +2357,8 @@ class ConnectionSettingsRDP(BaseConnectionSettings, ClipboardConnectionSettings)
             kvp["enableFullWindowDrag"] = self.enableFullWindowDrag
         if self.enableWallpaper is not None and isinstance(self.enableWallpaper, bool):
             kvp["enableWallpaper"] = self.enableWallpaper
+        if self.driveRedirectionPath in ("none", "user", "resource"):
+            kvp["driveRedirectionPath"] = self.driveRedirectionPath
 
         # populated on load - "resizeMethod": disable_dynamic_resizing ? "" : "display-update"
         if isinstance(self.resizeMethod, str):

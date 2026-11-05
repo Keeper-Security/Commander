@@ -103,9 +103,9 @@ class BasePlatformHandler(PlatformHandler):
         if 'authenticatorSelection' not in creation_options:
             creation_options['authenticatorSelection'] = {}
 
-        # Apply default authenticator selection
+        # Preserve the server's attachment restriction. An omitted attachment
+        # permits both platform authenticators and roaming security keys.
         default_selection = {
-            'authenticatorAttachment': 'platform',
             'userVerification': 'required',
             'residentKey': 'required'
         }
@@ -148,4 +148,4 @@ class BasePlatformHandler(PlatformHandler):
     @abstractmethod
     def _get_platform_name(self) -> str:
         """Get platform-specific name for error messages"""
-        pass 
+        pass

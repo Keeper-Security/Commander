@@ -35,6 +35,11 @@ class RecordOwner(NamedTuple):
     account_uid: str
 
 
+# Self-managed server hosts (host[:port], lower case) whose TLS certificate is not
+# checked: `server <host> --insecure`, saved as "insecure" under "server_keys" in config.json.
+INSECURE_SERVER_HOSTS = set()   # type: Set[str]
+
+
 class RestApiContext:
     def __init__(self, server='https://keepersecurity.com/api/v2/', locale='en_US'):
         self.server_base = server
@@ -154,6 +159,8 @@ class RestApiContext:
         ``_certificate_check`` attribute for code that only cares about the
         user's on/off intent, not the resolved ``requests`` verify value.
         """
+        if INSECURE_SERVER_HOSTS and urlparse(self.server_base).netloc.lower() in INSECURE_SERVER_HOSTS:
+            return False
         if self._resolved_verify is None:
             from . import utils
             self._resolved_verify = utils.resolve_ssl_verify(

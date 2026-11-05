@@ -26,12 +26,27 @@ from pykeepass.group import Group
 from pykeepass.entry import Entry
 
 from ..importer import path_components, PathDelimiter, BaseFileImporter, BaseExporter, \
-    Record, Folder, SharedFolder, BytesAttachment, RecordField
+    Record, Folder, SharedFolder, EmptyFolder, BytesAttachment, RecordField
 from ... import utils
 from ...display import bcolors
 from ...utils import parse_totp_uri
 
 _REFERENCE = r'\{REF:([TUPAN])@([IT]):([^\}]+)\}'
+
+def parse_auth(kdbx_password,kdbx_key_file): # type: (None / str),(None / str) -> (None / str),(None / str)
+    # Returns None for no auth, string for auth       
+    if kdbx_password is None:
+        kdbx_password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
+    elif kdbx_password == 'none':
+        kdbx_password = None
+        
+    if kdbx_key_file is None:
+        kdbx_key_file = input('...' + 'Path to Key file'.rjust(20) + ': ')
+    elif kdbx_key_file == 'none':
+        kdbx_key_file = None
+    if kdbx_key_file:
+        kdbx_key_file = os.path.expanduser(kdbx_key_file.strip(" \"'")) or None
+    return kdbx_password, kdbx_key_file
 
 
 class XmlUtils(object):
@@ -50,7 +65,6 @@ class XmlUtils(object):
         if not value:
             return ''
         return ''.join((char for char in value if XmlUtils.is_valid_xml_char(char)))
-
 
 class KeepassImporter(BaseFileImporter):
 
@@ -72,14 +86,21 @@ class KeepassImporter(BaseFileImporter):
             g = g.group
         return path
 
+    @staticmethod
+    def in_recycle_bin(kdb, group):     # type: (PyKeePass, Group) -> bool
+        bin_group = getattr(kdb, 'recyclebin_group', None)
+        if bin_group is None:
+            return False
+        g = group
+        while isinstance(g, Group):
+            if g.uuid == bin_group.uuid:
+                return True
+            g = g.group
+        return False
+
     def do_import(self, filename, **kwargs):
-        password = getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
-        print('Press Enter if your Keepass file is not protected with a key file')
-        keyfile = input('...' + 'Path to Key file'.rjust(20) + ': ')
-        if keyfile:
-            keyfile = os.path.expanduser(keyfile.strip("\"'"))
-        else:
-            keyfile = None
+        password,keyfile = parse_auth(kwargs.get('kdbx_password'), kwargs.get('kdbx_key_file'))
+        
         try:
             with PyKeePass(filename, password=password, keyfile=keyfile) as kdb:
                 root = kdb.root_group
@@ -93,8 +114,16 @@ class KeepassImporter(BaseFileImporter):
                     pos = pos + 1
 
                 records = []
+                empty_folders = []
                 for group in groups:
                     entries = group.entries
+                    if not entries and not group.subgroups and group is not root and not KeepassImporter.in_recycle_bin(kdb, group):
+                        empty = EmptyFolder()
+                        fol = Folder()
+                        fol.path = KeepassImporter.get_folder(group)
+                        if fol.path:
+                            empty.folders.append(fol)
+                            empty_folders.append(empty)
                     if len(entries) > 0:
                         folder = KeepassImporter.get_folder(group)
                         for entry in entries:
@@ -259,6 +288,8 @@ class KeepassImporter(BaseFileImporter):
                             text = text[:match.start()] + val + text[match.end():]
                         return text
 
+                yield from empty_folders
+
                 for record in records:
                     try:
                         record.login = resolve_references(record.login)
@@ -303,25 +334,34 @@ class KeepassExporter(BaseExporter, XmlUtils):
         return entry
 
     def do_export(self, filename, records, file_password=None, kbdx_key_file=None, **kwargs):
-        password = file_password or getpass.getpass(prompt='...' + 'Keepass Password'.rjust(20) + ': ', stream=None) or None
-        if not kbdx_key_file:
-            print('Press Enter if your Keepass file is not protected with a key file')
-        keyfile = kbdx_key_file or input('...' + 'Path to Key file'.rjust(20) + ': ') or None
-        if keyfile:
-            keyfile = os.path.expanduser(keyfile.strip("\"'"))
-        else:
-            keyfile = None
+        password, keyfile = parse_auth(file_password, kbdx_key_file)
 
         sfs = []  # type: list[SharedFolder]
         rs = []   # type: list[Record]
+        efs = []  # type: list[EmptyFolder]
         for x in records:
             if isinstance(x, Record):
                 rs.append(x)
+            elif isinstance(x, EmptyFolder):
+                efs.append(x)
             elif isinstance(x, SharedFolder):
                 sfs.append(x)
 
         with create_database(filename, password=password, keyfile=keyfile) as kdb:
             root = kdb.root_group
+
+            for ef in efs:
+                node = root
+                for fol in ef.folders:
+                    for path in (fol.domain, fol.path):
+                        for comp in path_components(path) if path else []:
+                            comp = self.sanitize_xml_text(comp)
+                            if not comp:
+                                continue
+                            sub_node = next((x for x in node.subgroups if x.name == comp), None)
+                            if sub_node is None:
+                                sub_node = kdb.add_group(node, comp)
+                            node = sub_node
 
             for r in rs:
                 try:
@@ -448,6 +488,9 @@ class KeepassExporter(BaseExporter, XmlUtils):
             kdb.save(filename=filename)
 
     def has_shared_folders(self):
+        return True
+
+    def has_empty_folders(self):
         return True
 
     def has_attachments(self):

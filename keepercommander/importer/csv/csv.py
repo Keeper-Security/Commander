@@ -10,10 +10,11 @@
 #
 
 import csv
+import logging
 
 import sys
 
-from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, RecordField, TWO_FACTOR_CODE,
+from ..importer import (BaseFileImporter, BaseExporter, Record, Folder, EmptyFolder, ensure_file_format, RecordField, TWO_FACTOR_CODE,
                         FIELD_TYPE_ONE_TIME_CODE)
 from ...recordv3 import RecordV3
 from ... import record_types
@@ -30,8 +31,22 @@ from ... import record_types
 '''
 
 
+EMPTY_FOLDER_MARKER = '$empty_folder'
+
+
 class KeeperCsvImporter(BaseFileImporter):
+    @staticmethod
+    def is_empty_folder_row(row):   # type: (list) -> bool
+        """A marker row has no record data (title, login, password, url, notes) and ends in "$empty_folder,true"."""
+        if any((x or '').strip() for x in row[1:6]):
+            return False
+        for i in range(7, len(row) - 1, 2):
+            if (row[i] or '').strip() == EMPTY_FOLDER_MARKER:
+                return (row[i + 1] or '').strip().lower() == 'true'
+        return False
+
     def do_import(self, filename, **kwargs):
+        ensure_file_format(filename, 'csv')
         with open(filename, "r", encoding='utf-8-sig') as csvfile:
             reader = csv.reader(csvfile)
             for row in reader:
@@ -60,6 +75,13 @@ class KeeperCsvImporter(BaseFileImporter):
                                     folder.domain = folder.domain[:-len(suffix)]
                         folder.path = (row[0] or '').strip()
                         record.folders = [folder]
+
+                    if KeeperCsvImporter.is_empty_folder_row(row):
+                        if record.folders:
+                            empty = EmptyFolder()
+                            empty.folders = record.folders
+                            yield empty
+                        continue
 
                     if len(row) > 7:
                         for i in range(7, len(row)-1, 2):
@@ -103,8 +125,17 @@ class KeeperCsvExporter(BaseExporter):
     def do_export(self, filename, records, **kwargs):
         csvfile = open(filename, 'w', encoding='utf-8', newline='') if filename else sys.stdout
         writer = csv.writer(csvfile)
+        if any(isinstance(r, EmptyFolder) for r in records):
+            logging.warning('CSV export contains empty folders, stored as "%s" marker rows. Importers that do not '
+                            'support them (older Commander versions, other tools) will create an untitled record '
+                            'for each. Use JSON or KeePass to keep empty folders portable.', EMPTY_FOLDER_MARKER)
         for r in records:
-            if type(r) == Record:
+            if isinstance(r, EmptyFolder):
+                for folder in r.folders:
+                    if folder.domain or folder.path:
+                        writer.writerow([folder.path or '', '', '', '', '', '', folder.domain or '',
+                                         EMPTY_FOLDER_MARKER, 'true'])
+            elif type(r) == Record:
                 domain = ''
                 path = ''
                 if r.folders:
@@ -151,6 +182,9 @@ class KeeperCsvExporter(BaseExporter):
 
     def extension(self):
         return 'csv'
+
+    def has_empty_folders(self):
+        return True
 
     def supports_stdout(self):
         return True

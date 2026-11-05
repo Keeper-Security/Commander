@@ -42,14 +42,12 @@ class BiometricListCommand(BiometricCommand):
                 created_date = self._format_timestamp(passkey.get('created'))
                 last_used_date = self._format_timestamp(passkey.get('last_used'))
                 
-                display_name = passkey['name']
-                # If name is empty, use provider name from AAGUID
-                if not display_name:
-                    aaguid = passkey.get('aaguid')
-                    provider_name = get_provider_name_from_aaguid(aaguid)
-                    display_name = provider_name
-                
+                # Match Manage Passkeys in Web Vault: the device name comes
+                # from AAGUID metadata, not the user-supplied friendlyName.
+                display_name = get_provider_name_from_aaguid(passkey.get('aaguid'))
                 print(f"Name: {display_name}")
+                if passkey.get('name'):
+                    print(f"Friendly Name: {passkey['name']}")
                 print(f"Created: {created_date}")
                 print(f"Last Used: {last_used_date}")
-                print("-" * 70) 
+                print("-" * 70)
