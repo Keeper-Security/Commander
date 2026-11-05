@@ -527,7 +527,8 @@ def _router_server_key(server_hostname):
     return host.lower() if isinstance(host, str) else host
 
 
-_DNS_LABEL = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', re.IGNORECASE)
+# RFC 1123 labels, plus '_' for compatibility with container service names
+_DNS_LABEL = re.compile(r'^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$', re.IGNORECASE)
 
 
 def _is_valid_router_hostname(hostname):
@@ -543,7 +544,7 @@ def _is_valid_router_hostname(hostname):
         return True
     except ValueError:
         pass
-    labels = hostname.rstrip('.').split('.')
+    labels = (hostname[:-1] if hostname.endswith('.') else hostname).split('.')
     return len(hostname) <= 253 and all(_DNS_LABEL.match(x) for x in labels) and not labels[-1].isdigit()
 
 

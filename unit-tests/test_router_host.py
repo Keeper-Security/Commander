@@ -154,9 +154,18 @@ class TestStrictHostSyntax(RouterHostTestBase):
     def test_valid_hosts_still_accepted(self):
         for value, host in (('[::1]:8443', '[::1]:8443'), ('10.1.2.3:8443', '10.1.2.3:8443'),
                             ('Connect.Example-1.test:65535', 'connect.example-1.test:65535'),
-                            ('localhost', 'localhost'), ('a' * 63 + '.test', 'a' * 63 + '.test')):
+                            ('localhost', 'localhost'), ('a' * 63 + '.test', 'a' * 63 + '.test'),
+                            ('my_router', 'my_router'), ('my_router:6080', 'my_router:6080'),
+                            ('xn--mnchen-3ya.de', 'xn--mnchen-3ya.de'), ('Example.COM', 'example.com'),
+                            ('example.com.', 'example.com.')):
             with self.subTest(value):
                 self.assertEqual(constants.parse_router_override(value, 'x').host, host)
+
+    def test_repeated_trailing_dot_and_zero_port_url_rejected(self):
+        for value in ('example.com..', 'http://h:0/path'):
+            with self.subTest(value):
+                with self.assertRaises(constants.RouterHostError):
+                    constants.parse_router_override(value, 'KROUTER_URL', allow_url_schemes=True)
 
 
 class TestLegacyKrouterUrlShapes(RouterHostTestBase):
