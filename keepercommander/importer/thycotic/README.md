@@ -2,13 +2,33 @@
 
 **Version:** 1.0  
 **Status:** Production Ready  
-**Last Updated:** 2026-11-04
+**Last Updated:** 2026-11-05
+
+---
+
+## Quick Start (30 Seconds)
+
+This module imports **Delinea Secret Server** into Keeper's Nested Share Folders with **automatic ACL mapping**.
+
+```bash
+# One-command import with full ACL
+import --format=thycotic --nsf user@https://delinea.company.com/ --add-users --add-teams
+```
+
+You get:
+- ✅ NSF folder structure
+- ✅ All records in folders
+- ✅ Folder-level permissions (NSF roles)
+- ✅ Secret-level overrides (as direct record shares)
+- ✅ Teams expanded to member permissions
+
+---
 
 ## Overview
 
 This module provides comprehensive import support for **Delinea Secret Server** (formerly Thycotic) into Keeper's Nested Share Folders (NSF) with **automatic ACL mapping**. Folder and secret-level permissions are intelligently translated from Delinea roles to NSF roles.
 
-### What's New (NSF ACL Implementation)
+### Key Features
 
 This is the **Thycotic NSF ACL feature** — a major enhancement that:
 
@@ -80,6 +100,10 @@ unit-tests/
 
 ## How to Use
 
+---
+
+## Usage Examples
+
 ### Basic NSF Import with Full ACL
 
 ```bash
@@ -110,20 +134,20 @@ import --format=thycotic --nsf user@https://delinea.company.com/ \
 - Delinea folder grant: `john.doe@delinea.com` (Owner folder + Owner secret)
 - NSF folder grant: `john.doe@keeper.com` → full-manager role
 
-### Update Permissions Only (No Record Import)
-
-```bash
-# Re-sync permissions without importing/updating records
-import --format=thycotic --nsf user@https://delinea.company.com/ \
-  --add-users --add-teams --users
-```
-
 ### Dry Run (Preview)
 
 ```bash
 # See what would be imported without writing to Keeper
 import --format=thycotic --nsf user@https://delinea.company.com/ \
   --add-users --add-teams --dry-run
+```
+
+### Update Permissions Only (No Record Import)
+
+```bash
+# Re-sync permissions without importing/updating records
+import --format=thycotic --nsf user@https://delinea.company.com/ \
+  --add-users --add-teams --users
 ```
 
 ### Specific Secrets Only
@@ -133,6 +157,31 @@ import --format=thycotic --nsf user@https://delinea.company.com/ \
 import --format=thycotic --nsf user@https://delinea.company.com/ \
   --add-users --add-teams --secret-ids 123,456,789
 ```
+
+### Step-by-Step Example
+
+**Step 1: Authenticate to Keeper**
+```bash
+login
+```
+
+**Step 2: Import with Full ACL**
+```bash
+import --format=thycotic --nsf jane@https://delinea.company.com/ --add-users --add-teams
+# Enter Delinea password when prompted
+```
+
+**Step 3: Check Logs**
+```
+✓ Loading X Records ...
+✓ Granted N Nested Share Folder permission(s)
+✓ Granted M NSF record permission(s)
+```
+
+**Step 4: Verify in Keeper**
+- Open Nested Share Folders
+- Check folder structure matches Delinea
+- Check permissions (Manage → Members)
 
 ---
 
@@ -401,7 +450,19 @@ Would grant NSF record "<record_uid>" role "viewer" to "<email>"
 
 ---
 
-## Troubleshooting
+## Quick Troubleshooting Checklist
+
+| Issue | Check | Fix |
+|-------|-------|-----|
+| No permissions granted | Logs say "0 permissions" | Run `--dry-run` to see mapping |
+| "Group not found" | Groups referenced but not in Keeper | Run `team-add <group-name>` first |
+| "Lossy mapping" warning | Expected (lossy mappings logged) | Secret role takes precedence — check record |
+| Import hangs | Large number of secrets/permissions | Run with smaller batch (--secret-ids) |
+| Email wrong domain | Domain didn't rewrite | Confirm `--old-domain` matches actual |
+
+---
+
+## Advanced Troubleshooting
 
 ### Issue: "Folder permissions not granted"
 
@@ -525,6 +586,93 @@ Always run before merging:
 ```bash
 python3 -m pytest unit-tests/test_thycotic_nsf_acl.py unit-tests/test_nsf_import.py -q
 ```
+
+---
+
+---
+
+## Complete Command Reference
+
+```bash
+# Full ACL import (recommended)
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams
+
+# With domain rewrite (delinea.com → keeper.com)
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams \
+  --old-domain=delinea.com --new-domain=keeper.com
+
+# Permissions only (no record import)
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams --users
+
+# Dry run (see what would happen)
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams --dry-run
+
+# Specific secrets only
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams --secret-ids ID1,ID2,ID3
+
+# Combine options
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams \
+  --old-domain=delinea.com --new-domain=keeper.com --dry-run
+
+# With import location
+import --format=thycotic --nsf USER@https://HOST/ --add-users --add-teams \
+  --import-into "parent-folder-path"
+```
+
+---
+
+## Architecture Overview (90 Seconds)
+
+```
+1. CONNECT to Delinea
+   ↓
+2. FETCH folders with permissions
+   ↓
+3. MAP Delinea roles → NSF roles
+   ↓
+4. YIELD NSF SharedFolder objects
+   ↓
+5. CREATE NSF folders + set break_inheritance
+   ↓
+6. GRANT folder permissions (nsf roles)
+   ↓
+7. FETCH secrets + FETCH secret ACL
+   ↓
+8. COMPUTE secret ACL deltas vs folder role
+   ↓
+9. ATTACH NsfRecordShare overrides to records
+   ↓
+10. GRANT record shares (deltas only)
+   ↓
+✓ Done
+```
+
+---
+
+## Navigation by Role
+
+| Role | Start With | Then Read |
+|------|-----------|-----------|
+| **New Developer** | "Quick Start" (this page) | "How to Use" → Code Deep Dive |
+| **Code Reviewer** | "File Structure" | "Code Deep Dive" → Review changes |
+| **QA / Tester** | "Testing" | Run test suite → Try `--dry-run` |
+| **Operations** | "Command Reference" | Prerequisites & Setup |
+| **Architect** | "Architecture" | Design Handoff (external doc) |
+
+---
+
+## Navigation by Topic
+
+| Topic | Section |
+|-------|---------|
+| **Getting started** | Quick Start + Usage Examples |
+| **Role mapping** | Role Mapping Reference |
+| **Architecture** | Architecture Overview + Code Deep Dive |
+| **Testing** | Testing |
+| **Troubleshooting** | Quick Troubleshooting Checklist + Advanced Troubleshooting |
+| **Commands** | Complete Command Reference |
+| **Prerequisites** | Prerequisites & Setup |
+| **Performance** | Performance Notes |
 
 ---
 
