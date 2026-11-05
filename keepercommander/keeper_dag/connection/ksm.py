@@ -147,7 +147,11 @@ class Connection(ConnectionBase):
         else:
             router_http_host = self.ws_router_url_from_ksm_config()
 
-        return router_http_host.replace('ws', 'http')
+        # Swap the scheme only: a hostname can contain "ws" too (e.g. "aws").
+        if router_http_host.startswith(('ws://', 'wss://')):
+            router_http_host = 'http' + router_http_host[len('ws'):]
+
+        return router_http_host
 
     def authenticate(self,
                      agent: str,

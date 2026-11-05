@@ -120,6 +120,17 @@ _feature_cache_lock = threading.Lock()
 # (host, endpoint) -> epoch seconds at which the cache entry expires.
 _feature_cache = {}  # type: dict
 
+# When True, all Layer-B endpoints are treated as unavailable so callers use
+# the legacy DAG-write path. Used by PAM batch Step 2 (deferred graph flush)
+# so a KRouter 5xx on configure_resource does not abort a large import.
+_force_legacy = False
+
+
+def set_layer_b_force_legacy(enabled: bool) -> None:
+    """Force all Layer-B callers onto the legacy DAG path (batch import Step 2)."""
+    global _force_legacy
+    _force_legacy = bool(enabled)
+
 
 def mark_layer_b_feature_disabled(host: Optional[str], endpoint: Optional[str]) -> None:
     """Remember that (host, endpoint) reported HTTP 404 (endpoint not deployed).
@@ -141,6 +152,8 @@ def mark_layer_b_feature_disabled(host: Optional[str], endpoint: Optional[str]) 
 def is_layer_b_feature_disabled(host: Optional[str], endpoint: Optional[str]) -> bool:
     """True if a recent call to (host, endpoint) returned HTTP 404 AND the
     TTL has not yet expired."""
+    if _force_legacy:
+        return True
     if not host or not endpoint:
         return False
     if _feature_cache_ttl_sec() <= 0:
@@ -157,7 +170,9 @@ def is_layer_b_feature_disabled(host: Optional[str], endpoint: Optional[str]) ->
 
 
 def clear_layer_b_feature_cache() -> None:
-    """Test helper — wipe the (host, endpoint) cache."""
+    """Test helper — wipe the (host, endpoint) cache and clear force-legacy."""
+    global _force_legacy
+    _force_legacy = False
     with _feature_cache_lock:
         _feature_cache.clear()
 

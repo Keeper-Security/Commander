@@ -188,7 +188,7 @@ def parse_schedule_data(kwargs):
                 if valid:
                     schedule_data = [{"type": "CRON", "cron": schedule_cron_data[0], "tz": "Etc/UTC"}]
                 else:
-                    logging.error('', f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
+                    logging.error(f'Invalid CRON "{schedule_cron_data[0]}" Error: {err}')
         elif schedule_on_demand is True:
             schedule_data = []
     return schedule_data
@@ -626,7 +626,9 @@ class PAMCreateRecordRotationCommand(Command):
             if adm_rec and isinstance(adm_rec, vault.TypedRecord):
                 admin = adm_rec.record_uid
 
-            if admin and target_record.record_type != 'pamRemoteBrowser':
+            # Never ACL-link a record to itself (self-admin is admin→resource, not admin→admin).
+            if (admin and admin != target_record.record_uid
+                    and target_record.record_type != 'pamRemoteBrowser'):
                 _dag.link_user_to_resource(admin, target_record.record_uid, is_admin=True)
 
             _rotation_enabled = True if kwargs.get('enable') else False if kwargs.get('disable') else None
@@ -1243,16 +1245,33 @@ class PAMCreateRecordRotationCommand(Command):
                     return
 
             if isinstance(target_resource_uid, str) and len(target_resource_uid) > 0:
+                # Resolve via the resource first (existing link may already point at a config).
                 _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key, target_resource_uid,
                                  transmission_key=transmission_key)
                 if not _dag or not _dag.linking_dag.has_graph:
-                    if target_config_uid and target_resource_uid:
-                        config_resource(_dag, target_record, target_config_uid, silent=silent)
-                    if not _dag or not _dag.linking_dag.has_graph:
+                    # Resource has no graph yet (common on fresh import before DAG flush).
+                    # MUST open the known PAM config with is_config=True and attach the
+                    # RESOURCE — never call config_resource() with the user record (that
+                    # treated the pamUser as the resource and, for self-admin rotation,
+                    # did link_user_to_resource(user, user) → ACL-to-self).
+                    if not target_config_uid:
                         raise CommandError('', f'{bcolors.FAIL}Resource "{target_resource_uid}" is not associated '
                                                f'with any configuration. '
                                                f'{bcolors.OKBLUE}pam rotation edit -rs {target_resource_uid} '
                                                f'--config CONFIG{bcolors.ENDC}')
+                    _dag = TunnelDAG(params, encrypted_session_token, encrypted_transmission_key,
+                                     target_config_uid, is_config=True, transmission_key=transmission_key)
+                    if not _dag.linking_dag.has_graph:
+                        _dag.edit_tunneling_config(rotation=True)
+                    if not _dag.resource_belongs_to_config(target_resource_uid):
+                        _dag.link_resource_to_config(target_resource_uid)
+                    admin = kwargs.get('admin')
+                    adm_rec = resolve_pam_record(params, kwargs.get('admin', None), rec_type='pamUser')
+                    if adm_rec and isinstance(adm_rec, vault.TypedRecord):
+                        admin = adm_rec.record_uid
+                    if admin and not _dag.check_if_resource_has_admin(target_resource_uid):
+                        # admin → resource ACL (correct even when admin == user / self-rotate)
+                        _dag.link_user_to_resource(admin, target_resource_uid, is_admin=True)
 
                 if not _dag.check_if_resource_has_admin(target_resource_uid):
                     raise CommandError('', f'PAM Resource "{target_resource_uid}'" does not have "

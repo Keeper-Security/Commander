@@ -1651,8 +1651,9 @@ def _import(params, file_format, filename, **kwargs):
 def report_statuses(status_type, status_iter):
     """Report status codes from list of folder_pb2.*Response."""
     counter = collections.Counter(element.lower() for element in status_iter)
+    # 18 fits "Resource records" / "legacy record"; keep status column at 15.
     for status, count in sorted(counter.items()):
-        logging.info('%-15s %-15s %d', status_type, status, count)
+        logging.info('%-18s %-15s %d', status_type, status, count)
 
 
 def chunks(list_, n):
@@ -1751,7 +1752,7 @@ def execute_records_add(params, records):  # type: (KeeperParams, List[record_pb
     return rs_record
 
 
-def execute_records_update(params, records):  # type: (KeeperParams, List[record_pb2.RecordUpdate]) -> List[record_pb2.RecordModifyResult]
+def execute_records_update(params, records, status_type='record'):  # type: (KeeperParams, List[record_pb2.RecordUpdate], str) -> List[record_pb2.RecordModifyResult]
     rs_record = []
     while records:
         rq = get_records_update_request(params)
@@ -1760,7 +1761,7 @@ def execute_records_update(params, records):  # type: (KeeperParams, List[record
         rs = api.communicate_rest(params, rq, 'vault/records_update', rs_type=record_pb2.RecordsModifyResponse)
         rs_record.extend(rs.records)
 
-    report_statuses('record', (record_status_to_str(x.status) for x in rs_record))
+    report_statuses(status_type, (record_status_to_str(x.status) for x in rs_record))
 
     return rs_record
 

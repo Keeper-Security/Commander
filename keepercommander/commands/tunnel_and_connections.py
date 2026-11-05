@@ -718,17 +718,19 @@ class PAMTunnelEditCommand(Command):
                     record.custom.append(pam_settings)
                 if not pam_settings.value:
                     pam_settings.value.append({"connection": {}, "portForward": {}})
-                if "connection" not in pam_settings.value[0]:
-                    pam_settings.value[0]["connection"] = {}
-                current_value = pam_settings.value[0]["connection"].get('allowKeeperDBProxy')
+                # The DB gate lives in portForward (as in the Web Vault); the legacy
+                # connection.allowKeeperDBProxy is neither read, moved nor deleted here.
+                if not isinstance(pam_settings.value[0].get("portForward"), dict):
+                    pam_settings.value[0]["portForward"] = {}
+                current_value = pam_settings.value[0]["portForward"].get('allowKeeperDBProxy')
                 if keeper_db_proxy == 'on' and current_value is not True:
-                    pam_settings.value[0]["connection"]["allowKeeperDBProxy"] = True
+                    pam_settings.value[0]["portForward"]["allowKeeperDBProxy"] = True
                     dirty = True
                 elif keeper_db_proxy == 'off' and current_value is not False:
-                    pam_settings.value[0]["connection"]["allowKeeperDBProxy"] = False
+                    pam_settings.value[0]["portForward"]["allowKeeperDBProxy"] = False
                     dirty = True
                 elif keeper_db_proxy == 'default' and current_value is not None:
-                    pam_settings.value[0]["connection"].pop('allowKeeperDBProxy', None)
+                    pam_settings.value[0]["portForward"].pop('allowKeeperDBProxy', None)
                     dirty = True
 
             # Handle --keeper-proxy: generalized on/off/default that auto-selects the
@@ -746,7 +748,7 @@ class PAMTunnelEditCommand(Command):
                 proxy_bucket = None
                 if record_type == 'pamDatabase' or protocol in PAMConnectionEditCommand.db_protocols:
                     proxy_key = 'allowKeeperDBProxy'
-                    proxy_bucket = 'connection'
+                    proxy_bucket = 'portForward'  # moved from connection (legacy, left untouched)
                 elif protocol == 'rdp':
                     proxy_key = 'allowKeeperRDPProxy'
                     proxy_bucket = 'portForward'
@@ -2428,7 +2430,11 @@ class PAMTunnelDiagnoseCommand(Command):
                                 print(f'      {self._green("portForward.port"):<36}{_val(pf.get("port"))}')
                                 print(f'      {self._green("connection.port"):<36}{_val(cn.get("port"))}')
                                 print(f'      {self._green("connection.protocol"):<36}{_val(cn.get("protocol"))}')
-                                print(f'      {self._green("connection.allowKeeperDBProxy"):<36}{_val(cn.get("allowKeeperDBProxy"))}')
+                                print(f'      {self._green("portForward.allowKeeperDBProxy"):<36}{_val(pf.get("allowKeeperDBProxy"))}')
+                                if cn.get("allowKeeperDBProxy") is not None:
+                                    print(f'      {self._green("connection.allowKeeperDBProxy (legacy)"):<36}{_val(cn.get("allowKeeperDBProxy"))}')
+                                print(f'      {self._green("portForward.allowKeeperRDPProxy"):<36}{_val(pf.get("allowKeeperRDPProxy"))}')
+                                print(f'      {self._green("portForward.allowKeeperSSHProxy"):<36}{_val(pf.get("allowKeeperSSHProxy"))}')
                                 print(f'      {self._green("connection.recordingIncludeKeys"):<36}{_val(cn.get("recordingIncludeKeys"))}')
                                 print(f'      {self._green("connection.security"):<36}{_val(cn.get("security"))}')
                                 print(f'      {self._green("connection.ignoreCert"):<36}{_val(cn.get("ignoreCert"))}')
