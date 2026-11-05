@@ -57,31 +57,37 @@ class TestServiceModeCommandPolicy(TestCase):
                 err = Verifycommand.validate_service_mode_restrictions(_tokens(raw))
                 self.assertIsNotNone(err, msg=f'should block: {raw!r} -> {_tokens(raw)}')
 
-    def test_nsf_convert_requires_force_in_service_mode(self):
+    def test_nsf_convert_is_blocked_in_service_mode(self):
         check = Verifycommand.validate_service_mode_restrictions
+        for command in (
+            'nsf-convert-record RECORD_UID',
+            'nsf-convert-record RECORD_UID --force',
+            'nsf-convert-record RECORD_UID -f',
+            'nsf-convert-record -- RECORD_UID -f',
+        ):
+            with self.subTest(command=command):
+                self.assertIn(
+                    'not permitted through Service Mode',
+                    check(_tokens(command)),
+                )
         self.assertIn(
-            'requires -f/--force',
-            check(_tokens('nsf-convert-record RECORD_UID')),
-        )
-        self.assertIsNone(check(_tokens('nsf-convert-record RECORD_UID --force')))
-        self.assertIsNone(check(_tokens('nsf-convert-record RECORD_UID -f')))
-        self.assertIsNotNone(check(_tokens('nsf-convert-record -- RECORD_UID -f')))
-        self.assertIn(
-            'requires -f/--force',
+            'not permitted through Service Mode',
             Verifycommand.validate_nsf_convert_command(
                 _tokens('nsf-convert-record -- RECORD_UID -f')),
         )
 
-    def test_nsf_convert_folder_requires_force_in_service_mode(self):
+    def test_nsf_convert_folder_is_blocked_in_service_mode(self):
         check = Verifycommand.validate_service_mode_restrictions
-        self.assertIn(
-            'requires -f/--force',
-            check(_tokens('nsf-convert-folder "My Folder"')),
-        )
-        self.assertIsNone(
-            check(_tokens('nsf-convert-folder "My Folder" --force')))
-        self.assertIsNone(
-            check(_tokens('nsf-convert-folder "My Folder" -f')))
+        for command in (
+            'nsf-convert-folder "My Folder"',
+            'nsf-convert-folder "My Folder" --force',
+            'nsf-convert-folder "My Folder" -f',
+        ):
+            with self.subTest(command=command):
+                self.assertIn(
+                    'not permitted through Service Mode',
+                    check(_tokens(command)),
+                )
 
     def test_attachment_commands_blocked_for_remote_api(self):
         check = Verifycommand.validate_service_mode_restrictions
