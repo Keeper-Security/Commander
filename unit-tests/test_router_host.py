@@ -129,6 +129,36 @@ class TestGetRouterHost(RouterHostTestBase):
         self.assertEqual(constants.get_router_host('a.test', {}), 'connect.a.test')
 
 
+class TestStrictHostSyntax(RouterHostTestBase):
+    """The host part is an RFC 1123 DNS name, an IPv4 address, or a bracketed IPv6 literal."""
+    BAD = ('not a host!!', 'a b.test', 'bad$host.test', 'a..test', '.a.test', '-a.test', 'a-.test',
+           'a' * 64 + '.test', 'h.test:0', 'h.test:70000', '[::1', '[zz::1]:8443', '1.2.3.999')
+
+    def test_invalid_hosts_name_the_source(self):
+        for value in self.BAD:
+            with self.subTest(value):
+                with self.assertRaises(constants.RouterHostError) as ctx:
+                    constants.parse_router_override(value, 'KROUTER_URL', allow_url_schemes=True)
+                self.assertIn('KROUTER_URL', str(ctx.exception))
+
+    def test_env_invalid_host_fails_before_any_request(self):
+        os.environ['KROUTER_URL'] = 'not a host!!'
+        with self.assertRaises(constants.RouterHostError) as ctx:
+            constants.get_router_target(CLOUD)
+        self.assertIn('KROUTER_URL', str(ctx.exception))
+
+    def test_router_hosts_invalid_host(self):
+        with self.assertRaises(constants.RouterHostError):
+            constants.get_router_target(CLOUD, {'router_hosts': {CLOUD: 'bad host.test'}})
+
+    def test_valid_hosts_still_accepted(self):
+        for value, host in (('[::1]:8443', '[::1]:8443'), ('10.1.2.3:8443', '10.1.2.3:8443'),
+                            ('Connect.Example-1.test:65535', 'connect.example-1.test:65535'),
+                            ('localhost', 'localhost'), ('a' * 63 + '.test', 'a' * 63 + '.test')):
+            with self.subTest(value):
+                self.assertEqual(constants.parse_router_override(value, 'x').host, host)
+
+
 class TestLegacyKrouterUrlShapes(RouterHostTestBase):
     """Every KROUTER_URL shape that worked before still works. Each output equals the old output (OLD_SHAPES),
     except a trailing "/" (now stripped) and a scheme of the wrong family. The old code returned a ws URL

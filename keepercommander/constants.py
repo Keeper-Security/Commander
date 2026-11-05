@@ -1,6 +1,8 @@
 import enum
+import ipaddress
 import logging
 import os
+import re
 import sys
 from typing import List, Tuple, Optional
 from datetime import timedelta
@@ -525,6 +527,26 @@ def _router_server_key(server_hostname):
     return host.lower() if isinstance(host, str) else host
 
 
+_DNS_LABEL = re.compile(r'^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$', re.IGNORECASE)
+
+
+def _is_valid_router_hostname(hostname):
+    """True for an IPv4 or IPv6 address, or for a DNS name with RFC 1123 labels."""
+    if ':' in hostname:
+        try:
+            ipaddress.IPv6Address(hostname.split('%')[0])
+            return True
+        except ValueError:
+            return False
+    try:
+        ipaddress.IPv4Address(hostname)
+        return True
+    except ValueError:
+        pass
+    labels = hostname.rstrip('.').split('.')
+    return len(hostname) <= 253 and all(_DNS_LABEL.match(x) for x in labels) and not labels[-1].isdigit()
+
+
 def parse_router_override(value, source, allow_url_schemes=False):
     """Parse a Router override into a RouterTarget. Raise RouterHostError (naming `source`) if it is invalid.
     By default the value is a bare host[:port] or an https URL without a path (used for "router_hosts").
@@ -549,13 +571,20 @@ def parse_router_override(value, source, allow_url_schemes=False):
         if secure is False:
             logging.warning('%s uses the plaintext scheme "%s". Use https or wss.', source, scheme)
     else:
-        parsed = urlparse('//' + value)
+        try:
+            parsed = urlparse('//' + value)
+        except ValueError:
+            fail('is not a valid host')
     try:
         port = parsed.port
     except ValueError:
         fail('has an invalid port')
+    if port == 0:
+        fail('has an invalid port')
     if not parsed.hostname:
         fail('has no host')
+    if not _is_valid_router_hostname(parsed.hostname):
+        fail('has an invalid host. Use a DNS name, an IPv4 address, or a bracketed IPv6 address')
     if parsed.params or parsed.query or parsed.fragment or parsed.username is not None \
             or parsed.password is not None:
         fail('must not have credentials, parameters, a query, or a fragment')
@@ -565,7 +594,7 @@ def parse_router_override(value, source, allow_url_schemes=False):
     host = parsed.hostname.lower()
     if ':' in host:
         host = f'[{host}]'
-    return RouterTarget(f'{host}:{port}' if port else host, path, secure)
+    return RouterTarget(f'{host}:{port}' if port is not None else host, path, secure)
 
 
 def _configured_router_target(server_hostname, config):
