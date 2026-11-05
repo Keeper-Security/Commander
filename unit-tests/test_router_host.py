@@ -96,8 +96,10 @@ class TestGetRouterHost(RouterHostTestBase):
             constants.get_router_base('x')
         self.assertIn('KROUTER_URL', logs.output[0])
         os.environ['KROUTER_URL'] = 'https://localhost:8080'
-        with self.assertNoLogs(level='WARNING'):
+        # assertNoLogs needs Python 3.10; CI also runs 3.9.
+        with mock.patch.object(constants.logging, 'warning') as warning:
             constants.get_router_base('x')
+        warning.assert_not_called()
 
     def test_config_override_per_server(self):
         config = {'router_hosts': {'10.1.2.3': 'https://connect.smk.test'}}
