@@ -19,6 +19,7 @@ ROLE_MATRIX = {
     ('edit', 'owner'): 'content-manager',
     ('edit', 'edit'): 'content-manager',
     ('add secret', 'owner'): 'content-manager',
+    ('edit', 'view'): 'viewer',
     ('view', 'view'): 'viewer',
 }
 
