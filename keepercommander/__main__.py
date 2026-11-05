@@ -26,7 +26,6 @@ from . import __version__
 from . import cli, rest_api, utils
 from .params import KeeperParams
 from .config_storage import loader
-from . import constants
 from .constants import resolve_server, invalid_server_message
 
 
@@ -60,7 +59,6 @@ def get_params_from_config(config_filename=None, launched_with_shortcut=False, d
                     params.config = json.load(config_file)
                     loader.load_config_properties(params)
                     rest_api.load_server_keys(params.config)
-                    constants.load_router_hosts(params.config)
                     if 'fail_on_throttle' in params.config:
                         params.rest_context.fail_on_throttle = params.config['fail_on_throttle'] is True
                     if 'certificate_check' in params.config:

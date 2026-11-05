@@ -102,12 +102,14 @@ class ConnectionBase:
             raise Exception(f"Could not parse router response: {err}")
 
     @staticmethod
-    def get_router_host(server_hostname: str):
-        # ROUTER_HOST is the KSM-side override. Otherwise the shared Commander helper decides.
-        from ...constants import get_router_host
-        if os.environ.get("ROUTER_HOST") and not os.environ.get("KROUTER_URL"):
-            return os.environ["ROUTER_HOST"]
-        return get_router_host(server_hostname)
+    def get_router_target(server_hostname: str, config: Optional[dict] = None):
+        """Return the Router location (see constants.get_router_target).
+        Order: KROUTER_URL, ROUTER_HOST, "router_hosts" in config, then connect.<vault host>."""
+        from ...constants import get_router_target, parse_router_override
+        router_host = os.environ.get("ROUTER_HOST")
+        if router_host and not os.environ.get("KROUTER_URL"):
+            return parse_router_override(router_host, "ROUTER_HOST")
+        return get_router_target(server_hostname, config)
 
     def rest_call_to_router(self,
                             http_method: str,

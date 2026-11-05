@@ -121,13 +121,18 @@ class Connection(ConnectionBase):
         return self.get_config_value(ConfigKeys.KEY_APP_KEY)
 
     def router_url_from_ksm_config(self) -> str:
-        return self.get_router_host(self.hostname)
+        target = self.get_router_target(self.hostname)
+        return f'{target.host}{target.path}'
 
     def ws_router_url_from_ksm_config(self, is_ws: bool = False) -> str:
 
-        router_host = self.router_url_from_ksm_config()
+        target = self.get_router_target(self.hostname)
+        router_host = f'{target.host}{target.path}'
 
-        kpam_router_ssl_enabled_env = value_to_boolean(os.environ.get("USE_SSL", True))
+        # A scheme in KROUTER_URL decides secure or plain. Otherwise USE_SSL decides.
+        kpam_router_ssl_enabled_env = target.secure
+        if kpam_router_ssl_enabled_env is None:
+            kpam_router_ssl_enabled_env = value_to_boolean(os.environ.get("USE_SSL", True))
 
         if is_ws:
             prot_pref = 'ws'

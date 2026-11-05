@@ -192,7 +192,7 @@ class TestPAMTunnelDiagnose(unittest.TestCase):
         test_https.assert_called_once_with(
             'keepersecurity.com', proxies=proxies, verify='/path/to/ca.pem')
         test_websocket.assert_called_once_with(
-            'router.example', proxies=proxies, verify='/path/to/ca.pem')
+            'router.example', port=443, proxies=proxies, verify='/path/to/ca.pem')
 
     def test_https_uses_configured_proxy(self):
         proxies = {'http': 'http://proxy.example:8080', 'https': 'http://proxy.example:8080'}
@@ -218,7 +218,7 @@ class TestPAMTunnelDiagnose(unittest.TestCase):
             mock_get.return_value.status_code = 101
 
             passed, _, _ = PAMTunnelDiagnoseCommand._test_websocket(
-                'router.example', proxies=proxies, verify='/path/to/ca.pem')
+                'router.example', port=443, proxies=proxies, verify='/path/to/ca.pem')
 
         self.assertTrue(passed)
         mock_get.assert_called_once_with(

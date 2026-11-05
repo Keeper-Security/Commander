@@ -804,13 +804,14 @@ def execute_router_rest(params: KeeperParams, endpoint: str, payload: Optional[b
     }
 
     if 'ROUTER_URL' in os.environ:
+        # ROUTER_URL is an older, separate escape hatch. It takes the scheme and netloc as given
+        # and ignores KROUTER_URL and "router_hosts". Its behavior is unchanged.
         up = urlparse(os.environ['ROUTER_URL'])
-        url_comp = (up.scheme, up.netloc, f'api/user/{endpoint}', None, None, None)
+        url = urlunparse((up.scheme, up.netloc, f'api/user/{endpoint}', None, None, None))
     else:
-        from .constants import get_router_host
+        from .constants import get_router_base
         up = urlparse(params.rest_context.server_base)
-        url_comp = ('https', get_router_host(up.hostname), f'api/user/{endpoint}', None, None, None)
-    url = urlunparse(url_comp)
+        url = f'{get_router_base(up.hostname, params.config)}/api/user/{endpoint}'
 
     if payload is not None:
         payload = crypto.encrypt_aes_v2(payload, transmission_key)

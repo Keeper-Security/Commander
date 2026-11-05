@@ -34,7 +34,7 @@ def get_router_url(params: KeeperParams):
     base_server = urlparse(params.rest_context.server_base).netloc
     if isinstance(base_server, bytes):
         base_server = base_server.decode('utf-8')
-    return get_router_base(base_server)
+    return get_router_base(base_server, params.config)
 
 
 def get_router_ws_url(params: KeeperParams):

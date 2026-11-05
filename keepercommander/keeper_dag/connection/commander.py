@@ -62,19 +62,27 @@ class Connection(ConnectionBase):
         return record.record_key
 
     @property
+    def router_target(self):
+        return self.get_router_target(self.params.config.get("server"), self.params.config)
+
+    @property
     def hostname(self) -> str:
-        return self.get_router_host(self.params.config.get("server"))
+        target = self.router_target
+        return f'{target.host}{target.path}'
 
     @property
     def dag_server_url(self) -> str:
 
-        # KROUTER_URL and the "router_hosts" config are applied by the shared helper.
-        use_ssl = value_to_boolean(os.environ.get("USE_SSL", True))
+        # A scheme in KROUTER_URL decides secure or plain. Otherwise USE_SSL decides.
+        target = self.router_target
+        use_ssl = target.secure
+        if use_ssl is None:
+            use_ssl = value_to_boolean(os.environ.get("USE_SSL", True)) is True
         prot_pref = 'ws' if self.is_ws else 'http'
-        if use_ssl is True:
+        if use_ssl:
             prot_pref += "s"
 
-        return f'{prot_pref}://{self.hostname}'
+        return f'{prot_pref}://{target.host}{target.path}'
 
     # deprecated
     def get_keeper_tokens(self):
