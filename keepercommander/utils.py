@@ -26,17 +26,22 @@ from pathlib import Path
 import sys
 
 from . import crypto
-from .constants import EMAIL_PATTERN, PBKDF2_ITERATIONS, MAX_PBKDF2_ITERATIONS
+from .constants import (
+    EMAIL_PATTERN, PBKDF2_ITERATIONS, PBKDF2_LEGACY_MIN_ITERATIONS, MAX_PBKDF2_ITERATIONS,
+    ENCRYPTION_PARAMS_VERSION, ENCRYPTION_PARAMS_VERSION_SIZE, ENCRYPTION_PARAMS_ITERATIONS_SIZE,
+    ENCRYPTION_PARAMS_SALT_SIZE, ENCRYPTION_PARAMS_SIZE,
+)
 import zxcvbn as _zxcvbn
 
 
 VALID_URL_SCHEME_CHARS = '+-.:'
+_PBKDF2_ITERATIONS_CONFIG_KEY = 'pbkdf2_iterations'
 
 
 def get_minimum_pbkdf2_iterations(enforcements=None):
     # type: (Optional[dict]) -> int
-    """Get the local PBKDF2 floor, raised by an account-level enforcement when available."""
-    minimum = PBKDF2_ITERATIONS
+    """Get the supported read floor, raised by an account-level enforcement when available."""
+    minimum = PBKDF2_LEGACY_MIN_ITERATIONS
     if isinstance(enforcements, dict):
         longs = enforcements.get('longs')
         if isinstance(longs, list):
@@ -49,6 +54,53 @@ def get_minimum_pbkdf2_iterations(enforcements=None):
     return minimum
 
 
+def get_minimum_new_pbkdf2_iterations(enforcements=None, server_minimum=None):
+    # type: (Optional[dict], Optional[int]) -> int
+    """Get the minimum iteration count to write for a new or changed password."""
+    return max(
+        PBKDF2_ITERATIONS,
+        get_minimum_pbkdf2_iterations(enforcements),
+        server_minimum if isinstance(server_minimum, int) and not isinstance(server_minimum, bool) else 0)
+
+
+def get_stored_pbkdf2_iterations(config, username, password_type='master'):
+    # type: (Optional[dict], Optional[str], str) -> int
+    """Return the highest iteration count previously confirmed for this user's password type."""
+    if not isinstance(config, dict) or not isinstance(username, str) or not username.strip():
+        return 0
+    users = config.get(_PBKDF2_ITERATIONS_CONFIG_KEY)
+    if not isinstance(users, dict):
+        return 0
+    account = users.get(username.strip().lower())
+    if not isinstance(account, dict):
+        return 0
+    iterations = account.get(password_type)
+    if isinstance(iterations, int) and not isinstance(iterations, bool) and iterations > 0:
+        return iterations
+    return 0
+
+
+def store_pbkdf2_iterations(config, username, iterations, password_type='master'):
+    # type: (Optional[dict], Optional[str], int, str) -> None
+    """Remember the highest iteration count confirmed by a successful login or password change."""
+    if not isinstance(config, dict) or not isinstance(username, str) or not username.strip():
+        return
+    if isinstance(iterations, bool) or not isinstance(iterations, int) or iterations <= 0:
+        return
+    users = config.setdefault(_PBKDF2_ITERATIONS_CONFIG_KEY, {})
+    if not isinstance(users, dict):
+        users = {}
+        config[_PBKDF2_ITERATIONS_CONFIG_KEY] = users
+    account_key = username.strip().lower()
+    account = users.setdefault(account_key, {})
+    if not isinstance(account, dict):
+        account = {}
+        users[account_key] = account
+    existing = account.get(password_type)
+    if not isinstance(existing, int) or isinstance(existing, bool) or iterations > existing:
+        account[password_type] = iterations
+
+
 def validate_pbkdf2_parameters(salt, iterations, minimum_iterations=None, purpose='PBKDF2'):
     # type: (bytes, int, Optional[int], str) -> int
     """Validate PBKDF2 parameters before deriving a key or serializing them."""
@@ -58,7 +110,7 @@ def validate_pbkdf2_parameters(salt, iterations, minimum_iterations=None, purpos
     if isinstance(iterations, bool) or not isinstance(iterations, int):
         raise ValueError(f'Invalid {purpose} iteration count.')
 
-    minimum_iterations = max(PBKDF2_ITERATIONS, minimum_iterations or 0)
+    minimum_iterations = max(PBKDF2_LEGACY_MIN_ITERATIONS, minimum_iterations or 0)
     if iterations < minimum_iterations:
         raise ValueError(
             f'Invalid {purpose} iteration count: {iterations} is below the required minimum '
@@ -250,13 +302,11 @@ def json_to_base64(json_str):
 
 def decrypt_encryption_params(encryption_params, password):     # type: (bytes, str) -> bytes
 
-    if len(encryption_params) != 100:
-        raise Exception('Invalid encryption params: bad params length')
-
-    _ = int.from_bytes(encryption_params[0:1], byteorder='big', signed=False)
-    iterations = int.from_bytes(encryption_params[1:4], byteorder='big', signed=False)
-    salt = encryption_params[4:20]
-    encrypted_data_key = encryption_params[20:]
+    iterations = get_encryption_params_iterations(encryption_params)
+    salt_start = ENCRYPTION_PARAMS_VERSION_SIZE + ENCRYPTION_PARAMS_ITERATIONS_SIZE
+    salt_end = salt_start + ENCRYPTION_PARAMS_SALT_SIZE
+    salt = encryption_params[salt_start:salt_end]
+    encrypted_data_key = encryption_params[salt_end:]
 
     key = crypto.derive_key_v1(password, salt, iterations)
     decrypted_data_key = crypto.decrypt_aes_v1(encrypted_data_key, key, use_padding=False)
@@ -269,6 +319,18 @@ def decrypt_encryption_params(encryption_params, password):     # type: (bytes, 
         raise Exception('Invalid data key: failed mirror verification')
 
     return decrypted_data_key[:32]
+
+
+def get_encryption_params_iterations(encryption_params):
+    # type: (bytes) -> int
+    """Read the iteration count from a supported encryption-params payload."""
+    if not isinstance(encryption_params, bytes) or len(encryption_params) != ENCRYPTION_PARAMS_SIZE:
+        raise ValueError('Invalid encryption params: bad params length')
+    if encryption_params[0] != ENCRYPTION_PARAMS_VERSION:
+        raise ValueError(f'Unsupported encryption params version: {encryption_params[0]}')
+    start = ENCRYPTION_PARAMS_VERSION_SIZE
+    end = start + ENCRYPTION_PARAMS_ITERATIONS_SIZE
+    return int.from_bytes(encryption_params[start:end], byteorder='big', signed=False)
 
 
 def create_encryption_params(password, salt, iterations, data_key):  # type: (str, bytes, int, bytes) -> bytes

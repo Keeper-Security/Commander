@@ -5,7 +5,7 @@ import pytest
 
 from data_vault import VaultEnvironment, get_synced_params, get_connected_params
 from helper import KeeperApiHelper
-from keepercommander import api, enforcement, generator, loginv3
+from keepercommander import api, constants, enforcement, generator, loginv3, utils
 from keepercommander.params import KeeperParams
 from keepercommander.proto import APIRequest_pb2
 
@@ -163,6 +163,102 @@ class TestPBKDF2AuthenticationValidation:
         with pytest.raises(ValueError, match=message):
             loginv3.LoginV3Flow(login_ui=NoPasswordPrompt()).login(KeeperParams())
 
+    def test_login_allows_legacy_100k_iterations(self, monkeypatch):
+        params = KeeperParams()
+        params.user = 'legacy@example.com'
+        params.config = {}
+        response = APIRequest_pb2.LoginResponse()
+        response.loginState = APIRequest_pb2.REQUIRES_AUTH_HASH
+        salt = response.salt.add()
+        salt.salt = b'0123456789abcdef'
+        salt.iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+
+        rejected_response = APIRequest_pb2.LoginResponse()
+        rejected_response.loginState = APIRequest_pb2.ACCOUNT_LOCKED
+        sent_iterations = []
+
+        monkeypatch.setattr(loginv3.LoginV3API, 'get_device_id', lambda *args, **kwargs: b'device')
+        monkeypatch.setattr(loginv3.LoginV3API, 'startLoginMessage', lambda *args, **kwargs: response)
+
+        def fake_derive_keyhash_v1(_password, _salt, iterations):
+            sent_iterations.append(iterations)
+            return b'test-auth-hash'
+
+        def fake_validate_auth_hash(_params, _token):
+            return rejected_response
+
+        monkeypatch.setattr(loginv3.crypto, 'derive_keyhash_v1', fake_derive_keyhash_v1)
+        monkeypatch.setattr(loginv3.LoginV3API, 'validateAuthHashMessage', fake_validate_auth_hash)
+
+        class PasswordUi:
+            def on_password(self, step):
+                step.verify_password('legacy-password')
+
+        with pytest.raises(Exception, match='LOCKED'):
+            loginv3.LoginV3Flow(login_ui=PasswordUi()).login(params)
+        assert sent_iterations == [constants.PBKDF2_LEGACY_MIN_ITERATIONS]
+
+    def test_login_rejects_count_below_previously_seen_count(self, monkeypatch):
+        params = KeeperParams()
+        params.user = 'legacy@example.com'
+        params.config = {
+            'pbkdf2_iterations': {
+                'legacy@example.com': {'master': constants.PBKDF2_ITERATIONS}
+            }
+        }
+        response = APIRequest_pb2.LoginResponse()
+        response.loginState = APIRequest_pb2.REQUIRES_AUTH_HASH
+        salt = response.salt.add()
+        salt.salt = b'0123456789abcdef'
+        salt.iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+
+        monkeypatch.setattr(loginv3.LoginV3API, 'get_device_id', lambda *args, **kwargs: b'device')
+        monkeypatch.setattr(loginv3.LoginV3API, 'startLoginMessage', lambda *args, **kwargs: response)
+
+        class NoPasswordPrompt:
+            def on_password(self, _step):
+                pytest.fail('Commander prompted before checking the stored iteration count')
+
+        with pytest.raises(ValueError, match='required minimum of 1000000'):
+            loginv3.LoginV3Flow(login_ui=NoPasswordPrompt()).login(params)
+
+    def test_successful_legacy_login_remembers_count_and_offers_upgrade(self, monkeypatch):
+        params = KeeperParams()
+        params.user = 'legacy@example.com'
+        params.password = 'legacy-password'
+        params.iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+        params.config = {}
+        data_key = bytes(range(32))
+        upgrade_calls = []
+        response = APIRequest_pb2.LoginResponse()
+        response.primaryUsername = params.user
+        response.encryptedSessionToken = b'encrypted-session'
+        response.encryptedDataKeyType = APIRequest_pb2.BY_PASSWORD
+        response.encryptedDataKey = utils.create_encryption_params(
+            params.password, bytes(16), params.iterations, data_key)
+
+        monkeypatch.setattr(loginv3.LoginV3Flow, 'populateAccountSummary', lambda _params: None)
+        monkeypatch.setattr(loginv3.loader, 'store_config_properties', lambda _params: None)
+        monkeypatch.setattr(loginv3.sys, 'stdin', type('InteractiveInput', (), {'isatty': lambda _self: True})())
+        monkeypatch.setattr('builtins.input', lambda _prompt='': 'yes')
+
+        def fake_change_master_password(_params):
+            upgrade_calls.append(True)
+            _params.iterations = constants.PBKDF2_ITERATIONS
+            utils.store_pbkdf2_iterations(
+                _params.config, _params.user, _params.iterations, 'master')
+
+        monkeypatch.setattr(
+            loginv3.LoginV3Flow, 'change_master_password',
+            staticmethod(fake_change_master_password))
+
+        loginv3.LoginV3Flow.post_login_processing(params, response)
+
+        assert params.data_key == data_key
+        assert upgrade_calls == [True]
+        assert utils.get_stored_pbkdf2_iterations(
+            params.config, params.user, 'master') == constants.PBKDF2_ITERATIONS
+
     def test_reentry_rejects_weak_server_parameters_before_sending_hash(self, monkeypatch):
         params = KeeperParams()
         params.user = 'user@example.com'
@@ -178,6 +274,31 @@ class TestPBKDF2AuthenticationValidation:
                 salt.iterations = 1
                 return salt
             pytest.fail(f'Unexpected endpoint: {endpoint}')
+
+        monkeypatch.setattr(enforcement.api, 'communicate_rest', fake_communicate_rest)
+        monkeypatch.setattr(enforcement.getpass, 'getpass', lambda prompt='': 'test-password')
+
+        assert enforcement.MasterPasswordReentryEnforcer._validate_master_or_alternate_password(params) is False
+        assert endpoints == ['authentication/get_salt_and_iterations']
+
+    def test_persistent_reentry_rejects_count_below_stored_account_count(self, monkeypatch):
+        params = KeeperParams()
+        params.user = 'user@example.com'
+        params.session_token = 'test-session'
+        params.settings = {}
+        params.config = {
+            'pbkdf2_iterations': {
+                'user@example.com': {'master': constants.PBKDF2_ITERATIONS}
+            }
+        }
+        endpoints = []
+
+        def fake_communicate_rest(_params, _request, endpoint, **_kwargs):
+            endpoints.append(endpoint)
+            salt = APIRequest_pb2.Salt()
+            salt.salt = b'0123456789abcdef'
+            salt.iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+            return salt
 
         monkeypatch.setattr(enforcement.api, 'communicate_rest', fake_communicate_rest)
         monkeypatch.setattr(enforcement.getpass, 'getpass', lambda prompt='': 'test-password')
@@ -259,7 +380,59 @@ class TestPBKDF2AuthenticationValidation:
             'authentication/account_recovery_verify_code',
         ]
 
-    @pytest.mark.parametrize('payload', [b'', bytes(99)])
+    def test_account_recovery_accepts_legacy_100k_parameters(self, monkeypatch):
+        params = KeeperParams()
+        endpoints = []
+        derived_iterations = []
+        recovery_phrase = 'legacy recovery answer'
+        data_key = bytes(range(32))
+
+        def fake_communicate_rest(_params, request, endpoint, **_kwargs):
+            endpoints.append(endpoint)
+            if endpoint == 'authentication/master_password_recovery_verification_v2':
+                return None
+            if endpoint == 'authentication/account_recovery_verify_code':
+                response = APIRequest_pb2.AccountRecoveryVerifyCodeResponse()
+                response.backupKeyType = APIRequest_pb2.BKT_SEC_ANSWER
+                response.securityQuestion = 'Test question'
+                response.salt = b'0123456789abcdef'
+                response.iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+                return response
+            if endpoint == 'authentication/get_data_key_backup_v3':
+                assert request.securityAnswerHash
+                response = APIRequest_pb2.GetDataKeyBackupV3Response()
+                response.dataKeyBackup = utils.create_encryption_params(
+                    recovery_phrase, bytes(16), constants.PBKDF2_LEGACY_MIN_ITERATIONS, data_key)
+                response.encryptedSessionToken = b'encrypted-session'
+                response.minimumPbkdf2Iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+                return response
+            pytest.fail(f'Unexpected endpoint: {endpoint}')
+
+        original_derive = loginv3.crypto.derive_keyhash_v1
+
+        def capture_derive(password, salt, iterations):
+            derived_iterations.append(iterations)
+            return original_derive(password, salt, iterations)
+
+        monkeypatch.setattr(loginv3.api, 'communicate_rest', fake_communicate_rest)
+        monkeypatch.setattr(loginv3.crypto, 'derive_keyhash_v1', capture_derive)
+        monkeypatch.setattr('builtins.input', lambda _prompt='': 'test-code')
+        monkeypatch.setattr(loginv3.getpass, 'getpass', lambda **_kwargs: recovery_phrase)
+        monkeypatch.setattr(loginv3.LoginV3Flow, 'change_master_password', lambda *_args: True)
+        flow = loginv3.LoginV3Flow()
+        monkeypatch.setattr(flow, 'login', lambda _params: None)
+
+        flow.handle_account_recovery(params, b'login-token')
+
+        assert derived_iterations == [constants.PBKDF2_LEGACY_MIN_ITERATIONS]
+        assert params.data_key == data_key
+        assert endpoints == [
+            'authentication/master_password_recovery_verification_v2',
+            'authentication/account_recovery_verify_code',
+            'authentication/get_data_key_backup_v3',
+        ]
+
+    @pytest.mark.parametrize('payload', [b'', bytes(99), b'\x02' + bytes(99)])
     def test_login_rejects_malformed_encryption_params(self, payload):
         params = KeeperParams()
         params.iterations = 1_000_000
@@ -267,15 +440,19 @@ class TestPBKDF2AuthenticationValidation:
         response.encryptedDataKeyType = APIRequest_pb2.BY_PASSWORD
         response.encryptedDataKey = payload
 
-        with pytest.raises(ValueError, match='Invalid encrypted data key parameters'):
+        expected_message = 'Unsupported encryption params version' if payload[:1] == b'\x02' else 'bad params length'
+        with pytest.raises(ValueError, match=expected_message):
             loginv3.LoginV3Flow.get_data_key(params, response)
 
-    def test_login_rejects_encryption_iteration_mismatch(self):
+    def test_login_accepts_independent_auth_and_encryption_iterations(self):
         params = KeeperParams()
+        params.password = 'test-password'
         params.iterations = 1_000_000
+        data_key = bytes(range(32))
         response = APIRequest_pb2.LoginResponse()
         response.encryptedDataKeyType = APIRequest_pb2.BY_PASSWORD
-        response.encryptedDataKey = b'\x01' + (1_000_001).to_bytes(3, byteorder='big') + bytes(96)
+        response.encryptedDataKey = utils.create_encryption_params(
+            params.password, b'0123456789abcdef', constants.PBKDF2_LEGACY_MIN_ITERATIONS, data_key)
 
-        with pytest.raises(ValueError, match='do not match'):
-            loginv3.LoginV3Flow.get_data_key(params, response)
+        loginv3.LoginV3Flow.get_data_key(params, response)
+        assert params.data_key == data_key

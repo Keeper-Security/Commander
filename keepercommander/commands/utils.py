@@ -41,6 +41,7 @@ from .ksm import KSMCommand, ksm_parser
 from .. import __version__, vault
 from .. import api, rest_api, loginv3, crypto, utils, constants, error, vault_extensions
 from ..breachwatch import BreachWatch
+from ..config_storage import loader
 from ..display import bcolors, post_login_summary
 from ..error import CommandError
 from ..generator import (
@@ -2380,6 +2381,7 @@ class ResetPasswordCommand(Command):
                 current_salt = None
             else:
                 raise kae
+        password_type = 'alternate' if is_sso_user else 'master'
 
         is_delete_alternate = kwargs.get('delete_alternate')
         if is_delete_alternate:
@@ -2396,9 +2398,12 @@ class ResetPasswordCommand(Command):
                 logging.info('Changing Master Password for \"%s\"', params.user)
 
         if current_salt:
+            known_iterations = utils.get_stored_pbkdf2_iterations(
+                params.config, params.user, password_type)
             utils.validate_pbkdf2_parameters(
                 current_salt.salt, current_salt.iterations,
-                minimum_iterations=utils.get_minimum_pbkdf2_iterations(params.enforcements),
+                minimum_iterations=max(
+                    utils.get_minimum_pbkdf2_iterations(params.enforcements), known_iterations),
                 purpose='current master password')
             auth_hash = crypto.derive_keyhash_v1(current_password, current_salt.salt, current_salt.iterations)
             rq = APIRequest_pb2.MasterPasswordReentryRequest()
@@ -2466,7 +2471,9 @@ class ResetPasswordCommand(Command):
 
         iterations = current_salt.iterations if current_salt else constants.PBKDF2_ITERATIONS
         auth_salt = crypto.get_random_bytes(16)
-        minimum_iterations = utils.get_minimum_pbkdf2_iterations(params.enforcements)
+        password_type = 'alternate' if is_sso_user else 'master'
+        minimum_iterations = utils.get_minimum_new_pbkdf2_iterations(
+            params.enforcements, rules_rs.minimumIterations)
         iterations = max(iterations, minimum_iterations)
         iterations = utils.validate_pbkdf2_parameters(
             auth_salt, iterations, minimum_iterations=minimum_iterations,
@@ -2496,6 +2503,10 @@ class ResetPasswordCommand(Command):
             }
             api.communicate(params, mp_rq)
             logging.info('Master Password has been changed')
+            params.salt = auth_salt
+            params.iterations = iterations
+        utils.store_pbkdf2_iterations(params.config, params.user, iterations, password_type)
+        loader.store_config_properties(params)
 
 
 class SyncSecurityDataCommand(Command):

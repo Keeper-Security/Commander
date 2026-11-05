@@ -7,6 +7,7 @@ import pytest
 from data_enterprise import EnterpriseEnvironment
 from data_vault import get_synced_params, get_user_params, get_connected_params, VaultEnvironment
 from helper import KeeperApiHelper
+from keepercommander import constants, utils as core_utils
 from keepercommander.commands import utils
 from keepercommander.params import KeeperParams
 from keepercommander.proto import APIRequest_pb2
@@ -149,3 +150,50 @@ def test_password_change_rejects_weak_current_parameters(monkeypatch):
     with pytest.raises(ValueError, match='below the required minimum'):
         utils.ResetPasswordCommand().execute(params, current_password='test-password')
     assert endpoints == ['authentication/get_salt_and_iterations']
+
+
+def test_password_change_upgrades_legacy_iteration_count(monkeypatch):
+    params = KeeperParams()
+    params.user = 'legacy@example.com'
+    params.settings = {}
+    params.enforcements = None
+    params.config = {}
+    params.data_key = bytes(range(32))
+    endpoints = []
+    requests = []
+
+    def fake_communicate_rest(_params, _request, endpoint, **_kwargs):
+        endpoints.append(endpoint)
+        if endpoint == 'authentication/get_salt_and_iterations':
+            salt = APIRequest_pb2.Salt()
+            salt.salt = b'0123456789abcdef'
+            salt.iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+            return salt
+        if endpoint == 'authentication/validate_master_password':
+            response = APIRequest_pb2.MasterPasswordReentryResponse()
+            response.status = APIRequest_pb2.MP_SUCCESS
+            return response
+        if endpoint == 'authentication/get_domain_password_rules':
+            response = APIRequest_pb2.NewUserMinimumParams()
+            response.minimumIterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+            return response
+        pytest.fail(f'Unexpected endpoint: {endpoint}')
+
+    monkeypatch.setattr('keepercommander.commands.utils.api.communicate_rest', fake_communicate_rest)
+    monkeypatch.setattr('keepercommander.commands.utils.api.communicate',
+                        lambda _params, request: requests.append(request))
+
+    utils.ResetPasswordCommand().execute(
+        params, current_password='old-password', new_password='new-password')
+
+    assert endpoints == [
+        'authentication/get_salt_and_iterations',
+        'authentication/validate_master_password',
+        'authentication/get_domain_password_rules',
+    ]
+    assert len(requests) == 1
+    auth_verifier = core_utils.base64_url_decode(requests[0]['auth_verifier'])
+    assert int.from_bytes(auth_verifier[1:4], byteorder='big') == constants.PBKDF2_ITERATIONS
+    assert params.iterations == constants.PBKDF2_ITERATIONS
+    assert core_utils.get_stored_pbkdf2_iterations(
+        params.config, params.user, 'master') == constants.PBKDF2_ITERATIONS
