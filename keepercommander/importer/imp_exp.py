@@ -59,6 +59,7 @@ LARGE_FIELD_MSG = 'This field is stored as attachment "{}" to avoid 2Mb record l
 FILE_ATTACHMENT_CHUNK = 100
 SERVICE_MODE_EXPORT_MAX_RECORDS = 5000
 SERVICE_MODE_EXPORT_MAX_INPUT_BYTES = 5 * 1024 * 1024
+FILES_DOWNLOAD_BATCH_SIZE = 100
 
 
 STANDARD_RECORD_TYPES = {
@@ -3071,7 +3072,7 @@ class KeeperV3Attachment(KeeperBaseAttachment):
         self.is_gcm = file.fileKeyType == record_pb2.ENCRYPTED_BY_DATA_KEY_GCM
 
     @classmethod
-    def prefetch_urls(cls, attachments, batch_size=100):
+    def prefetch_urls(cls, attachments, batch_size=FILES_DOWNLOAD_BATCH_SIZE):
         params = None
         by_uid = {}    # type: Dict[bytes, List[KeeperV3Attachment]]
         for a in attachments:
@@ -3083,11 +3084,30 @@ class KeeperV3Attachment(KeeperBaseAttachment):
             rq = record_pb2.FilesGetRequest()
             rq.for_thumbnails = False
             rq.record_uids.extend(uids[i:i + batch_size])
-            rs = api.communicate_rest(params, rq, 'vault/files_download', rs_type=record_pb2.FilesGetResponse)
+            try:
+                rs = api.communicate_rest(params, rq, 'vault/files_download', rs_type=record_pb2.FilesGetResponse)
+            except Exception as e:
+                logging.debug('Attachment URL prefetch failed, will fetch individually: %s', e)
+                continue
             for file in rs.files:
                 if file.status == record_pb2.FG_SUCCESS:
                     for a in by_uid.get(file.record_uid, []):
                         a._set_download(file)
+
+    @classmethod
+    def batch_prefetcher(cls, attachments, batch_size=FILES_DOWNLOAD_BATCH_SIZE):
+        ordered = [a for a in attachments if isinstance(a, cls)]
+        state = {'pos': 0}
+
+        def ensure(attachment):
+            if not isinstance(attachment, cls) or attachment._url is not None:
+                return
+            pos = state['pos']
+            if pos < len(ordered) and ordered[pos] is attachment:
+                state['pos'] = pos + batch_size
+                cls.prefetch_urls(ordered[pos:pos + batch_size], batch_size)
+
+        return ensure
 
     def _request_download(self):
         rq = record_pb2.FilesGetRequest()
@@ -3104,8 +3124,8 @@ class KeeperV3Attachment(KeeperBaseAttachment):
         if not prefetched:
             self._request_download()
         rs_http = requests.get(self._url, proxies=self.params.rest_context.proxies, stream=True)
-        if rs_http.status_code != self._success_status_code and prefetched:
-            # prefetched signed URL may have expired during a long export
+        if rs_http.status_code == 403 and prefetched:
+            rs_http.close()
             self._request_download()
             rs_http = requests.get(self._url, proxies=self.params.rest_context.proxies, stream=True)
         if rs_http.status_code != self._success_status_code:
