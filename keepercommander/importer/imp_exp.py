@@ -3206,7 +3206,6 @@ def grant_imported_record_shares(params, records):
     if not pending:
         return
     from ..commands.register import ShareRecordCommand
-    from ..error import CommandError
 
     owner_email = (getattr(params, 'user', None) or '').strip().casefold()
 

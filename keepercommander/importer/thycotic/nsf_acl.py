@@ -13,6 +13,14 @@
 from typing import Optional, Dict, Tuple, List, Any, Set
 import logging
 
+ROLE_MATRIX = {
+    ('owner', 'owner'): 'full-manager',
+    ('owner', 'edit'): 'full-manager',
+    ('edit', 'owner'): 'content-manager',
+    ('edit', 'edit'): 'content-manager',
+    ('add secret', 'owner'): 'content-manager',
+    ('view', 'view'): 'viewer',
+}
 
 def _permission_principal_key(perm_row):
     # type: (Dict[str, Any]) -> Optional[Tuple[str, int]]
@@ -87,27 +95,15 @@ def thycotic_roles_to_nsf_role(folder_access_role_name, secret_access_role_name)
     folder_role = folder_access_role_name.lower() if folder_access_role_name else ''
     secret_role = secret_access_role_name.lower()
 
-    # Owner folder + (Owner or Edit) secret → full-manager
-    if folder_role == 'owner' and secret_role in ('owner', 'edit'):
-        return 'full-manager'
+    # Lookup in existing mapping
+    if (folder_role, secret_role) in ROLE_MATRIX:
+        return ROLE_MATRIX.get((folder_role, secret_role))
 
-    # (Edit or Add Secret) folder + (Owner or Edit) secret → content-manager
-    if folder_role in ('edit', 'add secret') and secret_role in ('owner', 'edit'):
-        return 'content-manager'
-
-    # Owner or Edit folder + View secret → viewer (lossy, log warning)
-    if folder_role in ('owner', 'edit') and secret_role == 'view':
-        return 'viewer'
-
-    # View folder + View secret → viewer
-    if folder_role == 'view' and secret_role == 'view':
-        return 'viewer'
-
-    # View folder + Edit/Owner secret → use secret role
+    # Dynamic rule: Secret role wins when View folder has elevated secret access
     if folder_role == 'view' and secret_role in ('edit', 'owner'):
         return thycotic_secret_role_to_nsf_role(secret_access_role_name)
 
-    # No folder access (None or empty) + any secret role → use secret role
+    # Dynamic Rule: no folder access (None or empty) + any secret role → use secret role
     if not folder_role:
         return thycotic_secret_role_to_nsf_role(secret_access_role_name)
 

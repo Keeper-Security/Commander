@@ -1446,9 +1446,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             failed += len(active_users)
             active_users = []
 
-        requests = []
+        reqs = []
         for user in queued_users:
-            requests.append({
+            reqs.append({
                 'command': 'team_queue_user',
                 'team_uid': team_uid,
                 'enterprise_user_id': user.get('enterprise_user_id'),
@@ -1456,14 +1456,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         for user in active_users:
             request = EnterpriseTeamCommand._create_add_user_request(params, team_uid, team_key, user, '')
             if request:
-                requests.append(request)
+                reqs.append(request)
             else:
                 failed += 1
 
         added = 0
         queued = 0
-        for offset in range(0, len(requests), _TEAM_BATCH_SIZE):
-            chunk = requests[offset:offset + _TEAM_BATCH_SIZE]
+        for offset in range(0, len(reqs), _TEAM_BATCH_SIZE):
+            chunk = reqs[offset:offset + _TEAM_BATCH_SIZE]
             try:
                 responses = api.execute_batch(params, chunk) or []
             except Exception as e:
@@ -2189,7 +2189,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         # type: (ThycoticAuth, Dict[int, Dict], Dict[int, Dict], Optional[Dict[int, Dict]], ...) -> Iterable[SharedFolder]
         """Yield NSF SharedFolder objects with NSF role permissions from Delinea folders."""
         from .nsf_acl import thycotic_roles_to_nsf_role, is_lossy_folder_secret_pair
-        from ..importer import replace_email_domain
 
         old_domain = kwargs.get('old_domain')
         new_domain = kwargs.get('new_domain')
