@@ -284,7 +284,14 @@ class LoginV3Flow:
 
                 salt = api.get_correct_salt(resp.salt)
                 salt_bytes = salt.salt
-                salt_iterations = salt.iterations
+                password_type = 'alternate' if is_alternate_login else 'master'
+                known_iterations = utils.get_stored_pbkdf2_iterations(
+                    params.config, params.user, password_type)
+                salt_iterations = utils.validate_pbkdf2_parameters(
+                    salt_bytes, salt.iterations,
+                    minimum_iterations=max(
+                        utils.get_minimum_pbkdf2_iterations(params.enforcements), known_iterations),
+                    purpose='master password')
                 need_account_recovery = False
                 verify_password_response = None
                 should_cancel = False
@@ -369,6 +376,13 @@ class LoginV3Flow:
         params.session_token = session_token
 
         login_type_message = LoginV3Flow.get_data_key(params, resp)
+        password_type = (
+            'master' if resp.encryptedDataKeyType == APIRequest_pb2.BY_PASSWORD
+            else 'alternate' if resp.encryptedDataKeyType == APIRequest_pb2.BY_ALTERNATE
+            else None
+        )
+        if password_type:
+            utils.store_pbkdf2_iterations(params.config, params.user, params.iterations, password_type)
         params.password = None
         params.clone_code = utils.base64_url_encode(resp.cloneCode)
         loader.store_config_properties(params)
@@ -406,6 +420,24 @@ class LoginV3Flow:
                     raise Exception('Account transfer logout')
             else:
                 raise Exception('Please log into the web Vault to update your account settings.')
+
+        minimum_new_iterations = utils.get_minimum_new_pbkdf2_iterations(params.enforcements)
+        if password_type and params.iterations and params.iterations < minimum_new_iterations:
+            password_label = 'alternate Master Password' if password_type == 'alternate' else 'Master Password'
+            warning = (
+                f'This {password_label} uses {params.iterations:,} PBKDF2 iterations; '
+                f'{minimum_new_iterations:,} are recommended.'
+            )
+            if params.batch_mode or not sys.stdin.isatty():
+                logging.warning('%s Change it interactively to upgrade it.', warning)
+            elif password_type != 'master':
+                logging.warning('%s Change the alternate Master Password to upgrade it.', warning)
+            else:
+                print(warning, file=sys.stderr)
+                answer = input('Would you like to upgrade it now? [y/N]: ').strip().lower()
+                if answer in ('y', 'yes'):
+                    LoginV3Flow.change_master_password(params)
+                    params.password = None
 
         if params.license and 'account_type' in params.license:
             if params.license['account_type'] == 2:
@@ -447,11 +479,24 @@ class LoginV3Flow:
                 login_type_message = bcolors.UNDERLINE + "Persistent Login"
 
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_PASSWORD:
+            encryption_params_iterations = utils.get_encryption_params_iterations(resp.encryptedDataKey)
+            salt_start = constants.ENCRYPTION_PARAMS_VERSION_SIZE + constants.ENCRYPTION_PARAMS_ITERATIONS_SIZE
+            salt_end = salt_start + constants.ENCRYPTION_PARAMS_SALT_SIZE
+            utils.validate_pbkdf2_parameters(
+                resp.encryptedDataKey[salt_start:salt_end], encryption_params_iterations,
+                purpose='encrypted data key')
             decrypted_data_key = \
                 utils.decrypt_encryption_params(resp.encryptedDataKey, params.password)
             login_type_message = bcolors.UNDERLINE + "Master Password"
 
         elif resp.encryptedDataKeyType == APIRequest_pb2.BY_ALTERNATE:
+            known_iterations = utils.get_stored_pbkdf2_iterations(
+                params.config, params.user, 'alternate')
+            utils.validate_pbkdf2_parameters(
+                params.salt, params.iterations,
+                minimum_iterations=max(
+                    utils.get_minimum_pbkdf2_iterations(params.enforcements), known_iterations),
+                purpose='alternate master password')
             decryption_key = crypto.derive_keyhash_v2('data_key', params.password, params.salt, params.iterations)
             decrypted_data_key = crypto.decrypt_aes_v2(resp.encryptedDataKey, decryption_key)
             login_type_message = bcolors.UNDERLINE + "Master Password"
@@ -796,6 +841,8 @@ class LoginV3Flow:
             if not answer:
                 return
             recovery_phrase = answer.lower()
+            utils.validate_pbkdf2_parameters(
+                rs.salt, rs.iterations, purpose='account recovery answer')
             auth_hash = crypto.derive_keyhash_v1(recovery_phrase, rs.salt, rs.iterations)
         elif backup_type == APIRequest_pb2.BKT_PASSPHRASE_HASH:
             p = PassphrasePrompt()
@@ -1082,8 +1129,12 @@ class LoginV3API:
 
     @staticmethod
     def change_master_password(params, password, iterations=0):  # type: (KeeperParams, str, int) -> None
-        iterations = max(iterations, params.iterations, constants.PBKDF2_ITERATIONS)
         auth_salt = os.urandom(16)
+        minimum_iterations = utils.get_minimum_new_pbkdf2_iterations(
+            params.enforcements, iterations)
+        iterations = max(iterations, params.iterations, minimum_iterations)
+        iterations = utils.validate_pbkdf2_parameters(
+            auth_salt, iterations, minimum_iterations=minimum_iterations, purpose='new master password')
         auth_verifier = utils.create_auth_verifier(password, auth_salt, iterations)
         data_salt = os.urandom(16)
         encryption_params = utils.create_encryption_params(password, data_salt, iterations, params.data_key)
@@ -1096,6 +1147,8 @@ class LoginV3API:
         params.password = password
         params.salt = auth_salt
         params.iterations = iterations
+        utils.store_pbkdf2_iterations(params.config, params.user, iterations, 'master')
+        loader.store_config_properties(params)
 
     @staticmethod
     def register_encrypted_data_key_for_device(params: KeeperParams):
