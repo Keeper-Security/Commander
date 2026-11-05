@@ -1721,9 +1721,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             print(f'Loaded {len(totp_codes)} code(s)', flush=True)
 
         self._send_keep_alive_if_needed(params)
-        use_nsf = kwargs.get('use_nsf') or False
-        skip_permissions = not use_nsf
-        folders = ThycoticImporter.get_folders(auth, skip_permissions=skip_permissions)
         filter_folder = kwargs.get('filter_folder')
         constructed_folders = ThycoticImporter._load_folders(auth)
         picked_folder_ids = None
@@ -1737,6 +1734,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         if 1 in constructed_folders:
             del constructed_folders[1]
         folders = constructed_folders
+
+        # Fetch folder permissions if needed for NSF
+        use_nsf = kwargs.get('use_nsf') or False
+        if use_nsf:
+            folders_with_perms = ThycoticImporter.get_folders(auth, skip_permissions=False)
+            for folder_id, folder_data in folders_with_perms.items():
+                if folder_id in folders:
+                    folders[folder_id].update(folder_data)
 
         # Determine which folders to query
         matched_folder_ids = None
