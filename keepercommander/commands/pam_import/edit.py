@@ -432,6 +432,7 @@ class PAMProjectImportCommand(Command):
                     "name": name_,
                     "manage_users": True if str(item.get("manage_users", False)).upper() == "TRUE" else False,
                     "manage_records": True if str(item.get("manage_records", False)).upper() == "TRUE" else False,
+                    "role": item.get("role", None),
                 })
             all_user_perms.extend(uperm)
             safe_folder_records.append({
