@@ -348,7 +348,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
             elif isinstance(x, SharedFolder):
                 sfs.append(x)
 
-        imp_exp.KeeperV3Attachment.prefetch_urls(
+        ensure_url = imp_exp.KeeperV3Attachment.batch_prefetcher(
             a for r in rs if r.attachments for a in r.attachments if a.size < self.max_size)
 
         with create_database(filename, password=password, keyfile=keyfile) as kdb:
@@ -456,6 +456,7 @@ class KeepassExporter(BaseExporter, XmlUtils):
                     if r.attachments:
                         for atta in r.attachments:
                             if atta.size < self.max_size:
+                                ensure_url(atta)
                                 with atta.open() as ina, io.BytesIO() as outa:
                                     buffer = bytearray(10240)
                                     view = memoryview(buffer)
