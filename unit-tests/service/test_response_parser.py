@@ -289,3 +289,46 @@ URL: https://example.com"""
     def test_parse_pam_project_export_non_json(self):
         result = KeeperResponseParser.parse_response('pam project export -p UID', 'not json')
         self.assertEqual(result['status'], 'error')
+
+    def test_pam_project_extend_same_folder_advisory_keeps_success_status(self):
+        output = (
+            '0 existing folders, 0 new folders created\n'
+            '0 existing records, 2 new records to be created\n'
+            'Warning: Using the same folder "test_PAM_extend" for both resources and users '
+            '(best practice: separate).\n'
+            'Started importing data...\n'
+            '0/1\n'
+            '1/1\n'
+            '0/1\n'
+            '1/1'
+        )
+
+        for command in (
+            'pam project extend --config=CONFIG --filename=FILEDATA',
+            'pam p e --config=CONFIG --filename=FILEDATA',
+        ):
+            with self.subTest(command=command):
+                result = KeeperResponseParser.parse_response(command, output)
+
+                self.assertEqual(result['status'], 'success')
+                self.assertEqual(result['command'], 'pam project extend')
+                self.assertNotIn('status_code', result)
+                self.assertIn(
+                    'Warning: Using the same folder "test_PAM_extend" for both resources and users '
+                    '(best practice: separate).',
+                    result['message'],
+                )
+
+    def test_pam_project_extend_other_warnings_remain_warnings(self):
+        output = (
+            '0 existing folders, 0 new folders created\n'
+            'Warning: Import validation reported a partial result.'
+        )
+
+        result = KeeperResponseParser.parse_response(
+            'pam project extend --config=CONFIG --filename=FILEDATA',
+            output,
+        )
+
+        self.assertEqual(result['status'], 'warning')
+        self.assertEqual(result['status_code'], 400)
