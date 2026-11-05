@@ -103,19 +103,11 @@ class ConnectionBase:
 
     @staticmethod
     def get_router_host(server_hostname: str):
-        # Defensive: accept URL-formatted inputs (e.g. "https://keepersecurity.com")
-        # and extract the bare hostname before the GovCloud subdomain check.
-        if server_hostname and '://' in server_hostname:
-            server_hostname = server_hostname.split('://', 1)[1].split('/', 1)[0]
-
-        # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
-        # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
-        if server_hostname == 'govcloud.keepersecurity.us':
-            configured_host = 'connect.keepersecurity.us'
-        else:
-            configured_host = f'connect.{server_hostname}'
-
-        return os.environ.get("ROUTER_HOST", configured_host)
+        # ROUTER_HOST is the KSM-side override. Otherwise the shared Commander helper decides.
+        from ...constants import get_router_host
+        if os.environ.get("ROUTER_HOST") and not os.environ.get("KROUTER_URL"):
+            return os.environ["ROUTER_HOST"]
+        return get_router_host(server_hostname)
 
     def rest_call_to_router(self,
                             http_method: str,

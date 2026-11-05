@@ -1,4 +1,5 @@
 import enum
+import logging
 import os
 import sys
 from typing import List, Tuple, Optional
@@ -502,12 +503,76 @@ def get_keeper_host_for_services(server_hostname):
         return 'keepersecurity.us'
     return server_hostname
 
-def get_router_host(server_hostname):
-    krouter_url = os.getenv('KROUTER_URL')
-    if krouter_url:
-        return krouter_url
+# Per-server Router host overrides, loaded from the "router_hosts" property of config.json:
+# {"<vault host>": "<router host[:port]>" or "https://<router host[:port]>"}.
+_configured_router_hosts = {}   # type: dict
 
+
+def _router_server_key(server_hostname):
+    host = get_keeper_server_hostname(server_hostname)
+    return host.lower() if isinstance(host, str) else host
+
+
+def normalize_router_host(value):
+    """Return the Router "host[:port]" for an override. The override is a bare host[:port]
+    or an https URL without a path. Any other scheme, a path, a query, or credentials raise ValueError."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError('Router host override is empty')
+    value = value.strip()
+    if '://' in value:
+        parsed = urlparse(value)
+        if parsed.scheme.lower() != 'https':
+            raise ValueError(f'Router host override "{value}" must use https')
+    else:
+        parsed = urlparse('//' + value)
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ValueError(f'Router host override "{value}" has an invalid port')
+    if not parsed.hostname:
+        raise ValueError(f'Router host override "{value}" has no host')
+    if parsed.path not in ('', '/') or parsed.params or parsed.query or parsed.fragment \
+            or parsed.username is not None or parsed.password is not None:
+        raise ValueError(f'Router host override "{value}" must be a host[:port] or an https URL without a path')
+    host = parsed.hostname.lower()
+    if ':' in host:
+        host = f'[{host}]'
+    return f'{host}:{port}' if port else host
+
+
+def load_router_hosts(config):   # type: (dict) -> None
+    """Load the "router_hosts" property of config.json. An invalid entry is ignored with a warning."""
+    clear_router_hosts()
+    entries = config.get('router_hosts') if isinstance(config, dict) else None
+    if not isinstance(entries, dict):
+        return
+    for server, router_host in entries.items():
+        try:
+            _configured_router_hosts[_router_server_key(server)] = normalize_router_host(router_host)
+        except ValueError as e:
+            logging.warning('config.json: router host for "%s" is ignored: %s', server, e)
+
+
+def clear_router_hosts():
+    _configured_router_hosts.clear()
+
+
+def get_router_host(server_hostname):
+    """The only source of the Router "host[:port]".
+    Order: KROUTER_URL environment variable, "router_hosts" in config.json, then connect.<vault host>."""
+    override = os.getenv('KROUTER_URL')
+    if override:
+        return normalize_router_host(override)
+    configured = _configured_router_hosts.get(_router_server_key(server_hostname))
+    if configured:
+        return configured
     return f'connect.{get_keeper_host_for_services(server_hostname)}'
+
+
+def get_router_base(server_hostname, secure=True):
+    """The only source of the Router base "scheme://host[:port]". The scheme is https.
+    Only callers with an explicit opt-out (USE_SSL=false) pass secure=False."""
+    return f"{'https' if secure else 'http'}://{get_router_host(server_hostname)}"
 
 
 def get_relay_host(server_hostname):

@@ -809,8 +809,7 @@ def execute_router_rest(params: KeeperParams, endpoint: str, payload: Optional[b
     else:
         from .constants import get_router_host
         up = urlparse(params.rest_context.server_base)
-        router_host = get_router_host(up.hostname)
-        url_comp = ('https', router_host, f'api/user/{endpoint}', None, None, None)
+        url_comp = ('https', get_router_host(up.hostname), f'api/user/{endpoint}', None, None, None)
     url = urlunparse(url_comp)
 
     if payload is not None:

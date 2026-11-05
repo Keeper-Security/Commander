@@ -68,20 +68,13 @@ class Connection(ConnectionBase):
     @property
     def dag_server_url(self) -> str:
 
-        # Allow override of the URL. If not set, get the hostname from the config.
-        hostname = os.environ.get("KROUTER_URL", self.hostname)
-        if hostname.startswith('ws') or hostname.startswith('http'):
-            return hostname
-
+        # KROUTER_URL and the "router_hosts" config are applied by the shared helper.
         use_ssl = value_to_boolean(os.environ.get("USE_SSL", True))
-        if self.is_ws:
-            prot_pref = 'ws'
-        else:
-            prot_pref = 'http'
+        prot_pref = 'ws' if self.is_ws else 'http'
         if use_ssl is True:
             prot_pref += "s"
 
-        return f'{prot_pref}://{hostname}'
+        return f'{prot_pref}://{self.hostname}'
 
     # deprecated
     def get_keeper_tokens(self):
