@@ -73,6 +73,8 @@ class KeeperResponseParser:
         """
         if KeeperResponseParser._is_pam_project_export(command):
             return '_parse_pam_project_export_command'
+        if KeeperResponseParser._is_pam_project_extend(command):
+            return '_parse_pam_project_extend_command'
 
         # Check for JSON format first (highest priority)
         if '--format=json' in command or '--format json' in command:
@@ -157,7 +159,8 @@ class KeeperResponseParser:
         # Call the parser method with appropriate arguments
         if parser_method_name in ['_parse_generate_command', '_parse_json_format_command',
                                 '_parse_pam_project_import_command', '_parse_pam_project_export_command',
-                                '_parse_enterprise_push_command', '_parse_epm_policy_add_command']:
+                                '_parse_pam_project_extend_command', '_parse_enterprise_push_command',
+                                '_parse_epm_policy_add_command']:
             return parser_method(command, response_str)
         elif parser_method_name in ['_parse_nsf_mkdir_command', '_parse_nsf_rmdir_command', '_parse_nsf_rndir_command']:
             return parser_method(response_str, parser_method_name.replace('_parse_', '').replace('_command', ''))
@@ -889,6 +892,39 @@ class KeeperResponseParser:
                     result["data"]["documentation_url"] = "https://docs.keeper.io" + result["data"]["documentation_url"]
                     break
         
+        return result
+
+    @staticmethod
+    def _is_pam_project_extend(command: str) -> bool:
+        """Whether command is 'pam project extend' (alias-aware)."""
+        from .verified_command import Verifycommand
+        try:
+            tokens = Verifycommand.tokenize_service_command(command)
+        except ValueError:
+            return False
+        return Verifycommand._pam_project_verb(tokens) == 'extend'
+
+    @staticmethod
+    def _parse_pam_project_extend_command(command: str, response: str) -> Dict[str, Any]:
+        """Keep the shared-folder best-practice advisory from failing successful extends."""
+        same_folder_advisory = re.compile(
+            r'(?im)^([ \t]*)warning:[ \t]*using the same folder .+ for both resources and users '
+            r'\(best practice:[ \t]*separate\)\.[ \t]*$'
+        )
+        classification_response = same_folder_advisory.sub(
+            lambda match: match.group(1) + 'Notice:' + match.group(0).lstrip()[len('Warning:'):],
+            response,
+        )
+        result = KeeperResponseParser._parse_logging_based_command(command, classification_response)
+
+        # Classification uses a notice in place of this one advisory, but preserve
+        # the command's original output for callers and diagnostics.
+        formatted_response = KeeperResponseParser._format_multiline_message(response.strip())
+        if 'error' in result:
+            result['error'] = formatted_response
+        elif 'message' in result:
+            result['message'] = formatted_response
+        result['command'] = 'pam project extend'
         return result
     
     @staticmethod
