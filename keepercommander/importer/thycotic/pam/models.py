@@ -124,6 +124,7 @@ class SecretGrantTarget:
     record_title: str
     folder_name: str
     grants: List[AccessGrant] = field(default_factory=list)
+    resource_title: str = ''
 
 
 @dataclass(frozen=True)
