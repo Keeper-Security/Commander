@@ -461,6 +461,50 @@ class PamAttachmentObject():
     # def to_json(self): pass  # File upload will create the JSON format
 
 
+def quartz_cron_to_keeper_schedule(cron):
+    """Six-field Quartz cron to a Keeper ``DAILY`` / ``WEEKLY`` / ``MONTHLY_BY_DAY`` schedule, else ``None``."""
+    parts = str(cron or '').split()
+    if len(parts) != 6:
+        return None
+    _second, minute, hour, dom, month, dow = parts
+    if not minute.isdigit() or not hour.isdigit():
+        return None
+    if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+        return None
+    utc_time = f'{int(hour):02d}:{int(minute):02d}'
+    weekdays = {
+        'SUN': 'SUNDAY', 'MON': 'MONDAY', 'TUE': 'TUESDAY', 'WED': 'WEDNESDAY',
+        'THU': 'THURSDAY', 'FRI': 'FRIDAY', 'SAT': 'SATURDAY',
+    }
+
+    def _step(field):
+        if field == '*':
+            return 1
+        if not field.startswith('*/') or not field[2:].isdigit():
+            return None
+        interval = int(field[2:])
+        return interval if interval > 0 else None
+
+    if month == '*' and dow in ('?', '*'):
+        interval = _step(dom)
+        if interval:
+            return {'type': 'DAILY', 'utcTime': utc_time, 'intervalCount': interval, 'tz': 'Etc/UTC'}
+    if dom in ('?', '*') and month == '*' and dow in weekdays:
+        return {
+            'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': weekdays[dow],
+            'intervalCount': 1, 'tz': 'Etc/UTC',
+        }
+    if dow in ('?', '*') and dom.isdigit():
+        interval = _step(month)
+        day = int(dom)
+        if interval and 1 <= day <= 31:
+            return {
+                'type': 'MONTHLY_BY_DAY', 'utcTime': utc_time, 'monthDay': day,
+                'intervalCount': interval, 'tz': 'Etc/UTC',
+            }
+    return None
+
+
 class PamRotationScheduleObject():
     def __init__(self):
         self.type: str = ""  # on-demand|CRON
