@@ -3,8 +3,8 @@ from unittest import mock
 
 from keepercommander import error, loginv3
 
-REFUSAL = ('The server tried to send you to another host. Keeper did not follow it. '
-           'Contact your administrator.')
+REFUSAL = ("Your organization's Keeper server asked this app to use another server. "
+           'The app does not follow it. Contact your administrator.')
 REDIRECT = {'error': 'region_redirect', 'message': 'redirect', 'region_host': 'evil.example'}
 FUNCTIONS = ('startLoginMessage', 'resume_login')
 

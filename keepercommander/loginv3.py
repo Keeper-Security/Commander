@@ -34,8 +34,8 @@ from .humps import decamelize
 from .params import KeeperParams
 from .proto import APIRequest_pb2, AccountSummary_pb2, breachwatch_pb2, ssocloud_pb2, enterprise_pb2
 
-SERVER_REDIRECT_REFUSED_MESSAGE = ('The server tried to send you to another host. Keeper did not follow it. '
-                                   'Contact your administrator.')
+SERVER_REDIRECT_REFUSED_MESSAGE = ("Your organization's Keeper server asked this app to use another server. "
+                                   'The app does not follow it. Contact your administrator.')
 
 permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Console -> Admin -> " \
                         "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
