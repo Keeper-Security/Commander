@@ -943,6 +943,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 supported_columns = SUPPORTED_ROLE_COLUMNS
                 if len(columns) == 0:
                     columns.update(('default_role', 'admin', 'node', 'user_count'))
+                    if kwargs.get('format') == 'json' and kwargs.get('verbose'):
+                        columns.add('enforcements')
                 else:
                     wc = columns.difference(supported_columns, BASE_ROLE_COLUMNS)
                     if len(wc) > 0:
