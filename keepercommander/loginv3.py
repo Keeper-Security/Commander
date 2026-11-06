@@ -34,6 +34,9 @@ from .humps import decamelize
 from .params import KeeperParams
 from .proto import APIRequest_pb2, AccountSummary_pb2, breachwatch_pb2, ssocloud_pb2, enterprise_pb2
 
+SERVER_REDIRECT_REFUSED_MESSAGE = ('The server tried to send you to another host. Keeper did not follow it. '
+                                   'Contact your administrator.')
+
 permissions_error_msg = "Grant Commander SDK permissions to access Keeper by navigating to Admin Console -> Admin -> " \
                         "Roles -> [Select User's Role] -> Enforcement Policies -> Platform Restrictions -> Click on " \
                         "'Enable' check box next to Commander SDK.\nAlso note that if user has more than two roles " \
@@ -915,6 +918,13 @@ class LoginV3API:
         api.communicate_rest(params, rq, 'authentication/validate_device_verification_code')
 
     @staticmethod
+    def refuse_redirect_on_custom_host(params):
+        # type: (KeeperParams) -> None
+        """A custom (non-Keeper-cloud) host never sends the client to another host."""
+        if not rest_api.is_keeper_cloud_host(params.server):
+            raise KeeperApiError('server_redirect_refused', SERVER_REDIRECT_REFUSED_MESSAGE)
+
+    @staticmethod
     def resume_login(params: KeeperParams, encryptedLoginToken, encryptedDeviceToken, cloneCode = None, loginType = 'NORMAL', loginMethod='EXISTING_ACCOUNT'):
         rq = APIRequest_pb2.StartLoginRequest()
         rq.clientVersion = rest_api.CLIENT_VERSION
@@ -939,6 +949,7 @@ class LoginV3API:
         elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
+                    LoginV3API.refuse_redirect_on_custom_host(params)
                     params.server = rs['region_host']
                     print('Redirecting to region: %s' % params.server, file=sys.stderr)
                     LoginV3API.register_device_in_region(params, encryptedDeviceToken)
@@ -981,6 +992,7 @@ class LoginV3API:
         elif type(rs) is dict:
             if 'error' in rs and 'message' in rs:
                 if rs['error'] == 'region_redirect':
+                    LoginV3API.refuse_redirect_on_custom_host(params)
                     params.server = rs['region_host']
                     print('Redirecting to region: %s' % params.server, file=sys.stderr)
                     LoginV3API.register_device_in_region(params, encryptedDeviceToken)
