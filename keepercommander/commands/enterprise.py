@@ -2508,11 +2508,13 @@ class EnterpriseRoleCommand(EnterpriseCommand):
             add_team, remove_team = kwargs.get('add_team'), kwargs.get('remove_team')
             add_user, remove_user = kwargs.get('add_user'), kwargs.get('remove_user')
 
+            is_delete_or_copy = bool(kwargs.get('delete') or kwargs.get('copy') or kwargs.get('clone'))
+
             if kwargs.get('delete'):
                 for role in matched_roles:
                     request_batch.append({ "command": "role_delete", "role_id": role['role_id'] })
 
-            elif add_team or remove_team or add_user or remove_user:
+            if not is_delete_or_copy and (add_team or remove_team or add_user or remove_user):
                 if add_team or remove_team:
                     team_msgs, blocked_admin = self.change_role_teams(params, matched_roles, add_team, remove_team)
                     non_batch_update_msgs += team_msgs
@@ -2524,7 +2526,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                         params, matched_roles, add_user, remove_user, kwargs.get('force')
                     )
 
-            elif kwargs.get('enforcements'):
+            if not is_delete_or_copy and kwargs.get('enforcements'):
                 skip_display = True
                 file_prefix = '$FILE='
                 for enforcement in kwargs['enforcements']:
@@ -2803,7 +2805,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             else:
                                 logging.warning('Enforcement \"%s\" is not set for role %d. Skipping', key, role_id)
 
-            elif kwargs.get('add_admin') or kwargs.get('remove_admin'):
+            if not is_delete_or_copy and (kwargs.get('add_admin') or kwargs.get('remove_admin')):
                 skip_display = True
                 node_lookup = {}
                 if 'nodes' in params.enterprise:
@@ -2838,24 +2840,39 @@ class EnterpriseRoleCommand(EnterpriseCommand):
 
                 for role in matched_roles:
                     role_id = role['role_id']
-                    for node_id in node_changes:
-                        is_add, node_name = node_changes[node_id]
-                        is_update = is_add and self.is_node_managed_by_role(params, node_id, role_id)
+                    for managed_node_id in node_changes:
+                        is_add, node_name = node_changes[managed_node_id]
+                        is_update = is_add and self.is_node_managed_by_role(params, managed_node_id, role_id)
                         command = 'role_managed_node_remove' if not is_add \
                             else 'role_managed_node_update' if is_update \
                             else 'role_managed_node_add'
                         rq = {
                             "command": command,
                             "role_id": role_id,
-                            "managed_node_id": node_id
+                            "managed_node_id": managed_node_id
                         }
                         if is_add:
                             rq['cascade_node_management'] = (kwargs.get('cascade') == 'on') or False
                             if not is_update:
                                 rq['tree_keys'] = []
-                                if 'role_users' in params.enterprise:
-                                    for user_id in [x['enterprise_user_id'] for x in params.enterprise['role_users'] if x['role_id'] == role_id]:
-                                        email = next((x['username'] for x in params.enterprise['users'] if x['enterprise_user_id'] == user_id), None)
+                                role_user_ids = {
+                                    x['enterprise_user_id']
+                                    for x in params.enterprise.get('role_users', [])
+                                    if x['role_id'] == role_id
+                                }
+                                role_user_ids.update(
+                                    x['enterprise_user_id']
+                                    for x in request_batch
+                                    if x.get('command') == 'role_user_add' and x.get('role_id') == role_id
+                                )
+                                role_user_ids.difference_update(
+                                    x['enterprise_user_id']
+                                    for x in request_batch
+                                    if x.get('command') == 'role_user_remove' and x.get('role_id') == role_id
+                                )
+                                if role_user_ids:
+                                    for user_id in sorted(role_user_ids):
+                                        email = next((x['username'] for x in params.enterprise.get('users', []) if x['enterprise_user_id'] == user_id), None)
                                         if email:
                                             api.load_user_public_keys(params, [email], False)
                                             public_keys = params.key_cache.get(email)
@@ -2881,7 +2898,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                                     continue
                         request_batch.append(rq)
 
-            elif kwargs.get('add_privilege') or kwargs.get('remove_privilege'):
+            if not is_delete_or_copy and (kwargs.get('add_privilege') or kwargs.get('remove_privilege')):
                 if len(matched_roles) != 1:
                     logging.warning('Add/Remove managed node privilege command expects exactly one role.')
                     return
@@ -2892,6 +2909,11 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 role_id = matched_roles[0]['role_id']
                 node = next((x for x in params.enterprise.get('managed_nodes', [])
                              if x['role_id'] == role_id and x['managed_node_id'] == node_id), None)
+                if not node:
+                    node = next((x for x in request_batch
+                                 if x.get('command') == 'role_managed_node_add'
+                                 and x.get('role_id') == role_id
+                                 and x.get('managed_node_id') == node_id), None)
                 if not node:
                     logging.warning('Role "%d" does not manage node "%d"', role_id, node_id)
                     return
@@ -2991,7 +3013,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                                                         })
                             request_batch.append(rq)
 
-            elif kwargs.get('copy') or kwargs.get('clone'):
+            if not kwargs.get('delete') and (kwargs.get('copy') or kwargs.get('clone')):
                 role_name = kwargs.get('name')
                 role = matched_roles[0]
                 if not role_name:
@@ -3062,7 +3084,9 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                             }
                             request_batch.append(rq)
 
-            elif node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name'):
+            has_priv_change = bool(kwargs.get('add_privilege') or kwargs.get('remove_privilege'))
+            role_node_id = node_id if not has_priv_change else None
+            if not is_delete_or_copy and (role_node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name')):
                 if kwargs.get('name') and len(matched_roles) > 1:
                     logging.warning('Cannot assign the same name to %s roles', len(matched_roles))
                     kwargs['name'] = None
@@ -3070,7 +3094,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                 if kwargs.get('name') and not is_valid_name_length(kwargs.get('name'), 'Role name', 'enterprise-role'):
                     kwargs['name'] = None
 
-                if not (node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name')):
+                if not (role_node_id or kwargs.get('visible_below') or kwargs.get('new_user') or kwargs.get('name')):
                     return
 
                 for role in matched_roles:
@@ -3083,7 +3107,7 @@ class EnterpriseRoleCommand(EnterpriseCommand):
                     rq = {
                         "command": "role_update",
                         "role_id": role['role_id'],
-                        "node_id": node_id or role['node_id'],
+                        "node_id": role_node_id or role['node_id'],
                         "encrypted_data": encrypted_data
                     }
                     if kwargs.get('visible_below'):
