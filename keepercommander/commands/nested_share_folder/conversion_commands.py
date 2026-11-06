@@ -24,7 +24,8 @@ from .helpers import (
     ROOT_FOLDER_UID,
     _folder_depth,
     command_error_handler,
-), resolve_record_uid
+    resolve_record_uid,
+)
 from .parsers import nested_share_convert_parser, nested_share_folder_convert_parser
 
 _STATUS_MESSAGES = {
