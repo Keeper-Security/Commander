@@ -16,6 +16,7 @@ import logging
 ROLE_MATRIX = {
     ('owner', 'owner'): 'full-manager',
     ('owner', 'edit'): 'full-manager',
+     ('owner', 'view'): 'viewer',
     ('edit', 'owner'): 'content-manager',
     ('edit', 'edit'): 'content-manager',
     ('add secret', 'owner'): 'content-manager',
