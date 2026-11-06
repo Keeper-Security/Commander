@@ -102,20 +102,14 @@ class ConnectionBase:
             raise Exception(f"Could not parse router response: {err}")
 
     @staticmethod
-    def get_router_host(server_hostname: str):
-        # Defensive: accept URL-formatted inputs (e.g. "https://keepersecurity.com")
-        # and extract the bare hostname before the GovCloud subdomain check.
-        if server_hostname and '://' in server_hostname:
-            server_hostname = server_hostname.split('://', 1)[1].split('/', 1)[0]
-
-        # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
-        # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
-        if server_hostname == 'govcloud.keepersecurity.us':
-            configured_host = 'connect.keepersecurity.us'
-        else:
-            configured_host = f'connect.{server_hostname}'
-
-        return os.environ.get("ROUTER_HOST", configured_host)
+    def get_router_target(server_hostname: str, config: Optional[dict] = None):
+        """Return the Router location (see constants.get_router_target).
+        Order: KROUTER_URL, ROUTER_HOST, "router_hosts" in config, then connect.<vault host>."""
+        from ...constants import get_router_target, parse_router_override
+        router_host = os.environ.get("ROUTER_HOST")
+        if router_host and not os.environ.get("KROUTER_URL"):
+            return parse_router_override(router_host, "ROUTER_HOST")
+        return get_router_target(server_hostname, config)
 
     def rest_call_to_router(self,
                             http_method: str,

@@ -1,9 +1,15 @@
 import enum
+import ipaddress
+import logging
 import os
+import re
 import sys
 from typing import List, Tuple, Optional
 from datetime import timedelta
+from collections import namedtuple
 from urllib.parse import urlparse
+
+from .error import CommandError
 
 ENTERPRISE_FILE_PLANS = [
     (-1, 'NO_STORAGE', 'NO STORAGE'),
@@ -502,12 +508,139 @@ def get_keeper_host_for_services(server_hostname):
         return 'keepersecurity.us'
     return server_hostname
 
-def get_router_host(server_hostname):
-    krouter_url = os.getenv('KROUTER_URL')
-    if krouter_url:
-        return krouter_url
+class RouterHostError(CommandError, ValueError):
+    """An invalid Router host override. The message names the source of the value."""
+    def __init__(self, source, message):
+        super().__init__('', f'Invalid {source}: {message}')
+        self.source = source
 
-    return f'connect.{get_keeper_host_for_services(server_hostname)}'
+
+# The Router location: "host" is host[:port], "path" is '' or '/prefix', "secure" is True (https/wss),
+# False (http/ws), or None when the value gave no scheme.
+RouterTarget = namedtuple('RouterTarget', ['host', 'path', 'secure'])
+
+_ROUTER_SECURE_SCHEMES = {'https': True, 'wss': True, 'http': False, 'ws': False}
+
+
+def _router_server_key(server_hostname):
+    host = get_keeper_server_hostname(server_hostname)
+    return host.lower() if isinstance(host, str) else host
+
+
+# RFC 1123 labels, plus '_' for compatibility with container service names
+_DNS_LABEL = re.compile(r'^[a-z0-9]([a-z0-9_-]{0,61}[a-z0-9])?$', re.IGNORECASE)
+
+
+def _is_valid_router_hostname(hostname):
+    """True for an IPv4 or IPv6 address, or for a DNS name with RFC 1123 labels."""
+    if ':' in hostname:
+        try:
+            ipaddress.IPv6Address(hostname.split('%')[0])
+            return True
+        except ValueError:
+            return False
+    try:
+        ipaddress.IPv4Address(hostname)
+        return True
+    except ValueError:
+        pass
+    labels = (hostname[:-1] if hostname.endswith('.') else hostname).split('.')
+    return len(hostname) <= 253 and all(_DNS_LABEL.match(x) for x in labels) and not labels[-1].isdigit()
+
+
+def parse_router_override(value, source, allow_url_schemes=False):
+    """Parse a Router override into a RouterTarget. Raise RouterHostError (naming `source`) if it is invalid.
+    By default the value is a bare host[:port] or an https URL without a path (used for "router_hosts").
+    With allow_url_schemes the value can also use http, ws, or wss and can have a path prefix
+    (used for the KROUTER_URL environment variable, which accepted these shapes before)."""
+    def fail(reason):
+        raise RouterHostError(source, f'"{value}" {reason}')
+
+    if not isinstance(value, str) or not value.strip():
+        raise RouterHostError(source, 'the value is empty or is not a string')
+    value = value.strip()
+    secure = None
+    if '://' in value:
+        parsed = urlparse(value)
+        scheme = parsed.scheme.lower()
+        if allow_url_schemes:
+            if scheme not in _ROUTER_SECURE_SCHEMES:
+                fail('must use https, http, wss, or ws')
+        elif scheme != 'https':
+            fail('must use https')
+        secure = _ROUTER_SECURE_SCHEMES[scheme]
+        if secure is False:
+            logging.warning('%s uses the plaintext scheme "%s". Use https or wss.', source, scheme)
+    else:
+        try:
+            parsed = urlparse('//' + value)
+        except ValueError:
+            fail('is not a valid host')
+    try:
+        port = parsed.port
+    except ValueError:
+        fail('has an invalid port')
+    if port == 0:
+        fail('has an invalid port')
+    if not parsed.hostname:
+        fail('has no host')
+    if not _is_valid_router_hostname(parsed.hostname):
+        fail('has an invalid host. Use a DNS name, an IPv4 address, or a bracketed IPv6 address')
+    if parsed.params or parsed.query or parsed.fragment or parsed.username is not None \
+            or parsed.password is not None:
+        fail('must not have credentials, parameters, a query, or a fragment')
+    path = parsed.path.rstrip('/')
+    if path and not allow_url_schemes:
+        fail('must be a host[:port] or an https URL without a path')
+    host = parsed.hostname.lower()
+    if ':' in host:
+        host = f'[{host}]'
+    return RouterTarget(f'{host}:{port}' if port is not None else host, path, secure)
+
+
+def _configured_router_target(server_hostname, config):
+    """The "router_hosts" entry of config.json for this server, or None. Every entry is validated,
+    so a wrong entry is an error and never a silent fall back to the default host."""
+    entries = config.get('router_hosts') if isinstance(config, dict) else None
+    if entries is None:
+        return None
+    if not isinstance(entries, dict):
+        raise RouterHostError('router_hosts', 'must be an object that maps a server to a Router host')
+    key = _router_server_key(server_hostname)
+    found = None
+    for server, router_host in entries.items():
+        target = parse_router_override(router_host, f'router_hosts[{server}]')
+        if _router_server_key(server) == key:
+            found = target
+    return found
+
+
+def get_router_target(server_hostname, config=None):   # type: (str, Optional[dict]) -> RouterTarget
+    """The only source of the Router location. Order of precedence:
+    1. KROUTER_URL environment variable (host[:port], or an http, https, ws, or wss URL with an optional path),
+    2. "router_hosts" in the config (params.config) of Commander, a host[:port] or an https URL per server,
+    3. connect.<vault host>.
+    The keeper_dag connection classes also read ROUTER_HOST between 1 and 2.
+    Raise RouterHostError if an override is invalid."""
+    override = os.getenv('KROUTER_URL')
+    if override:
+        return parse_router_override(override, 'KROUTER_URL', allow_url_schemes=True)
+    configured = _configured_router_target(server_hostname, config)
+    if configured:
+        return configured
+    return RouterTarget(f'connect.{get_keeper_host_for_services(server_hostname)}', '', None)
+
+
+def get_router_host(server_hostname, config=None):
+    """The Router "host[:port]" without a scheme or a path. See get_router_target."""
+    return get_router_target(server_hostname, config).host
+
+
+def get_router_base(server_hostname, config=None):
+    """The Router base URL "scheme://host[:port][/path]" for HTTP calls. The scheme is https
+    unless KROUTER_URL gave a plaintext scheme."""
+    target = get_router_target(server_hostname, config)
+    return f"{'http' if target.secure is False else 'https'}://{target.host}{target.path}"
 
 
 def get_relay_host(server_hostname):
