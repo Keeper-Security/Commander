@@ -79,10 +79,7 @@ class DelineaPamClient:
         return self._all_folders
 
     def folders(self) -> Dict[int, dict]:
-        """Folder id to ``{id, folderName, folderPath, inheritPermissions, parentFolderId}``.
-
-        The personal-folders root (id 1) is omitted, matching the rest of the importer.
-        """
+        """Folder id to ``{id, folderName, folderPath, inheritPermissions, parentFolderId}``, without id 1."""
         if self._folders is None:
             shared = dict(self._folder_index())
             shared.pop(1, None)
@@ -117,12 +114,7 @@ class DelineaPamClient:
         return ''
 
     def secrets_lookup(self, folder_id: int) -> List[dict]:
-        """``GET /v1/secrets/lookup?filter.folderId={folder_id}``.
-
-        Returns ``{'id', 'name'}`` for each secret directly in that folder.
-        Subfolders are not included, so a later pass over every folder does not
-        list the same secret twice.
-        """
+        """``{'id', 'name'}`` for each secret directly in ``folder_id`` (no subfolders)."""
         found: List[dict] = []
         seen = set()
         for row in self._list('secrets_lookup', folder_id):
@@ -133,14 +125,7 @@ class DelineaPamClient:
         return found
 
     def folder_secrets(self) -> List[dict]:
-        """Load every folder, then the secrets in each one.
-
-        1. ``GET /v1/folders``
-        2. For each folder, ``GET /v1/secrets/lookup?filter.folderId={folderId}``
-
-        Each result is the folder (``id``, ``folderName``, ``folderPath``) plus
-        ``secrets``, a list of ``{'id', 'name'}``.
-        """
+        """Every folder (``id``, ``folderName``, ``folderPath``) with its ``secrets`` as ``{'id', 'name'}``."""
         folders = self._folder_index()
         logging.info('Loaded %d folders from Secret Server', len(folders))
         results: List[dict] = []
@@ -193,11 +178,7 @@ class DelineaPamClient:
 
     @classmethod
     def extract_secret_detail(cls, secret: dict, secret_id: int, name: str = '') -> dict:
-        """Fields read from ``GET /v1/secrets/{id}`` for PAM mapping.
-
-        ``secretPolicyId`` is left as ``-1`` when Secret Server reports no policy.
-        ``items`` is the credential field list (username, password, and the rest).
-        """
+        """PAM fields from ``GET /v1/secrets/{id}``; no policy is ``UNASSIGNED_POLICY_ID``."""
         policy_id = secret.get('secretPolicyId', UNASSIGNED_POLICY_ID)
         if policy_id is None:
             policy_id = UNASSIGNED_POLICY_ID
@@ -261,15 +242,7 @@ class DelineaPamClient:
         detail['administrativeCredentials'] = items if isinstance(items, list) else []
 
     def folder_secret_details(self) -> List[dict]:
-        """Folder list from ``folder_secrets``, with each secret replaced by its detail fields.
-
-        A secret that cannot be read is left out of that folder. The same id is
-        requested once even if more than one folder lists it. When
-        ``autoChangeEnabled`` is true, ``GET /v3/secrets/{id}/rpc-script-secrets``
-        adds ``autoChangeSchedule`` and ``privilegedAccountSecretId``. A privileged
-        id is then read with ``GET /v1/secrets/{id}`` and its ``items`` are stored
-        as ``administrativeCredentials``.
-        """
+        """``folder_secrets`` with each secret replaced by ``secret_detail``; unreadable secrets are dropped."""
         folders = self.folder_secrets()
         for folder in folders:
             details = []

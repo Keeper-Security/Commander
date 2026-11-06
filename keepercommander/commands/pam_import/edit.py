@@ -1719,10 +1719,8 @@ class PAMProjectImportCommand(Command):
                 if ps_wf:
                     apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
-            # Machine - create its users (if any). Link every user, including
-            # the administrative credential, before rotation. Rotation refuses
-            # to run until the resource has an admin, and that user is often
-            # not the first one in the list (login first, admin second).
+            # Machine - create its users (if any). Link all of them before rotation,
+            # which needs the admin linked (often the second user, not the first).
             users = getattr(mach, "users", [])
             users = users if isinstance(users, list) else []
             pam_users = []
@@ -1739,10 +1737,8 @@ class PAMProjectImportCommand(Command):
                     from .nsf_helpers import sync_down_preserving_nsf_keys
                     sync_down_preserving_nsf_keys(params)
                 if isinstance(user, PamUserObject):
-                    # belongs_to only. is_admin=True takes the configure_resource
-                    # path and returns without creating the ACL edge. Writing
-                    # is_admin=False here would also stick, and a later graph
-                    # save would wipe the admin flag set by configure_resource.
+                    # belongs_to only: is_admin=True skips the ACL edge and
+                    # is_admin=False would later wipe the admin flag.
                     tdag.link_user_to_resource(user.uid, mach.uid, belongs_to=True)
                     pam_users.append(user)
             launch_uid = get_launch_credential(mach, True)
@@ -1751,10 +1747,7 @@ class PAMProjectImportCommand(Command):
                 if not (launch_uid or admin_uid) or isinstance(mach, PamRemoteBrowserObject):
                     return
                 tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
-                # set_launch_credentials stores is_admin on the local edge only
-                # when admin and launch are the same user. When they differ,
-                # the follow-up save still has the admin edge without is_admin
-                # and replaces the flag configure_resource just wrote.
+                # A separate admin's local edge lacks is_admin, so the next save drops it.
                 if not admin_uid or admin_uid == launch_uid:
                     return
                 resource_vertex = tdag.linking_dag.get_vertex(mach.uid)
@@ -1780,9 +1773,7 @@ class PAMProjectImportCommand(Command):
                         args["on_demand"] = True
                     elif schedule_type_lc == "cron":
                         cron_expr = user.rotation_settings.schedule.cron
-                        # Any importer may emit a six-field Quartz cron. Keeper
-                        # stores DAILY / WEEKLY / MONTHLY_BY_DAY with utcTime;
-                        # a raw cron string leaves the vault schedule empty.
+                        # A raw cron leaves the vault schedule empty; send Keeper's schedule JSON.
                         keeper_schedule = quartz_cron_to_keeper_schedule(cron_expr)
                         if keeper_schedule:
                             args["schedule_json_data"] = [json.dumps(keeper_schedule)]
@@ -1793,9 +1784,7 @@ class PAMProjectImportCommand(Command):
                     if user.rotation_settings.password_complexity:
                         args["pwd_complexity"]=user.rotation_settings.password_complexity
                     prc.execute(params, silent=True, **args)
-            # Re-assert launch and admin after rotation. set_launch_credentials
-            # is the last write so a later meta update cannot drop is_admin
-            # when the admin and launch users are different records.
+            # Re-assert last so later meta writes cannot drop is_admin.
             _apply_launch_credentials()
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 

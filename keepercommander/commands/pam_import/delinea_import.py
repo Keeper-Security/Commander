@@ -38,7 +38,7 @@ def _all_users(resources: Optional[List[dict]], users: Optional[List[dict]] = No
 
 
 def _normalize_folder_path(path: str) -> str:
-    """Normalize a Delinea folder path for comparison: backslash separators, no edge slashes, case-insensitive."""
+    """Backslash separators, no edge slashes, casefolded."""
     return (path or '').replace('/', '\\').strip().strip('\\').casefold()
 
 
@@ -163,13 +163,7 @@ class DelineaImportOrchestrator:
         raise NotImplementedError
 
     def map(self, crosswalk: Crosswalk) -> DelineaMappedImport:
-        """Read Secret Server and build the PAM import document. No vault writes.
-
-        ``client.folder_secret_details`` loads folders, secret details, and RPC
-        data. ``--folders`` keeps folder-path prefixes (empty means all).
-        ``build_pam_import`` turns that into the project document stored on
-        ``self.import_document``. The built-in changer map is used.
-        """
+        """Read Secret Server and build ``self.import_document``. No vault writes."""
         logging.debug('Using built-in password changer map (%d changers)', len(crosswalk.mappings))
         folders = select_folders(self.client.folder_secret_details(), self.options.folders)
         if self.options.folders and not folders:
@@ -239,10 +233,10 @@ class DelineaImportOrchestrator:
             _temp_store.remove(path)
 
     def write_output(self, import_data: dict, path: str = '') -> None:
-        """Save the import document. ``--output`` uses that path; otherwise ``delinea_import.json``."""
+        """Save the redacted import document (default ``delinea_import.json``)."""
         path = path or self.options.output_file or DEFAULT_IMPORT_JSON
         data = self.redacted_document(import_data)
-        # 0o600 covers POSIX; Windows ignores it, so lock the ACL before writing.
+        # Lock permissions before writing (0o600 on POSIX, ACL on Windows).
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         utils.set_file_permissions(path)
         with os.fdopen(fd, 'w', encoding='utf-8') as fh:

@@ -260,13 +260,18 @@ class TestAdminCredentials(unittest.TestCase):
                                 administrativeCredentials=admin_items)
                 self.assertCredentials(resource, ['root'], 'root', 'root')
 
-    @unittest.expectedFailure
-    def test_admin_with_only_login_items_is_still_linked(self):
-        # Admin items with no host / domain map to a "login" record and are dropped,
-        # so administrative_credentials silently falls back to the launch user.
-        resource = _one(1, 'root', 6007, privilegedAccountSecretId=20, items=items(machine='h'),
-                        administrativeCredentials=items(username='adm', password='ap'))
-        self.assertEqual(connection(resource)['administrative_credentials'], 'adm')
+    def test_admin_with_only_login_items_joins_the_resource_it_administers(self):
+        cases = [
+            (6007, items(machine='h', port='2222'), 'adm'),
+            (6003, items(machine='ws1'), 'adm'),
+            (6001, items(domain='corp.local'), 'adm@corp.local'),
+        ]
+        for template, target, login in cases:
+            with self.subTest(template=template):
+                resource = _one(1, 'root', template, privilegedAccountSecretId=20, items=target,
+                                administrativeCredentials=items(username='adm', password='ap'))
+                self.assertCredentials(resource, ['root', 'adm'], 'root', 'adm')
+                self.assertEqual((resource['users'][1]['login'], resource['users'][1]['password']), (login, 'ap'))
 
 
 class TestSafeFolders(unittest.TestCase):

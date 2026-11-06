@@ -6,13 +6,7 @@
 #
 # Keeper Commander — Delinea PAM import
 
-"""Map fetched Secret Server details onto a ``pam project import`` document.
-
-The document matches CyberArk safe-folder import JSON. Each Secret Server
-folder is a safe: ``safe_folders`` names the shared folder, resources use
-``{safe}/{safe} - Resources``, and pamUsers use ``{safe}/{safe} - Users``.
-A privileged account is the second user on that resource.
-"""
+"""Map fetched Secret Server details onto a ``pam project import`` document (CyberArk safe-folder layout)."""
 
 import copy
 from dataclasses import dataclass
@@ -28,9 +22,7 @@ from .secret_mapper import (
 
 _RESOURCE_ORDER = {'pamDirectory': 0, 'pamMachine': 1, 'pamDatabase': 2}
 
-# Built-in Secret Server template ids. A Windows Account whose name does not
-# contain "Windows Account" (for example "108 - 6003 - Jane") is still a
-# pamMachine, not a Unix SSH login.
+# Built-in template ids, so a renamed Windows Account still maps to pamMachine.
 _TEMPLATE_IDS = {
     6001: 'active directory account',
     6003: 'windows account',
@@ -110,10 +102,17 @@ def _admin_secrets(secrets: List[dict]) -> List[dict]:
             continue
         known.add(privileged_id)
         login = SecretMapper.item_value({'items': items}, LOGIN_SLUGS)
+        admin = {'items': items}
+        if not SecretMapper.item_value(admin, HOST_SLUGS) and not SecretMapper.item_value(admin, DOMAIN_SLUGS):
+            # No host / domain: place it on the resource it administers instead of dropping it.
+            target = [item for item in secret.get('items') or []
+                      if item.get('slug') in HOST_SLUGS + DOMAIN_SLUGS + PORT_SLUGS]
+            admin = {'items': list(items) + target, 'secretTemplateId': secret.get('secretTemplateId'),
+                     'secretTemplateName': secret.get('secretTemplateName')}
         added.append({
+            **admin,
             'id': privileged_id,
             'name': login or f'Admin {privileged_id}',
-            'items': items,
             'autoChangeEnabled': False,
             'autoChangeSchedule': None,
             'privilegedAccountSecretId': None,
@@ -273,11 +272,7 @@ def _always(_: _SecretSignals) -> bool:
 
 @dataclass(frozen=True)
 class _ChangerRule:
-    """One row of the inference table.
-
-    A rule matches when ``when`` holds and, if any hints are given, at least one
-    hint matches (a port, a term in the secret name or host, or ``hint``).
-    """
+    """Matches when ``when`` holds and, if hints are set, any port / name term / host term / ``hint`` matches."""
     crosswalk_key: str
     when: _Predicate = _always
     ports: Tuple[str, ...] = ()
@@ -304,7 +299,7 @@ def _has_host(s: _SecretSignals) -> bool:
     return bool(s.host)
 
 
-# Evaluated top to bottom; the first match wins, so order is significant.
+# First match wins; order matters.
 _CHANGER_RULES: Tuple[_ChangerRule, ...] = (
     _ChangerRule('unix account (ssh key rotation)', when=lambda s: s.has_private_key),
     _ChangerRule('sql server account', ports=('1433',), name_terms=('sql server',)),
@@ -354,11 +349,7 @@ def _merge(accounts: List[_Account]) -> List[dict]:
 
 
 def _apply_credentials(resources: List[dict], accounts: List[_Account]) -> None:
-    """A privileged account becomes the second user on that resource.
-
-    The first user is the secret's own login. ``launch_credentials`` names
-    that user. ``administrative_credentials`` names the privileged user.
-    """
+    """Launch credential is the secret's own login; administrative credential is its privileged account."""
     _nest_privileged_users(accounts)
     by_secret = {account.secret_id: account for account in accounts}
     for resource in resources:
@@ -403,12 +394,7 @@ def _nest_privileged_users(accounts: List[_Account]) -> None:
 
 
 def _apply_safe_folders(resources: List[dict], accounts: List[_Account], project: str) -> List[dict]:
-    """Route each resource the way CyberArk ``--folder-mode safe`` does.
-
-    ``SafeFolderMapper('safe')`` sanitizes the Secret Server folder name.
-    The resource record goes in ``{safe}/{safe} - Resources`` and every
-    nested pamUser goes in ``{safe}/{safe} - Users``.
-    """
+    """One safe per folder: resources in ``{safe}/{safe} - Resources``, users in ``{safe}/{safe} - Users``."""
     mapper = SafeFolderMapper('safe')
     for resource in resources:
         owners = [account for account in accounts if account.resource is resource]

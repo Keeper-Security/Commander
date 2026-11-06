@@ -70,18 +70,15 @@ class RotationMapper:
     def schedule_to_cron(schedule: Optional[dict]) -> Optional[str]:
         """Quartz cron (six fields, as ``MasterPolicyMapper.days_to_cron``) for an AutoChangeScheduleModel.
 
-        ``startingOn`` supplies minute / hour. Secret Server sends ``scheduleType``
-        (``Daily`` / ``Weekly`` / ``Monthly``); older payloads use ``changeType``.
+        ``startingOn`` supplies minute / hour. Cases by ``scheduleType`` (older payloads: ``changeType``):
           * Days     every ``days`` days: ``0 M H */days * ?`` (``days`` 1 = daily)
           * Weekly   weekday booleans: ``0 M H ? * MON,WED``
           * Monthly  ``monthScheduleType`` day-of-month: ``0 M H D */changeEveryMonths ?``;
                      nth weekday: ``0 M H ? */changeEveryMonths DOW#N``
         Returns ``None`` for unknown types so the caller can record a Finding.
 
-        Times are converted to UTC. When that moves the run to another day, the
-        weekday or day of month moves with it (day 0 becomes ``L``, day 32 becomes
-        1). For nth-weekday schedules only the weekday moves, so a run near a
-        month boundary can land on the neighbouring week's occurrence.
+        Times are converted to UTC and the day moves with them (day 0 is ``L``, day 32 is 1);
+        nth-weekday schedules shift only the weekday.
         """
         if not isinstance(schedule, dict):
             return None
@@ -115,7 +112,7 @@ class RotationMapper:
             parsed = datetime.datetime.fromisoformat(text)
         except ValueError:
             return 0, 0, 0
-        # The cron feeds Keeper's utcTime. Naive timestamps are taken as UTC.
+        # Naive timestamps are taken as UTC.
         if parsed.tzinfo is None:
             return parsed.minute, parsed.hour, 0
         utc = parsed.astimezone(datetime.timezone.utc)

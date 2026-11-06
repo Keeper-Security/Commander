@@ -462,13 +462,7 @@ class PamAttachmentObject():
 
 
 def quartz_cron_to_keeper_schedule(cron):
-    """Map a six-field Quartz cron onto the schedule object Keeper stores.
-
-    Used by every PAM importer. Daily, single-weekday, and day-of-month
-    expressions become ``DAILY`` / ``WEEKLY`` / ``MONTHLY_BY_DAY`` with
-    ``utcTime``. Anything else returns ``None`` and the caller sends the
-    cron string unchanged.
-    """
+    """Six-field Quartz cron to a Keeper ``DAILY`` / ``WEEKLY`` / ``MONTHLY_BY_DAY`` schedule, else ``None``."""
     parts = str(cron or '').split()
     if len(parts) != 6:
         return None
