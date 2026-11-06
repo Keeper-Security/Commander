@@ -489,7 +489,7 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
     full-manager, …). When ``role`` is absent, classic manage_users /
     manage_records flags are mapped via ``classic_perms_to_nsf_role``.
     """
-    from ..nested_share_folder.folder_api import grant_folder_access_v3
+    from ..nested_share_folder.folder_api import grant_folder_access_v3, update_folder_v3
     from ..nested_share_folder.permissions import resolve_role_name
 
     default_role = classic_perms_to_nsf_role(
@@ -508,6 +508,21 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
                 fol.uid = parent
             if not fol.uid or not is_nsf_folder(params, fol.uid):
                 continue
+
+        # Break inheritance if needed (e.g., from Delinea custom folder ACL)
+        if getattr(fol, 'break_inheritance', False) is True:
+            try:
+                _call_with_throttle_retry(
+                    f'NSF folder break inheritance for "{fol.path or fol.uid}"',
+                    update_folder_v3,
+                    params,
+                    fol.uid,
+                    inherit_permissions=False,
+                )
+            except Exception as exc:
+                logging.warning(
+                    'Failed to break inheritance on NSF folder "%s": %s',
+                    fol.path or fol.uid, exc)
 
         folder_role = classic_perms_to_nsf_role(
             fol.manage_users if fol.manage_users is not None else manage_users,
@@ -539,16 +554,24 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
                 if role == 'viewer' and (manage_users or manage_records or can_edit or can_share):
                     role = folder_role if folder_role != 'viewer' else default_role
 
-            name = perm.name or ''
-            uid = perm.uid or ''
-            recipient = name or uid
+            name = (perm.name or '').strip()
+            raw_uid = perm.uid
+            if raw_uid is None or raw_uid == '':
+                uid_str = ''
+            else:
+                uid_str = str(raw_uid).strip()
+            recipient = name or uid_str
             if not recipient:
                 continue
-            if uid and '@' not in uid and (not name or '@' not in name):
+            if uid_str and '@' not in uid_str and (not name or '@' not in name):
                 as_team = True
-                recipient = uid
+                recipient = uid_str
             elif name and '@' in name:
                 as_team = False
+                recipient = name
+            elif name and '@' not in name and not uid_str:
+                # Team name only (no Keeper uid resolved) — grant by team name
+                as_team = True
                 recipient = name
             elif name:
                 as_team = False
@@ -575,3 +598,101 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
 
     if granted:
         logging.info('Granted %d Nested Share Folder permission(s)', granted)
+
+
+def apply_nsf_record_permissions(params, records, dry_run=False):
+    # type: (KeeperParams, List[ImportRecord], bool) -> None
+    """Apply NSF record-level permissions from nsf_record_shares.
+
+    Uses batch_create_record_shares_v3 for per-user overrides.
+    """
+    from ..nested_share_folder.record_api import batch_create_record_shares_v3
+    from ..nested_share_folder.permissions import resolve_role_name
+
+    if not records:
+        return
+
+    all_record_shares = []  # type: List[Dict]
+    records_with_shares = 0
+    for record in records:
+        if not record.nsf_record_shares:
+            continue
+        records_with_shares += 1
+
+        record_uid = record.uid
+        if not record_uid:
+            logging.warning(
+                'Record "%s" has nsf_record_shares but no uid — cannot apply NSF record shares',
+                record.title)
+            continue
+
+        for nsr in record.nsf_record_shares:
+            recipient = nsr.uid
+            role = nsr.role
+            if not recipient or not role:
+                continue
+            if params.user and recipient.lower() == params.user.lower():
+                logging.debug(
+                    '[NSF-ACL] skip record share for import user (record owner): %s on "%s"',
+                    recipient, record.title)
+                continue
+
+            try:
+                role_pb = resolve_role_name(role)
+            except Exception:
+                logging.warning('Invalid NSF role for record "%s": "%s"', record_uid, role)
+                continue
+
+            all_record_shares.append({
+                'record_uid': record_uid,
+                'email': recipient,
+                'access_role_type': role_pb,
+                'record_title': record.title,
+            })
+
+    if not all_record_shares:
+        logging.debug(
+            'apply_nsf_record_permissions: %d record(s) had shares in import, 0 actionable grants',
+            records_with_shares)
+        return
+
+    logging.debug(
+        'apply_nsf_record_permissions: applying %d grant(s) across import batch',
+        len(all_record_shares))
+
+    granted = 0
+    for start in range(0, len(all_record_shares), NSF_RECORD_BATCH):
+        batch = all_record_shares[start:start + NSF_RECORD_BATCH]
+
+        if dry_run:
+            granted += len(batch)
+            for share in batch:
+                logging.info(
+                    'Would grant NSF record "%s" role "%s" to "%s"',
+                    share.get('record_uid'), share.get('access_role_type'), share.get('email'))
+        else:
+            try:
+                results = _call_with_throttle_retry(
+                    f'NSF record permission batch ({len(batch)} items)',
+                    batch_create_record_shares_v3,
+                    params,
+                    batch,
+                )
+                for item, result in results or []:
+                    if result.get('success'):
+                        granted += 1
+                        logging.debug(
+                            'Granted NSF record share: %s → %s on "%s" (%s)',
+                            item.get('email'), item.get('access_role_type'),
+                            item.get('record_title') or item.get('record_uid'),
+                            item.get('record_uid'))
+                    elif not result.get('skipped'):
+                        logging.warning(
+                            'NSF record share failed for "%s" on "%s" (%s): %s',
+                            item.get('email'), item.get('record_title') or item.get('record_uid'),
+                            item.get('record_uid'), result.get('message'))
+            except Exception as exc:
+                logging.warning('NSF record permission batch failed: %s', exc)
+
+    if granted:
+        logging.info('Granted %d NSF record permission(s)', granted)
