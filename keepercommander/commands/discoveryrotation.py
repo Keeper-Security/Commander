@@ -2055,7 +2055,8 @@ class PAMGatewayListCommand(Command):
                     "gateway_name": c.controllerName,
                     "gateway_uid": gateway_uid_str,
                     "status": status,
-                    "gateway_version": version
+                    "gateway_version": version,
+                    "max_instances": getattr(c, 'maxInstanceCount', 0) or 1
                 }
 
                 if is_verbose:
@@ -2147,6 +2148,7 @@ class PAMGatewayListCommand(Command):
                         "gateway_name": c.controllerName,
                         "gateway_uid": gateway_uid_str,
                         "status": overall_status,
+                        "max_instances": getattr(c, 'maxInstanceCount', 0) or 1,
                         "instances": instances_data
                     }
 

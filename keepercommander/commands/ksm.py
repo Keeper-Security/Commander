@@ -612,7 +612,7 @@ class KSMCommand(Command):
             return None
         # Prefer a license carrying the secrets_manager add-on, else the first (Console uses licenses[0]).
         for lic in licenses:
-            if any(a.get('name') == 'secrets_manager' for a in lic.get('add_ons', [])):
+            if any(a.get('name') == 'secrets_manager' for a in (lic.get('add_ons') or [])):
                 return lic
         return licenses[0]
 
@@ -666,7 +666,7 @@ class KSMCommand(Command):
         # Never report before KSM was actually created (Console clamps to max(created, activationTime);
         # Commander add-ons expose only `created`).
         ksm_created_ms = 0
-        for a in lic.get('add_ons', []):
+        for a in (lic.get('add_ons') or []):
             if a.get('name') == 'secrets_manager':
                 ksm_created_ms = KSMCommand._ts_to_ms(a.get('created'))
                 break
@@ -1153,7 +1153,7 @@ class KSMCommand(Command):
 
         if len(apps_table) == 0:
             if format_type == 'json':
-                print(json.dumps({"applications": [], "message": "No Applications to list."}))
+                return json.dumps([])
             else:
                 print(f'{bcolors.WARNING}No Applications to list.{bcolors.ENDC}\n\n'
                       f'To create new application, use command {bcolors.OKGREEN}secrets-manager app '
