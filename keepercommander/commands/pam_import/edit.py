@@ -45,7 +45,8 @@ from .base import (
     resolve_script_creds,
     set_launch_record_uid,
     set_sftp_uid,
-    set_user_record_uid
+    set_user_record_uid,
+    quartz_cron_to_keeper_schedule,
 )
 from ..base import Command
 from ..ksm import KSMCommand
@@ -1718,9 +1719,13 @@ class PAMProjectImportCommand(Command):
                 if ps_wf:
                     apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
-            # Machine - create its users (if any)
+            # Machine - create its users (if any). Link every user, including
+            # the administrative credential, before rotation. Rotation refuses
+            # to run until the resource has an admin, and that user is often
+            # not the first one in the list (login first, admin second).
             users = getattr(mach, "users", [])
             users = users if isinstance(users, list) else []
+            pam_users = []
             for user in users:
                 if (isinstance(user, PamUserObject) and user.rotation_settings and
                     user.rotation_settings.rotation.lower() == "general"):
@@ -1733,38 +1738,66 @@ class PAMProjectImportCommand(Command):
                 if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
                     from .nsf_helpers import sync_down_preserving_nsf_keys
                     sync_down_preserving_nsf_keys(params)
-                if isinstance(user, PamUserObject):  # rotation setup
-                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid==user.uid, True)
-                    if user.rotation_settings:
-                        args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
-                        enabled = user.rotation_settings.enabled # on|off|default
-                        key = {"on": "enable", "off": "disable"}.get(enabled, "")
-                        if key: args[key] = True
-                        # args["schedule_config"] = True  # Schedule from Configuration
-                        # Schedule type is case-insensitive; CyberArk
-                        # importer emits "CRON" (uppercase) per Keeper's
-                        # on-the-wire convention, while older import paths
-                        # use "cron" (lowercase). Compare in lowercase so
-                        # both shapes are honored.
-                        schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
-                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
-                        if schedule_type_lc == "on-demand":
-                            args["on_demand"] = True
-                        elif schedule_type_lc == "cron":
-                            if user.rotation_settings.schedule.cron:
-                                # Must be a list for parse_schedule_data (CLI uses action=append).
-                                args["schedule_cron_data"] = [user.rotation_settings.schedule.cron]
-                            else:
-                                logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
-                        if user.rotation_settings.password_complexity:
-                            args["pwd_complexity"]=user.rotation_settings.password_complexity
-                        prc.execute(params, silent=True, **args)
-            # Launch credentials: link for pamMachine, pamDatabase, pamDirectory (not RBI)
-            # Also runs for admin-only (no launch): re-asserts the admin as the last write,
-            # after the JIT/AI/meta writes and after nested users are created.
+                if isinstance(user, PamUserObject):
+                    # belongs_to only. is_admin=True takes the configure_resource
+                    # path and returns without creating the ACL edge. Writing
+                    # is_admin=False here would also stick, and a later graph
+                    # save would wipe the admin flag set by configure_resource.
+                    tdag.link_user_to_resource(user.uid, mach.uid, belongs_to=True)
+                    pam_users.append(user)
             launch_uid = get_launch_credential(mach, True)
+
+            def _keep_distinct_admin():
+                # set_launch_credentials stores is_admin on the local edge only
+                # when admin and launch are the same user. When they differ,
+                # the follow-up save still has the admin edge without is_admin
+                # and replaces the flag configure_resource just wrote.
+                if not admin_uid or admin_uid == launch_uid:
+                    return
+                resource_vertex = tdag.linking_dag.get_vertex(mach.uid)
+                if resource_vertex is not None:
+                    tdag.link_user(admin_uid, resource_vertex, is_admin=True, belongs_to=True)
+
             if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
                 tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
+                _keep_distinct_admin()
+            for user in pam_users:
+                if user.rotation_settings:
+                    args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
+                    enabled = user.rotation_settings.enabled # on|off|default
+                    key = {"on": "enable", "off": "disable"}.get(enabled, "")
+                    if key: args[key] = True
+                    # args["schedule_config"] = True  # Schedule from Configuration
+                    # Schedule type is case-insensitive; CyberArk
+                    # importer emits "CRON" (uppercase) per Keeper's
+                    # on-the-wire convention, while older import paths
+                    # use "cron" (lowercase). Compare in lowercase so
+                    # both shapes are honored.
+                    schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
+                    schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
+                    if schedule_type_lc == "on-demand":
+                        args["on_demand"] = True
+                    elif schedule_type_lc == "cron":
+                        cron_expr = user.rotation_settings.schedule.cron
+                        # Any importer may emit a six-field Quartz cron. Keeper
+                        # stores DAILY / WEEKLY / MONTHLY_BY_DAY with utcTime;
+                        # a raw cron string leaves the vault schedule empty.
+                        keeper_schedule = quartz_cron_to_keeper_schedule(cron_expr)
+                        if keeper_schedule:
+                            args["schedule_json_data"] = [json.dumps(keeper_schedule)]
+                        elif cron_expr:
+                            args["schedule_cron_data"] = [cron_expr]
+                        else:
+                            logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
+                    if user.rotation_settings.password_complexity:
+                        args["pwd_complexity"]=user.rotation_settings.password_complexity
+                    prc.execute(params, silent=True, **args)
+            # Re-assert launch and admin after rotation. set_launch_credentials
+            # is the last write so a later meta update cannot drop is_admin
+            # when the admin and launch users are different records.
+            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
+                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
+                _keep_distinct_admin()
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid

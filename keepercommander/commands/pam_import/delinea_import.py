@@ -12,6 +12,7 @@ import argparse
 import copy
 import json
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -22,12 +23,31 @@ from ...importer.cyberark.pam.import_builder import format_unmapped_section, str
 from ...importer.cyberark.pam.user_team_matcher import UserTeamMatcher
 from ...importer.thycotic.pam import (
     AccessGrant, Crosswalk, DelineaPamClient, FindingLog, PermissionMapper, Principal, PrincipalKind,
-    RotationMapper, RotationPolicy, SecretGrantTarget,
+    RotationMapper, RotationPolicy, SecretGrantTarget, build_pam_import,
 )
 from .cyberark_import import SecureTempFileStore
 from .delinea_access import COMMAND, apply_secret_grants, choose_nsf, run_with_classic_fallback
 
 _temp_store = SecureTempFileStore()
+DEFAULT_IMPORT_JSON = 'delinea_import.json'
+
+
+def _nested_users(resources: List[dict]) -> List[dict]:
+    return [user for resource in resources for user in resource.get('users') or []]
+
+
+def select_folders(folders: List[dict], prefixes: List[str]) -> List[dict]:
+    """Keep folders whose path starts with one of ``prefixes``. Empty means all."""
+    wanted = [prefix.replace('/', '\\').strip().strip('\\').casefold() for prefix in prefixes if prefix.strip()]
+    if not wanted:
+        return list(folders)
+    selected = []
+    for folder in folders:
+        path = (folder.get('folderPath') or folder.get('folderName') or '').replace('/', '\\').strip('\\').casefold()
+        name = (folder.get('folderName') or '').casefold()
+        if any(path == prefix or path.startswith(prefix + '\\') or name == prefix for prefix in wanted):
+            selected.append(folder)
+    return selected
 
 
 @dataclass
@@ -94,33 +114,37 @@ class DelineaImportOrchestrator:
         self.findings = FindingLog()
         self.permissions = PermissionMapper({}, {}, self.findings)
         self.matcher: Optional[UserTeamMatcher] = None
+        self.import_document: dict = {}
 
     def run(self) -> None:
         opts = self.options
-        crosswalk = Crosswalk.load(
-            opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
         if opts.crosswalk_out or opts.crosswalk_check:
+            crosswalk = Crosswalk.load(opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
             self.run_crosswalk(crosswalk)
             return
+        if opts.crosswalk_file:
+            logging.warning('Password changer crosswalk file is not applied; using the built-in map')
 
-        use_nsf = choose_nsf(self.params, opts.use_nsf, self.findings)
-        mapped = self.map(crosswalk)
+        mapped = self.map(Crosswalk())
+        users = _nested_users(mapped.resources)
         for warning in validate_import_data(mapped.resources, mapped.users):
             logging.warning(warning)
 
-        if opts.output_file:
-            self.write_output(self.build_import_json(mapped, use_nsf))
+        json_path = opts.output_file or DEFAULT_IMPORT_JSON
+        self.write_output(self.import_document, json_path)
         if opts.dry_run:
-            self.report(mapped, used_nsf=None)
+            self.print_dry_run(mapped)
             return
-        if not opts.yes and user_choice(f'Import {len(mapped.resources)} resources and {len(mapped.users)} users '
+        if opts.output_file:
+            return
+        if not opts.yes and user_choice(f'Import {len(mapped.resources)} resources and {len(users)} users '
                                         f'into "{opts.project_name}"?', 'yn', 'n').lower() != 'y':
             return
 
+        use_nsf = choose_nsf(self.params, opts.use_nsf, self.findings)
         used_nsf = run_with_classic_fallback(
             self.params, opts.project_name, use_nsf,
-            lambda nsf: self.import_project(
-                self.build_import_json(mapped, nsf), nsf),
+            lambda nsf: self.import_project(self.import_document, nsf),
             self.findings,
         )
         if mapped.secret_grants and not opts.skip_permissions:
@@ -133,25 +157,22 @@ class DelineaImportOrchestrator:
         raise NotImplementedError
 
     def map(self, crosswalk: Crosswalk) -> DelineaMappedImport:
-        """Read Secret Server and map everything; no vault writes.
+        """Read Secret Server and build the PAM import document. No vault writes.
 
-        1. ``permission_boundaries(client.folders())`` limited to ``options.folders``
-           (folder path prefixes; empty means all); each boundary is named by
-           ``SafeFolderMapper('safe')``. ``self.permissions`` is built from
-           ``client.users()`` / ``client.groups()``.
-        2. ``folder_grants`` has a key for every boundary that receives records;
-           unless ``skip_permissions`` its value is
-           ``self.permissions.folder_grants(client.folder_permissions(boundary))``
-           and ``self.matcher`` comes from ``build_matcher``.
-        3. Per secret in ``client.secret_ids``: ``SecretMapper.map_secret``; then
-           ``client.secret_permissions`` and ``PermissionMapper.is_override`` give
-           ``secret_grants``.
-        4. Each id in ``MappedSecret.references`` is fetched once and emitted via
-           ``map_reference`` into ``users``; resources go through ``merge_resources``.
-        5. More than one distinct ``RotationPolicy.site_name`` adds a Finding (one
-           gateway per PAM configuration).
+        ``client.folder_secret_details`` loads folders, secret details, and RPC
+        data. ``--folders`` keeps folder-path prefixes (empty means all).
+        ``build_pam_import`` turns that into the project document stored on
+        ``self.import_document``. The built-in changer map is used.
         """
-        raise NotImplementedError
+        logging.debug('Using built-in password changer map (%d changers)', len(crosswalk.mappings))
+        folders = select_folders(self.client.folder_secret_details(), self.options.folders)
+        if self.options.folders and not folders:
+            logging.warning('No Secret Server folders matched --folders %s', ', '.join(self.options.folders))
+        document = build_pam_import(folders, self.options.project_name)
+        if self.options.gateway:
+            document['pam_configuration']['gateway_name'] = self.options.gateway
+        self.import_document = document
+        return DelineaMappedImport(resources=document['pam_data']['resources'])
 
     def build_matcher(self) -> UserTeamMatcher:
         """``UserTeamMatcher`` over enterprise users / teams and the ``--user-map`` JSON object."""
@@ -211,27 +232,50 @@ class DelineaImportOrchestrator:
         finally:
             _temp_store.remove(path)
 
-    def write_output(self, import_data: dict) -> None:
-        data = copy.deepcopy(import_data)
-        if not self.options.include_credentials:
-            strip_credentials(data)
-            for user in data['pam_data']['users'] + [u for r in data['pam_data']['resources']
-                                                     for u in r.get('users', [])]:
-                if user.get('private_pem_key'):
-                    user['private_pem_key'] = '***'
-        with open(self.options.output_file, 'w', encoding='utf-8') as fh:
+    def write_output(self, import_data: dict, path: str = '') -> None:
+        """Save the import document. ``--output`` uses that path; otherwise ``delinea_import.json``."""
+        path = path or self.options.output_file or DEFAULT_IMPORT_JSON
+        data = self.redacted_document(import_data)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
             json.dump(data, fh, indent=2)
-        utils.set_file_permissions(self.options.output_file)
-        logging.info('Import JSON written to %s', self.options.output_file)
+        utils.set_file_permissions(path)
+        print(f'Import JSON saved to: {path}')
+
+    def print_dry_run(self, mapped: DelineaMappedImport) -> None:
+        """Print the import document without writing to the vault."""
+        users = _nested_users(mapped.resources) + mapped.users
+        print('[DRY RUN] No changes will be made to the vault.\n')
+        print(json.dumps(self.redacted_document(self.import_document), indent=2))
+        print()
+        print(f'[DRY RUN COMPLETE] {len(mapped.resources)} resources, {len(users)} users would be imported.')
+        section = format_unmapped_section([f.to_dict() for f in self.findings])
+        if section:
+            print(section)
+
+    def redacted_document(self, import_data: dict) -> dict:
+        data = copy.deepcopy(import_data)
+        if self.options.include_credentials:
+            return data
+        strip_credentials(data)
+        pam_data = data.get('pam_data') or {}
+        for user in (pam_data.get('users') or []) + _nested_users(pam_data.get('resources') or []):
+            if user.get('private_pem_key'):
+                user['private_pem_key'] = '***'
+        return data
 
     def report(self, mapped: DelineaMappedImport, used_nsf: Optional[bool]) -> None:
         mode = 'dry run' if used_nsf is None else (
             'Nested Share Folders' if used_nsf else 'classic shared folders')
-        print(f'\nDelinea import ({mode}): {len(mapped.resources)} resources, {len(mapped.users)} users, '
+        users = _nested_users(mapped.resources) + mapped.users
+        print(f'\nDelinea import ({mode}): {len(mapped.resources)} resources, {len(users)} users, '
               f'{len(mapped.folder_grants)} folders, {len(mapped.secret_grants)} secrets with own permissions')
-        rotation = RotationMapper.summary(mapped.rotations)
-        print('Rotation: ' +
-              ', '.join(f'{k} {v}' for k, v in sorted(rotation.items())))
+        if mapped.rotations:
+            rotation = RotationMapper.summary(mapped.rotations)
+            print('Rotation: ' + ', '.join(f'{k} {v}' for k, v in sorted(rotation.items())))
+        else:
+            enabled = sum(1 for user in users if (user.get('rotation_settings') or {}).get('enabled') == 'on')
+            print(f'Rotation: enabled {enabled}, disabled {len(users) - enabled}')
         section = format_unmapped_section([f.to_dict() for f in self.findings])
         if section:
             print(section)
@@ -247,8 +291,11 @@ Examples:
   pam project delinea-import ss.example.com --crosswalk-out crosswalk.csv
   pam project delinea-import ss.example.com --crosswalk crosswalk.csv --crosswalk-check 3
 
-  # Review the import without writing to the vault
-  pam project delinea-import ss.example.com --crosswalk crosswalk.csv --dry-run --output review.json
+  # Write delinea_import.json and print it. Nothing is imported.
+  pam project delinea-import ss.example.com --dry-run
+
+  # Write review.json and exit
+  pam project delinea-import ss.example.com --output review.json
 
   # Import into Nested Share Folders (falls back to classic if NSF is unavailable)
   pam project delinea-import ss.example.com --name "PAM Migration" --gateway "GW1" --nsf
@@ -264,11 +311,11 @@ Examples:
     parser.add_argument('--folders', dest='folders', action='store', default='',
                         help='Comma-separated Secret Server folder paths to import (default: all)')
     parser.add_argument('--dry-run', '-d', dest='dry_run', action='store_true',
-                        help='Map and report without writing to the vault')
+                        help='Preview the import JSON without modifying the vault')
     parser.add_argument('--output', '-o', dest='output', action='store', default='',
-                        help='Write the generated import JSON to this file')
+                        help='Save the import JSON to this file and exit (default file: delinea_import.json)')
     parser.add_argument('--include-credentials', dest='include_credentials', action='store_true',
-                        help='Keep passwords and private keys in --output')
+                        help='Include passwords in --output or --dry-run display')
     parser.add_argument('--yes', '-y', dest='yes',
                         action='store_true', help='Skip the confirmation prompt')
     parser.add_argument('--skip-permissions', dest='skip_permissions', action='store_true',
