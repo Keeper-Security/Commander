@@ -27,17 +27,18 @@ from .importer import (
 )
 from .. import utils
 from ..error import CommandError, KeeperApiError
+from ..commands.nested_share_folder.helpers import (
+    MAX_NESTED_SHARE_FOLDER_DEPTH,
+    NSF_FOLDER_BATCH_SIZE,
+    NSF_FOLDER_RECORD_BATCH_SIZE,
+    NSF_IMPORT_THROTTLE_BACKOFF_MULTIPLIER,
+    NSF_IMPORT_THROTTLE_BASE_WAIT,
+    NSF_IMPORT_THROTTLE_MAX_RETRIES,
+    NSF_RECORD_BATCH_SIZE,
+)
+from ..nested_share_folder.permissions import classic_perms_to_nsf_role
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode
-
-
-NSF_RECORD_BATCH = 1000
-NSF_FOLDER_RECORD_BATCH = 500
-NSF_FOLDER_BATCH = 100
-NSF_DEFAULT_FOLDER_DEPTH = 5
-_THROTTLE_BASE_WAIT = 10.0
-_THROTTLE_MULTIPLIER = 1.5
-_THROTTLE_MAX_RETRIES = 5
 
 
 def is_nsf_folder(params, folder_uid):  # type: (KeeperParams, Optional[str]) -> bool
@@ -64,20 +65,6 @@ def resolve_nsf_folder(params, identifier):  # type: (KeeperParams, Optional[str
         if uid and is_nsf_folder(params, uid):
             return uid
     return None
-
-
-def classic_perms_to_nsf_role(manage_users=False, manage_records=False,
-                              can_edit=False, can_share=False):
-    """Map classic shared-folder booleans to an NSF role name."""
-    if manage_users and manage_records:
-        return 'full-manager'
-    if manage_records and can_share:
-        return 'content-share-manager'
-    if manage_records or can_edit:
-        return 'content-manager'
-    if can_share:
-        return 'share-manager'
-    return 'viewer'
 
 
 def flatten_record_folder_paths(records):  # type: (List[ImportRecord]) -> None
@@ -174,19 +161,19 @@ def _is_throttle_error(exc):  # type: (BaseException) -> bool
 
 def _call_with_throttle_retry(description, fn, *args, **kwargs):
     """Retry *fn* with progressive backoff when the API returns throttled."""
-    wait = _THROTTLE_BASE_WAIT
-    for attempt in range(1, _THROTTLE_MAX_RETRIES + 1):
+    wait = NSF_IMPORT_THROTTLE_BASE_WAIT
+    for attempt in range(1, NSF_IMPORT_THROTTLE_MAX_RETRIES + 1):
         try:
             return fn(*args, **kwargs)
         except Exception as exc:
-            if not _is_throttle_error(exc) or attempt >= _THROTTLE_MAX_RETRIES:
+            if not _is_throttle_error(exc) or attempt >= NSF_IMPORT_THROTTLE_MAX_RETRIES:
                 raise
             logging.warning(
                 '%s throttled (attempt %d/%d); waiting %.0fs before retry',
-                description, attempt, _THROTTLE_MAX_RETRIES, wait,
+                description, attempt, NSF_IMPORT_THROTTLE_MAX_RETRIES, wait,
             )
             time.sleep(wait)
-            wait *= _THROTTLE_MULTIPLIER
+            wait *= NSF_IMPORT_THROTTLE_BACKOFF_MULTIPLIER
 
 
 def create_nsf_folder(params, name, parent_uid=''):
@@ -213,8 +200,8 @@ def create_nsf_folders_batch(params, folders):
         return []
 
     created_uids = []  # type: List[str]
-    for start in range(0, len(folders), NSF_FOLDER_BATCH):
-        chunk = folders[start:start + NSF_FOLDER_BATCH]
+    for start in range(0, len(folders), NSF_FOLDER_BATCH_SIZE):
+        chunk = folders[start:start + NSF_FOLDER_BATCH_SIZE]
         specs = [
             {
                 'name': name,
@@ -325,7 +312,7 @@ def prepare_nsf_folders(params, folders, records, base_parent_uid='', folder_dep
     batches of up to 100 (``vault/folders/v3/add``), with throttle retries.
     Sets ``uid`` on each resolved ``ImportSharedFolder`` / ``ImportFolder``.
 
-    Paths deeper than *folder_depth* (default ``NSF_DEFAULT_FOLDER_DEPTH``,
+    Paths deeper than *folder_depth* (default ``MAX_NESTED_SHARE_FOLDER_DEPTH``,
     counting any existing depth of *base_parent_uid*) are flattened: levels
     beyond the cutoff become sibling folders directly under the deepest
     allowed folder, each keeping its own original name and data - never
@@ -337,7 +324,8 @@ def prepare_nsf_folders(params, folders, records, base_parent_uid='', folder_dep
     """
     before = set((getattr(params, 'nested_share_folders', None) or {}).keys())
 
-    effective_depth = folder_depth if folder_depth is not None else NSF_DEFAULT_FOLDER_DEPTH
+    effective_depth = (
+        folder_depth if folder_depth is not None else MAX_NESTED_SHARE_FOLDER_DEPTH)
     if base_parent_uid:
         effective_depth = max(effective_depth - _nsf_folder_ancestor_depth(params, base_parent_uid), 1)
 
@@ -431,8 +419,8 @@ def execute_nsf_records_add(params, record_adds):
     from ..nested_share_folder.record_api import record_add_v3
 
     results = []
-    for start in range(0, len(record_adds), NSF_RECORD_BATCH):
-        batch = record_adds[start:start + NSF_RECORD_BATCH]
+    for start in range(0, len(record_adds), NSF_RECORD_BATCH_SIZE):
+        batch = record_adds[start:start + NSF_RECORD_BATCH_SIZE]
         try:
             rs = _call_with_throttle_retry(
                 'NSF record add',
@@ -456,8 +444,8 @@ def execute_nsf_record_links(params, folder_record_links):
 
     linked = 0
     for folder_uid, record_uids in folder_record_links.items():
-        for start in range(0, len(record_uids), NSF_FOLDER_RECORD_BATCH):
-            chunk = record_uids[start:start + NSF_FOLDER_RECORD_BATCH]
+        for start in range(0, len(record_uids), NSF_FOLDER_RECORD_BATCH_SIZE):
+            chunk = record_uids[start:start + NSF_FOLDER_RECORD_BATCH_SIZE]
             try:
                 results = _call_with_throttle_retry(
                     'NSF record link',
