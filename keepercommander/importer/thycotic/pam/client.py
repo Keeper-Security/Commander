@@ -281,6 +281,21 @@ class DelineaPamClient:
     def secret_template(self, template_id: int) -> Optional[dict]:
         return self._get('secret_template', template_id)
 
+    def secrets_for_template(self, template_id: int, take: int) -> List[dict]:
+        """Up to *take* secret summaries for one template.
+
+        One page only. ``thycotic_search`` would page the whole template.
+        Summaries carry ``id`` and ``name``; field values come from ``secret``.
+        """
+        if take <= 0:
+            return []
+        data = self.auth.thycotic_entity(
+            f'/v1/secrets?filter.secretTemplateId={int(template_id)}&take={int(take)}')
+        records = data.get('records') if isinstance(data, dict) else None
+        if not isinstance(records, list):
+            return []
+        return [x for x in records if isinstance(x, dict)][:take]
+
     def password_types(self) -> Dict[int, dict]:
         if self._password_types is None:
             self._password_types = {x['passwordTypeId']: x for x in self._list('password_types')
