@@ -32,18 +32,24 @@ _temp_store = SecureTempFileStore()
 DEFAULT_IMPORT_JSON = 'delinea_import.json'
 
 
-def _nested_users(resources: List[dict]) -> List[dict]:
-    return [user for resource in resources for user in resource.get('users') or []]
+def _all_users(resources: Optional[List[dict]], users: Optional[List[dict]] = None) -> List[dict]:
+    """Top-level users plus the users nested under each resource."""
+    return list(users or []) + [user for resource in resources or [] for user in resource.get('users') or []]
+
+
+def _normalize_folder_path(path: str) -> str:
+    """Normalize a Delinea folder path for comparison: backslash separators, no edge slashes, case-insensitive."""
+    return (path or '').replace('/', '\\').strip().strip('\\').casefold()
 
 
 def select_folders(folders: List[dict], prefixes: List[str]) -> List[dict]:
     """Keep folders whose path starts with one of ``prefixes``. Empty means all."""
-    wanted = [prefix.replace('/', '\\').strip().strip('\\').casefold() for prefix in prefixes if prefix.strip()]
+    wanted = [_normalize_folder_path(prefix) for prefix in prefixes if prefix.strip()]
     if not wanted:
         return list(folders)
     selected = []
     for folder in folders:
-        path = (folder.get('folderPath') or folder.get('folderName') or '').replace('/', '\\').strip('\\').casefold()
+        path = _normalize_folder_path(folder.get('folderPath') or folder.get('folderName'))
         name = (folder.get('folderName') or '').casefold()
         if any(path == prefix or path.startswith(prefix + '\\') or name == prefix for prefix in wanted):
             selected.append(folder)
@@ -126,7 +132,7 @@ class DelineaImportOrchestrator:
             logging.warning('Password changer crosswalk file is not applied; using the built-in map')
 
         mapped = self.map(Crosswalk())
-        users = _nested_users(mapped.resources)
+        users = _all_users(mapped.resources, mapped.users)
         for warning in validate_import_data(mapped.resources, mapped.users):
             logging.warning(warning)
 
@@ -236,15 +242,16 @@ class DelineaImportOrchestrator:
         """Save the import document. ``--output`` uses that path; otherwise ``delinea_import.json``."""
         path = path or self.options.output_file or DEFAULT_IMPORT_JSON
         data = self.redacted_document(import_data)
+        # 0o600 covers POSIX; Windows ignores it, so lock the ACL before writing.
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        utils.set_file_permissions(path)
         with os.fdopen(fd, 'w', encoding='utf-8') as fh:
             json.dump(data, fh, indent=2)
-        utils.set_file_permissions(path)
         print(f'Import JSON saved to: {path}')
 
     def print_dry_run(self, mapped: DelineaMappedImport) -> None:
         """Print the import document without writing to the vault."""
-        users = _nested_users(mapped.resources) + mapped.users
+        users = _all_users(mapped.resources, mapped.users)
         print('[DRY RUN] No changes will be made to the vault.\n')
         print(json.dumps(self.redacted_document(self.import_document), indent=2))
         print()
@@ -259,7 +266,7 @@ class DelineaImportOrchestrator:
             return data
         strip_credentials(data)
         pam_data = data.get('pam_data') or {}
-        for user in (pam_data.get('users') or []) + _nested_users(pam_data.get('resources') or []):
+        for user in _all_users(pam_data.get('resources'), pam_data.get('users')):
             if user.get('private_pem_key'):
                 user['private_pem_key'] = '***'
         return data
@@ -267,7 +274,7 @@ class DelineaImportOrchestrator:
     def report(self, mapped: DelineaMappedImport, used_nsf: Optional[bool]) -> None:
         mode = 'dry run' if used_nsf is None else (
             'Nested Share Folders' if used_nsf else 'classic shared folders')
-        users = _nested_users(mapped.resources) + mapped.users
+        users = _all_users(mapped.resources, mapped.users)
         print(f'\nDelinea import ({mode}): {len(mapped.resources)} resources, {len(users)} users, '
               f'{len(mapped.folder_grants)} folders, {len(mapped.secret_grants)} secrets with own permissions')
         if mapped.rotations:

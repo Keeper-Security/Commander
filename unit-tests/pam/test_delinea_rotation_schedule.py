@@ -55,9 +55,9 @@ class TestQuartzCronToKeeperSchedule(unittest.TestCase):
             with self.subTest(schedule=schedule):
                 self.assertIsNotNone(quartz_cron_to_keeper_schedule(RotationMapper.schedule_to_cron(schedule)))
 
-    @unittest.expectedFailure
     def test_out_of_range_clock_is_rejected(self):
-        # Currently returns utcTime "25:00" / "02:99", which Keeper cannot schedule.
+        self.assertIsNone(quartz_cron_to_keeper_schedule('0 0 24 * * ?'))
+        self.assertIsNone(quartz_cron_to_keeper_schedule('0 60 2 * * ?'))
         self.assertIsNone(quartz_cron_to_keeper_schedule('0 0 25 * * ?'))
         self.assertIsNone(quartz_cron_to_keeper_schedule('0 99 2 * * ?'))
 
@@ -93,10 +93,27 @@ class TestScheduleToCron(unittest.TestCase):
             ({'scheduleType': 'Daily', 'startingOn': 'tomorrow'}, '0 0 0 * * ?'),
         ])
 
-    @unittest.expectedFailure
     def test_starting_on_offset_is_converted_to_utc(self):
-        # The result feeds Keeper's utcTime. 02:30-05:00 is 07:30 UTC; the offset is currently ignored.
-        self.assertCron([({'scheduleType': 'Daily', 'startingOn': '2024-01-01T02:30:00-05:00'}, '0 30 7 * * ?')])
+        # The result feeds Keeper's utcTime. 02:30-05:00 is 07:30 UTC.
+        self.assertCron([
+            ({'scheduleType': 'Daily', 'startingOn': '2024-01-01T02:30:00-05:00'}, '0 30 7 * * ?'),
+            ({'scheduleType': 'Daily', 'startingOn': '2024-01-01T23:15:00+05:30'}, '0 45 17 * * ?'),
+        ])
+
+    def test_utc_day_shift_moves_weekday_and_day_of_month(self):
+        late = '2024-01-01T23:00:00-05:00'   # 04:00 UTC next day
+        early = '2024-01-01T01:00:00+05:00'  # 20:00 UTC previous day
+        monthly = {'scheduleType': 'Monthly', 'monthScheduleType': 'Week_Day'}
+        self.assertCron([
+            ({'scheduleType': 'Daily', 'startingOn': late}, '0 0 4 * * ?'),
+            ({'scheduleType': 'Weekly', 'monday': True, 'saturday': True, 'startingOn': late}, '0 0 4 ? * SUN,TUE'),
+            ({'scheduleType': 'Weekly', 'sunday': True, 'startingOn': early}, '0 0 20 ? * SAT'),
+            ({'scheduleType': 'Monthly', 'day': 15, 'startingOn': late}, '0 0 4 16 * ?'),
+            ({'scheduleType': 'Monthly', 'day': 31, 'startingOn': late}, '0 0 4 1 * ?'),
+            ({'scheduleType': 'Monthly', 'day': 1, 'startingOn': early}, '0 0 20 L * ?'),
+            ({**monthly, 'weekNumber': 'second', 'weekDay': 'tue', 'startingOn': late}, '0 0 4 ? * WED#2'),
+            ({**monthly, 'weekNumber': 'first', 'weekDay': 'sun', 'startingOn': early}, '0 0 20 ? * SAT#1'),
+        ])
 
     def test_weekly(self):
         self.assertCron([

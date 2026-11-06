@@ -77,10 +77,15 @@ class RotationMapper:
           * Monthly  ``monthScheduleType`` day-of-month: ``0 M H D */changeEveryMonths ?``;
                      nth weekday: ``0 M H ? */changeEveryMonths DOW#N``
         Returns ``None`` for unknown types so the caller can record a Finding.
+
+        Times are converted to UTC. When that moves the run to another day, the
+        weekday or day of month moves with it (day 0 becomes ``L``, day 32 becomes
+        1). For nth-weekday schedules only the weekday moves, so a run near a
+        month boundary can land on the neighbouring week's occurrence.
         """
         if not isinstance(schedule, dict):
             return None
-        minute, hour = RotationMapper._clock(schedule.get('startingOn'))
+        minute, hour, shift = RotationMapper._clock(schedule.get('startingOn'))
         change = str(schedule.get('scheduleType') or schedule.get('changeType') or '').strip().casefold()
         if change in ('days', 'daily'):
             days = RotationMapper._positive_int(schedule.get('days'), 1)
@@ -92,21 +97,41 @@ class RotationMapper:
             weekdays = RotationMapper._weekdays(schedule)
             if not weekdays:
                 return None
+            weekdays = RotationMapper._sorted_days(RotationMapper._shift_dow(day, shift) for day in weekdays)
             return f'0 {minute} {hour} ? * {",".join(weekdays)}'
         if change == 'monthly':
-            return RotationMapper._monthly_cron(schedule, minute, hour)
+            return RotationMapper._monthly_cron(schedule, minute, hour, shift)
         return None
 
     @staticmethod
-    def _clock(starting_on) -> Tuple[int, int]:
+    def _clock(starting_on) -> Tuple[int, int, int]:
+        """UTC (minute, hour, day shift) for *starting_on*; shift is -1, 0 or +1."""
         if not starting_on:
-            return 0, 0
-        text = str(starting_on).strip().replace('Z', '')
+            return 0, 0, 0
+        text = str(starting_on).strip()
+        if text.endswith(('Z', 'z')):
+            text = text[:-1] + '+00:00'
         try:
             parsed = datetime.datetime.fromisoformat(text)
         except ValueError:
-            return 0, 0
-        return parsed.minute, parsed.hour
+            return 0, 0, 0
+        # The cron feeds Keeper's utcTime. Naive timestamps are taken as UTC.
+        if parsed.tzinfo is None:
+            return parsed.minute, parsed.hour, 0
+        utc = parsed.astimezone(datetime.timezone.utc)
+        shift = (utc.date() - parsed.date()).days
+        return utc.minute, utc.hour, shift
+
+    _QUARTZ_DAYS = ('SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT')
+
+    @staticmethod
+    def _shift_dow(day: str, shift: int) -> str:
+        days = RotationMapper._QUARTZ_DAYS
+        return days[(days.index(day) + shift) % 7]
+
+    @staticmethod
+    def _sorted_days(days) -> List[str]:
+        return sorted(set(days), key=RotationMapper._QUARTZ_DAYS.index)
 
     @staticmethod
     def _positive_int(value, default: int) -> Optional[int]:
@@ -141,7 +166,7 @@ class RotationMapper:
         return False
 
     @staticmethod
-    def _monthly_cron(schedule: dict, minute: int, hour: int) -> Optional[str]:
+    def _monthly_cron(schedule: dict, minute: int, hour: int, shift: int = 0) -> Optional[str]:
         months = RotationMapper._positive_int(schedule.get('changeEveryMonths'), 1)
         if not months:
             return None
@@ -154,7 +179,9 @@ class RotationMapper:
             )
             if not day or day > 31:
                 return None
-            return f'0 {minute} {hour} {day} {month_field} ?'
+            day += shift
+            dom = 'L' if day < 1 else str(1 if day > 31 else day)
+            return f'0 {minute} {hour} {dom} {month_field} ?'
         if kind in ('weekday', 'nthweekday', 'week', 'weekofmonth'):
             dow = RotationMapper._dow(
                 schedule.get('changeEveryMonthsInstanceTarget')
@@ -166,6 +193,7 @@ class RotationMapper:
             )
             if not dow or not nth:
                 return None
+            dow = RotationMapper._shift_dow(dow, shift)
             occurrence = f'{dow}L' if nth == 'L' else f'{dow}#{nth}'
             return f'0 {minute} {hour} ? {month_field} {occurrence}'
         return None

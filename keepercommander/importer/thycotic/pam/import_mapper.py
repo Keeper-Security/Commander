@@ -16,7 +16,7 @@ A privileged account is the second user on that resource.
 
 import copy
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from ...cyberark.pam.safe_folder_mapper import SafeFolderMapper
 from .crosswalk import DEFAULT_CROSSWALK, FALLBACK_MAPPING
@@ -244,30 +244,86 @@ def _mapping_for(secret: dict) -> ChangerMapping:
     return _mapping_from_items(secret)
 
 
+@dataclass(frozen=True)
+class _SecretSignals:
+    """Normalized item values used to infer a password changer."""
+    host: str
+    domain: str
+    port: str
+    name: str
+    has_private_key: bool
+
+    @classmethod
+    def from_secret(cls, secret: dict) -> '_SecretSignals':
+        return cls(
+            host=SecretMapper.item_value(secret, HOST_SLUGS).casefold(),
+            domain=SecretMapper.item_value(secret, DOMAIN_SLUGS).casefold(),
+            port=SecretMapper.item_value(secret, PORT_SLUGS).strip(),
+            name=(secret.get('name') or '').casefold(),
+            has_private_key=bool(SecretMapper.item_value(secret, PRIVATE_KEY_SLUGS)),
+        )
+
+
+_Predicate = Callable[[_SecretSignals], bool]
+
+
+def _always(_: _SecretSignals) -> bool:
+    return True
+
+
+@dataclass(frozen=True)
+class _ChangerRule:
+    """One row of the inference table.
+
+    A rule matches when ``when`` holds and, if any hints are given, at least one
+    hint matches (a port, a term in the secret name or host, or ``hint``).
+    """
+    crosswalk_key: str
+    when: _Predicate = _always
+    ports: Tuple[str, ...] = ()
+    name_terms: Tuple[str, ...] = ()
+    host_terms: Tuple[str, ...] = ()
+    hint: Optional[_Predicate] = None
+
+    def matches(self, s: _SecretSignals) -> bool:
+        if not self.when(s):
+            return False
+        if not (self.ports or self.name_terms or self.host_terms or self.hint):
+            return True
+        return (s.port in self.ports
+                or any(term in s.name for term in self.name_terms)
+                or any(term in s.host for term in self.host_terms)
+                or bool(self.hint and self.hint(s)))
+
+
+def _domain_only(s: _SecretSignals) -> bool:
+    return bool(s.domain) and not s.host
+
+
+def _has_host(s: _SecretSignals) -> bool:
+    return bool(s.host)
+
+
+# Evaluated top to bottom; the first match wins, so order is significant.
+_CHANGER_RULES: Tuple[_ChangerRule, ...] = (
+    _ChangerRule('unix account (ssh key rotation)', when=lambda s: s.has_private_key),
+    _ChangerRule('sql server account', ports=('1433',), name_terms=('sql server',)),
+    _ChangerRule('mysql account', ports=('3306',), name_terms=('mysql',)),
+    _ChangerRule('postgresql account', ports=('5432',), name_terms=('postgres',)),
+    _ChangerRule('oracle account', ports=('1521',), name_terms=('oracle',)),
+    _ChangerRule('openldap account', when=_domain_only, name_terms=('ldap',)),
+    _ChangerRule('active directory account', when=_domain_only),
+    _ChangerRule('windows account', when=_has_host, ports=('3389', '5985', '5986'),
+                 name_terms=('windows',), host_terms=('windows',), hint=lambda s: bool(s.domain)),
+    _ChangerRule('unix account (ssh)', when=_has_host),
+)
+
+
 def _mapping_from_items(secret: dict) -> ChangerMapping:
-    host = SecretMapper.item_value(secret, HOST_SLUGS)
-    domain = SecretMapper.item_value(secret, DOMAIN_SLUGS)
-    port = SecretMapper.item_value(secret, PORT_SLUGS)
-    name = (secret.get('name') or '').casefold()
-    if SecretMapper.item_value(secret, PRIVATE_KEY_SLUGS):
-        return DEFAULT_CROSSWALK['unix account (ssh key rotation)']
-    if port == '1433' or 'sql server' in name:
-        return DEFAULT_CROSSWALK['sql server account']
-    if port == '3306' or 'mysql' in name:
-        return DEFAULT_CROSSWALK['mysql account']
-    if port == '5432' or 'postgres' in name:
-        return DEFAULT_CROSSWALK['postgresql account']
-    if port == '1521' or 'oracle' in name:
-        return DEFAULT_CROSSWALK['oracle account']
-    if domain and not host:
-        if 'ldap' in name:
-            return DEFAULT_CROSSWALK['openldap account']
-        return DEFAULT_CROSSWALK['active directory account']
-    host_name = host.casefold()
-    if host and (domain or 'windows' in name or 'windows' in host_name or port in ('3389', '5985', '5986')):
-        return DEFAULT_CROSSWALK['windows account']
-    if host:
-        return DEFAULT_CROSSWALK['unix account (ssh)']
+    signals = _SecretSignals.from_secret(secret)
+    for rule in _CHANGER_RULES:
+        if rule.matches(signals):
+            return DEFAULT_CROSSWALK[rule.crosswalk_key]
     return FALLBACK_MAPPING
 
 

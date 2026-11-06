@@ -475,6 +475,8 @@ def quartz_cron_to_keeper_schedule(cron):
     _second, minute, hour, dom, month, dow = parts
     if not minute.isdigit() or not hour.isdigit():
         return None
+    if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+        return None
     utc_time = f'{int(hour):02d}:{int(minute):02d}'
     weekdays = {
         'SUN': 'SUNDAY', 'MON': 'MONDAY', 'TUE': 'TUESDAY', 'WED': 'WEDNESDAY',

@@ -1747,7 +1747,10 @@ class PAMProjectImportCommand(Command):
                     pam_users.append(user)
             launch_uid = get_launch_credential(mach, True)
 
-            def _keep_distinct_admin():
+            def _apply_launch_credentials():
+                if not (launch_uid or admin_uid) or isinstance(mach, PamRemoteBrowserObject):
+                    return
+                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
                 # set_launch_credentials stores is_admin on the local edge only
                 # when admin and launch are the same user. When they differ,
                 # the follow-up save still has the admin edge without is_admin
@@ -1758,9 +1761,7 @@ class PAMProjectImportCommand(Command):
                 if resource_vertex is not None:
                     tdag.link_user(admin_uid, resource_vertex, is_admin=True, belongs_to=True)
 
-            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
-                _keep_distinct_admin()
+            _apply_launch_credentials()
             for user in pam_users:
                 if user.rotation_settings:
                     args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
@@ -1795,9 +1796,7 @@ class PAMProjectImportCommand(Command):
             # Re-assert launch and admin after rotation. set_launch_credentials
             # is the last write so a later meta update cannot drop is_admin
             # when the admin and launch users are different records.
-            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
-                tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
-                _keep_distinct_admin()
+            _apply_launch_credentials()
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
