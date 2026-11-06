@@ -220,14 +220,11 @@ class DelineaPamClient:
         if secret_id not in self._secret_details:
             raw = self.secret(secret_id)
             if not isinstance(raw, dict):
-                logging.warning('Secret %s (%s) could not be read', secret_id, name or '')
+                logging.warning('Secret %s could not be read', secret_id)
                 self._secret_details[secret_id] = None
             else:
                 detail = self.extract_secret_detail(raw, secret_id, name)
-                policy = 'unassigned' if detail['secretPolicyId'] == UNASSIGNED_POLICY_ID else detail['secretPolicyId']
-                logging.info('Secret %s (%s): template %s, site %s, rotation %s, policy %s',
-                             secret_id, detail['name'], detail['secretTemplateId'],
-                             detail['siteId'], detail['autoChangeEnabled'], policy)
+                logging.info('Secret %s: details loaded', secret_id)
                 self._secret_details[secret_id] = detail
                 if detail['autoChangeEnabled']:
                     self._apply_rpc(detail)
