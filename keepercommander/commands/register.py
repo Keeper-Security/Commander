@@ -37,7 +37,7 @@ from .. import api, utils, crypto, constants, rest_api, vault, vault_extensions
 from ..display import bcolors
 from ..error import KeeperApiError, CommandError, Error
 from ..loginv3 import LoginV3API
-from ..params import KeeperParams
+from ..params import KeeperParams, RecordOwner
 from ..proto import APIRequest_pb2, folder_pb2, record_pb2, enterprise_pb2
 from ..shared_record import SharePermissions, get_shared_records, SharedRecord
 from ..sox.sox_types import Record
@@ -92,6 +92,9 @@ share_record_parser.add_argument('-roe', '--rotate-on-expiration', dest='rotate_
                                  help='rotate the password when the share access expires. '
                                       'Only valid on grant; requires a positive --expire-at/--expire-in '
                                       '(not "never") and a pamUser record with rotation configured.')
+share_record_parser.add_argument('--revoke-previous-owner', dest='revoke_previous_owner', action='store_true',
+                                 help='when transferring ownership (-a owner), also remove the previous owner\'s '
+                                      'direct share access')
 share_record_parser.add_argument('record', nargs='?', type=str, action='store', help='record/shared folder path/UID')
 
 share_folder_parser = argparse.ArgumentParser(
@@ -1349,11 +1352,33 @@ class ShareRecordCommand(Command):
                 params.sync_data = True
             return
 
+        if kwargs.get('revoke_previous_owner') and action != 'owner':
+            raise CommandError('share-record', '--revoke-previous-owner is only valid with -a owner')
+
         rq = ShareRecordCommand.prep_request(params, kwargs)
-        rq and ShareRecordCommand.send_requests(params, [rq])
+        if rq:
+            transfer_uids = {}
+            for sr in itertools.chain(rq.addSharedRecord, rq.updateSharedRecord):
+                if getattr(sr, 'transfer', False):
+                    transfer_uids[(utils.base64_url_encode(sr.recordUid), sr.toUsername.lower())] = sr.recordUid
+            succeeded = ShareRecordCommand.send_requests(params, [rq])
+            if action == 'owner' and kwargs.get('revoke_previous_owner') and params.user and succeeded:
+                revoke_rq = record_pb2.RecordShareUpdateRequest()
+                revoked_seen = set()
+                for rec_uid, target_email in succeeded:
+                    raw_uid = transfer_uids.get((rec_uid, target_email.lower()))
+                    if raw_uid and rec_uid not in revoked_seen and target_email.lower() != params.user.lower():
+                        revoked_seen.add(rec_uid)
+                        sr_remove = record_pb2.SharedRecord()
+                        sr_remove.toUsername = params.user
+                        sr_remove.recordUid = raw_uid
+                        revoke_rq.removeSharedRecord.append(sr_remove)
+                if len(revoke_rq.removeSharedRecord) > 0:
+                    ShareRecordCommand.send_requests(params, [revoke_rq])
 
     @staticmethod
     def send_requests(params, requests):
+        succeeded = []
         requests = iter(requests)
         rq = next(requests, None)
         while rq and (len(rq.addSharedRecord) > 0 or len(rq.updateSharedRecord) > 0 or len(rq.removeSharedRecord) > 0):
@@ -1375,7 +1400,13 @@ class ShareRecordCommand(Command):
                 del rq.removeSharedRecord[0:added]
                 left -= added
 
+            transfer_targets = {
+                (utils.base64_url_encode(sr.recordUid), sr.toUsername.lower()): sr.toUsername
+                for sr in itertools.chain(rq1.addSharedRecord, rq1.updateSharedRecord)
+                if getattr(sr, 'transfer', False)
+            }
             rs = api.communicate_rest(params, rq1, 'vault/records_share_update', rs_type=record_pb2.RecordShareUpdateResponse)
+            params.sync_data = True
             record_exp = _record_share_expiration_lookup(rq1)
             for attr in ['addSharedRecordStatus', 'updateSharedRecordStatus', 'removeSharedRecordStatus']:
                 if hasattr(rs, attr):
@@ -1392,6 +1423,10 @@ class ShareRecordCommand(Command):
                                 'Failed to %s record \"%s\" access permissions for user \'%s\': %s',
                                 verb, record_uid, email, status_rs.message)
                             continue
+                        succeeded.append((record_uid, email))
+                        if (record_uid, email.lower()) in transfer_targets and hasattr(params, 'record_owner_cache'):
+                            is_self = bool(params.user and params.user.lower() == email.lower())
+                            params.record_owner_cache[record_uid] = RecordOwner(is_self, email)
                         verb = ('granted to' if attr == 'addSharedRecordStatus'
                                 else 'changed for' if attr == 'updateSharedRecordStatus'
                                 else 'revoked from')
@@ -1402,6 +1437,7 @@ class ShareRecordCommand(Command):
                             'Record \"%s\" access permissions has been %s user \'%s\'%s',
                             record_uid, verb, email, exp_suffix)
             rq = next(requests, None)
+        return succeeded
 
 
 class ShareReportCommand(Command):
