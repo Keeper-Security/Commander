@@ -159,6 +159,7 @@ class SelfManagedServerKey(NamedTuple):
     public_key: str        # base64url, 65-byte uncompressed P-256 point
     source: str            # where the key came from, for messages
     fetched: bool = False  # True: published by the server; False: set by the user
+    router_url: Optional[str] = None   # "routerUrl" of the server reply, already validated
 
 
 _configured_server_keys = {}   # type: Dict[str, SelfManagedServerKey]
@@ -291,6 +292,29 @@ def _unverified_reason(context):   # type: (RestApiContext) -> Optional[str]
     return None
 
 
+def parse_router_url(value):   # type: (object) -> Optional[str]
+    """The validated "routerUrl" of a server key reply, or None. The value is https://<host>[:port] with no
+    credentials, path, query, or fragment. An invalid value is logged and ignored."""
+    if value is None:
+        return None
+    try:
+        # Imported here: constants does not import this module at load time.
+        from .constants import parse_router_override
+        if not isinstance(value, str) or not value.lower().startswith('https://') or value.endswith('/'):
+            raise ValueError('it must be https://<host>[:port] with no path')
+        parse_router_override(value, 'routerUrl')
+        return value
+    except ValueError as e:
+        logging.warning('The routerUrl of the server is ignored: %s', e)
+        return None
+
+
+def get_discovered_router_url(server):   # type: (str) -> Optional[str]
+    """The "routerUrl" that this self-managed host published, or None."""
+    key = _resolved_server_keys.get(server_host(server))
+    return parse_router_url(key.router_url) if key else None
+
+
 def _fetch_server_key_from(context, url):   # type: (RestApiContext, str) -> SelfManagedServerKey
     rs = requests.get(url, proxies=context.proxies, verify=context.certificate_check,
                       timeout=SERVER_KEY_FETCH_TIMEOUT)
@@ -306,6 +330,7 @@ def _fetch_server_key_from(context, url):   # type: (RestApiContext, str) -> Sel
     if not public_key or not key_id:
         raise ValueError(f'has no server key: {server_key.get("error") or "serverPublicKey is missing"}')
     key = _make_server_key(key_id, public_key, f'fetched from {url}', fetched=True)
+    key = key._replace(router_url=parse_router_url(server_key.get('routerUrl')))
     published = server_key.get('fingerprint')
     if isinstance(published, str) and published:
         if _fingerprint_matches(published, public_key) is False:

@@ -619,7 +619,8 @@ def get_router_target(server_hostname, config=None):   # type: (str, Optional[di
     """The only source of the Router location. Order of precedence:
     1. KROUTER_URL environment variable (host[:port], or an http, https, ws, or wss URL with an optional path),
     2. "router_hosts" in the config (params.config) of Commander, a host[:port] or an https URL per server,
-    3. connect.<vault host>.
+    3. "routerUrl" from the server key reply of a self-managed host (no Router when it is missing),
+    4. connect.<vault host>, for Keeper cloud hosts only.
     The keeper_dag connection classes also read ROUTER_HOST between 1 and 2.
     Raise RouterHostError if an override is invalid."""
     override = os.getenv('KROUTER_URL')
@@ -628,6 +629,16 @@ def get_router_target(server_hostname, config=None):   # type: (str, Optional[di
     configured = _configured_router_target(server_hostname, config)
     if configured:
         return configured
+    if server_hostname:
+        # Imported here: rest_api imports this module.
+        from . import rest_api
+        if not rest_api.is_keeper_cloud_host(server_hostname):
+            # A self-managed host never gets a guessed connect.<host>.
+            discovered = rest_api.get_discovered_router_url(server_hostname)
+            if discovered:
+                return parse_router_override(discovered, 'routerUrl')
+            raise RouterHostError('Router host', f'the server {server_hostname} did not publish a routerUrl. '
+                                  'Router is not available. Set KROUTER_URL or "router_hosts" to use one.')
     return RouterTarget(f'connect.{get_keeper_host_for_services(server_hostname)}', '', None)
 
 

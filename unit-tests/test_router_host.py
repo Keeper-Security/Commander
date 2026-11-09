@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest import mock
 
-from keepercommander import constants, error
+from keepercommander import constants, error, rest_api
 from keepercommander.commands.pam import router_helper
 from keepercommander.keeper_dag.connection import commander as dag_commander
 from keepercommander.keeper_dag.connection import ksm as dag_ksm
@@ -67,9 +67,12 @@ class TestGetRouterHost(RouterHostTestBase):
         self.assertEqual(constants.get_router_base(CLOUD), 'https://connect.keepersecurity.com')
         self.assertEqual(constants.get_router_host('govcloud.keepersecurity.us'), 'connect.keepersecurity.us')
 
-    def test_ip_without_override_keeps_derived_value(self):
-        self.assertEqual(constants.get_router_host('10.1.2.3'), 'connect.10.1.2.3')
-        self.assertEqual(constants.get_router_host(None), 'connect.None')
+    def test_self_hosted_without_router_url_has_no_router(self):
+        # Never guess connect.<host> for a self-hosted host.
+        with self.assertRaises(constants.RouterHostError):
+            constants.get_router_host('10.1.2.3')
+        with self.assertRaises(constants.RouterHostError):
+            constants.get_router_host('smk.test')
 
     def test_bare_host_and_port(self):
         os.environ['KROUTER_URL'] = 'connect.example.test:8443'
@@ -127,8 +130,65 @@ class TestGetRouterHost(RouterHostTestBase):
             constants.get_router_host('a.test', {'router_hosts': 'nope'})
 
     def test_no_config_is_fine(self):
-        self.assertEqual(constants.get_router_host('a.test', None), 'connect.a.test')
-        self.assertEqual(constants.get_router_host('a.test', {}), 'connect.a.test')
+        self.assertEqual(constants.get_router_host(CLOUD, None), 'connect.keepersecurity.com')
+        self.assertEqual(constants.get_router_host(CLOUD, {}), 'connect.keepersecurity.com')
+
+
+class TestDiscoveredRouterUrl(RouterHostTestBase):
+    HOST = 'smk.test'
+
+    def _discover(self, value):
+        key = rest_api.SelfManagedServerKey(7, 'k', 'test', True, value)
+        patcher = mock.patch.dict(rest_api._resolved_server_keys, {self.HOST: key})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_router_url_is_used_for_self_hosted(self):
+        self._discover('https://connect.smk.test:8443')
+        self.assertEqual(constants.get_router_host(self.HOST), 'connect.smk.test:8443')
+        self.assertEqual(constants.get_router_base(self.HOST), 'https://connect.smk.test:8443')
+
+    def test_explicit_settings_win_over_router_url(self):
+        self._discover('https://connect.smk.test')
+        config = {'router_hosts': {self.HOST: 'r.test'}}
+        self.assertEqual(constants.get_router_host(self.HOST, config), 'r.test')
+        with mock.patch.dict(os.environ, {'KROUTER_URL': 'k.test'}):
+            self.assertEqual(constants.get_router_host(self.HOST, config), 'k.test')
+
+    def test_invalid_router_url_is_ignored(self):
+        for value in ('http://r.test', 'https://r.test/path', 'https://r.test/', 'https://u:p@r.test',
+                      'https://r.test?x=1', 'https://r.test#f', 'https://', 'r.test', 7):
+            self._discover(value)
+            self.assertIsNone(rest_api.get_discovered_router_url(self.HOST), value)
+            with self.assertRaises(constants.RouterHostError):
+                constants.get_router_host(self.HOST)
+
+    def test_cloud_ignores_router_url(self):
+        key = rest_api.SelfManagedServerKey(7, 'k', 'test', True, 'https://evil.test')
+        with mock.patch.dict(rest_api._resolved_server_keys, {CLOUD: key}):
+            self.assertEqual(constants.get_router_host(CLOUD), 'connect.keepersecurity.com')
+
+    def test_fetch_reads_router_url(self):
+        _, public_key = utils_key()
+        reply = mock.Mock()
+        reply.json.return_value = {'serverPublicKey': public_key, 'serverPublicKeyId': 7,
+                                   'routerUrl': 'https://connect.smk.test'}
+        with mock.patch('keepercommander.rest_api.requests.get', return_value=reply):
+            key = rest_api._fetch_server_key_from(mock.Mock(proxies=None, certificate_check=True), 'https://smk.test/x')
+        self.assertEqual(key.router_url, 'https://connect.smk.test')
+        reply.json.return_value['routerUrl'] = 'http://bad.test'
+        with mock.patch('keepercommander.rest_api.requests.get', return_value=reply):
+            key = rest_api._fetch_server_key_from(mock.Mock(proxies=None, certificate_check=True), 'https://smk.test/x')
+        self.assertIsNone(key.router_url)
+
+
+def utils_key():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from keepercommander import utils
+    k = ec.generate_private_key(ec.SECP256R1())
+    return k, utils.base64_url_encode(k.public_key().public_bytes(
+        serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint))
 
 
 class TestStrictHostSyntax(RouterHostTestBase):
@@ -258,7 +318,7 @@ class TestCallers(RouterHostTestBase):
         self.assertIn('ROUTER_HOST', str(ctx.exception))
         del os.environ['ROUTER_HOST']
         self.assertEqual(get('a.test', config).host, 'cfg.test')
-        self.assertEqual(get('a.test').host, 'connect.a.test')
+        self.assertEqual(get(CLOUD).host, 'connect.keepersecurity.com')
 
     def test_dag_ksm_url(self):
         conn, patcher = _ksm()
