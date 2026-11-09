@@ -1806,6 +1806,7 @@ class LoginCommand(Command):
 
         if params.session_token and not skip_sync:
             params.enterprise = None
+            params.enterprise_loader = None
             params._pedm_plugin = None
             SyncDownCommand().execute(params, force=True)
             if params.is_enterprise_admin:
