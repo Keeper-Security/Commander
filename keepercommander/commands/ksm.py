@@ -1521,6 +1521,25 @@ class KSMCommand(Command):
         print('')
 
     @staticmethod
+    def _current_member_permissions(params, app_uid, *, user_id=None, team_uid=None):
+        # type: (KeeperParams, str, Optional[int], Optional[str]) -> Optional[dict]
+        """A member's current can_manage_* permissions, read from the server (vault/get_app_info).
+
+        Sync-down only carries the caller's own membership rows (ksm_app_users/ksm_app_teams), so the
+        local cache can't tell what permissions any other member has right now."""
+        for ai in KSMCommand.get_app_info(params, app_uid):
+            members = ai.users if user_id is not None else ai.teams
+            for m in members:
+                if (user_id is not None and m.userId == user_id) or \
+                        (team_uid is not None and utils.base64_url_encode(m.teamUid) == team_uid):
+                    return {
+                        'can_manage_users': m.canManageUsers,
+                        'can_manage_shares': m.canManageShares,
+                        'can_manage_devices': m.canManageDevices,
+                    }
+        return None
+
+    @staticmethod
     def _membership_entry_ok(rs, subject, hint=None):
         """Returns True if the single app membership entry succeeded; otherwise warns and returns False."""
         status = rs.statuses[0] if rs is not None and rs.statuses else None
@@ -1587,10 +1606,9 @@ class KSMCommand(Command):
             return
 
         app_uid = app.get('record_uid')
-        current = params.ksm_app_users.get(app_uid, {}).get(email)
+        current = KSMCommand._current_member_permissions(params, app_uid, user_id=user_id)
         if current is None:
-            logging.warning('User "%s" is not currently a member of this application. '
-                            'Run "sync-down" if this app membership was recently added.' % email)
+            logging.warning('User "%s" is not currently a member of this application.' % email)
             return
 
         entry = APIRequest_pb2.AppUserUpdateEntry()
@@ -1677,10 +1695,9 @@ class KSMCommand(Command):
             return
 
         app_uid = app.get('record_uid')
-        current = params.ksm_app_teams.get(app_uid, {}).get(team_uid)
+        current = KSMCommand._current_member_permissions(params, app_uid, team_uid=team_uid)
         if current is None:
-            logging.warning('Team "%s" is not currently a member of this application. '
-                            'Run "sync-down" if this app membership was recently added.' % team_name_or_uid)
+            logging.warning('Team "%s" is not currently a member of this application.' % team_name_or_uid)
             return
 
         entry = APIRequest_pb2.AppTeamUpdateEntry()

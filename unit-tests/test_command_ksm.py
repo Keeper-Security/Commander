@@ -691,9 +691,25 @@ class TestKSMMembershipCommandStatus(unittest.TestCase):
         self.app_uid = utils.base64_url_encode(bytes(range(16)))
         self.team_uid = utils.base64_url_encode(bytes(range(16, 32)))
         self.params = MagicMock()
-        bits = {'can_manage_users': True, 'can_manage_shares': False, 'can_manage_devices': False}
-        self.params.ksm_app_users = {self.app_uid: {self.EMAIL: dict(bits)}}
-        self.params.ksm_app_teams = {self.app_uid: {self.team_uid: dict(bits)}}
+        # Sync-down only carries the caller's own membership rows, so update must not rely on them.
+        self.params.ksm_app_users = {}
+        self.params.ksm_app_teams = {}
+        self.app_info = [self._app_info(user_id=7, team_uid=self.team_uid)]
+
+    @staticmethod
+    def _app_info(user_id=None, team_uid=None):
+        from keepercommander import utils
+        from keepercommander.proto import APIRequest_pb2
+        ai = APIRequest_pb2.AppInfo()
+        if user_id is not None:
+            u = ai.users.add()
+            u.userId = user_id
+            u.canManageUsers = True
+        if team_uid is not None:
+            t = ai.teams.add()
+            t.teamUid = utils.base64_url_decode(team_uid)
+            t.canManageUsers = True
+        return ai
 
     def _run(self, command, rs_class, status, *args):
         """Runs a KSMCommand method with the lookups and the server call faked. Returns (printed, warn, auto_share)."""
@@ -708,6 +724,7 @@ class TestKSMMembershipCommandStatus(unittest.TestCase):
             patch('keepercommander.commands.ksm.encrypt_for_team', return_value=(b'encrypted', 2)),
             patch('keepercommander.commands.ksm.api.communicate_rest',
                   return_value=_status_response(rs_class, status, 'server says no')),
+            patch('keepercommander.commands.ksm.KSMCommand.get_app_info', side_effect=lambda *a: self.app_info),
         ]
         auto_share = patch('keepercommander.commands.ksm.KSMCommand._auto_share_app_folders')
         printer = patch('builtins.print')
@@ -806,8 +823,39 @@ class TestKSMMembershipCommandStatus(unittest.TestCase):
         self.assertNotIn('Successfully', printed)
         warn.assert_called_once()
 
+    def test_update_member_not_on_app_warns(self):
+        """A member missing from vault/get_app_info is reported, and no update is claimed."""
+        from keepercommander.proto import APIRequest_pb2
+        self.app_info = [self._app_info()]
+        for command, rs_class, subject in (
+                (KSMCommand.update_app_user, APIRequest_pb2.AppUserUpdateResponse, self.EMAIL),
+                (KSMCommand.update_app_team, APIRequest_pb2.AppTeamUpdateResponse, self.TEAM)):
+            printed, warn, _ = self._run(command, rs_class, 'ok', subject, None, 'on', None)
+            self.assertNotIn('Successfully', printed)
+            self.assertIn('not currently a member', warn.call_args[0][0])
+
+    def test_update_team_keeps_bits_that_are_not_passed(self):
+        """Omitted options keep the team's current bits from vault/get_app_info."""
+        from keepercommander.proto import APIRequest_pb2
+        sent = {}
+
+        def capture(params, rq, endpoint, rs_type=None):
+            sent['entry'] = rq.teams[0]
+            return _status_response(APIRequest_pb2.AppTeamUpdateResponse, 'ok')
+
+        app = {'record_uid': self.app_uid}
+        with patch('keepercommander.commands.ksm.KSMCommand.get_app_record', return_value=app), \
+             patch('keepercommander.commands.ksm.KSMCommand.resolve_team_uid', return_value=self.team_uid), \
+             patch('keepercommander.commands.ksm.KSMCommand.get_app_info', return_value=self.app_info), \
+             patch('keepercommander.commands.ksm.api.communicate_rest', side_effect=capture), \
+             patch('builtins.print'):
+            KSMCommand.update_app_team(self.params, self.app_uid, self.TEAM, None, None, 'on')
+        self.assertTrue(sent['entry'].canManageUsers, 'can_manage_users was not passed, so it keeps its value')
+        self.assertFalse(sent['entry'].canManageShares)
+        self.assertTrue(sent['entry'].canManageDevices, 'can_manage_devices was passed on')
+
     def test_update_user_keeps_bits_that_are_not_passed(self):
-        """Omitted options keep the member's current bits from the local cache."""
+        """Omitted options keep the member's current bits from vault/get_app_info."""
         from keepercommander.proto import APIRequest_pb2
         sent = {}
 
@@ -818,6 +866,7 @@ class TestKSMMembershipCommandStatus(unittest.TestCase):
         app = {'record_uid': self.app_uid}
         with patch('keepercommander.commands.ksm.KSMCommand.get_app_record', return_value=app), \
              patch('keepercommander.commands.ksm.KSMCommand.resolve_enterprise_user_id', return_value=7), \
+             patch('keepercommander.commands.ksm.KSMCommand.get_app_info', return_value=self.app_info), \
              patch('keepercommander.commands.ksm.api.communicate_rest', side_effect=capture), \
              patch('builtins.print'):
             KSMCommand.update_app_user(self.params, self.app_uid, self.EMAIL, None, 'on', None)
