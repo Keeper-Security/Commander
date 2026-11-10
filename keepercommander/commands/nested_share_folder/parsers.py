@@ -432,3 +432,7 @@ nested_share_folder_convert_parser.add_argument(
 nested_share_folder_convert_parser.add_argument(
     '--dry-run', dest='dry_run', action='store_true',
     help='Preview the folder, record, and depth mapping without changing the vault')
+nested_share_folder_convert_parser.add_argument(
+    '--retry', dest='retry', action='store_true',
+    help='Best-effort manual reconciliation of a partial conversion; requires confirmation '
+         'and cannot be used with --force')

@@ -310,6 +310,8 @@ One or more Classic record UIDs, titles, or paths
 
 `-f`, `--force` Skip the confirmation prompt
 
+If a destination name matches multiple NSF folders, the command lists each path and UID and asks which destination to use. With `--force`, provide a UID or unambiguous path instead of a name.
+
 **Important:** Conversion cannot be rolled back. Direct user shares are retained. Classic shared-folder membership and additional Classic folder placements are not retained.
 
 PAM record types (record types beginning with `pam`, including PAM machine, user, database, directory, and remote-browser records) cannot be converted. They are reported and left in Classic form.
@@ -361,6 +363,10 @@ Classic folder UID, title, or path
 
 `-f`, `--force` Skip prompts and delete the Classic source only after full success and when no PAM records were skipped.
 
+`--retry` Best-effort, interactive reconciliation of a prior partial conversion. It lists existing NSF folders matching the expected names and parents, lets you map ambiguous same-name folders by UID, reuses only the folders you confirm, and creates missing ones. Records still present in the Classic source are checked by UID so already-converted records are not converted again; missing known placements and application shares are reconciled. This is not a persisted transaction journal and cannot prove that a matching folder came from the earlier attempt, so review the proposed paths, UIDs, and matching-record counts carefully. It requires confirmation and cannot be combined with `--force`. If no existing structure is selected, a new one is created and any prior partial folders are left untouched.
+
+If a destination name matches multiple NSF folders, the command lists each path and UID and asks which destination to use. With `--force`, provide a UID or unambiguous path instead of a name.
+
 **Depth handling:** Folders within the allowed depth keep their hierarchy. Each folder beyond the limit is promoted to the deepest allowed level as its own folder; its records remain associated with that folder. Duplicate folder names are allowed and handled using source-to-target folder UID mappings. The depth limit is the current NSF limit.
 
 **Deletion:** After a fully successful conversion, the command asks whether to delete the Classic source tree. Use `--force` to skip prompts and delete after success. Partial conversions and conversions that skipped PAM records never delete the Classic source.
@@ -374,6 +380,7 @@ nsf-convert-folder "Client Files"
 nsf-convert-folder abc123folderuid --folder "Archive"
 nsf-convert-folder "Client Files" --dry-run
 nsf-convert-folder "Client Files" --force
+nsf-convert-folder "Client Files" --retry
 ```
 
 1. Convert the selected folder tree to the Nested Share Folder root and choose whether to remove the Classic source.
