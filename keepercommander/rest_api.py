@@ -177,7 +177,11 @@ def server_host(server):   # type: (str) -> str
 
 
 def is_keeper_cloud_host(server):   # type: (str) -> bool
-    hostname = server_host(server).split(':')[0]
+    try:
+        hostname = urlparse(server if '://' in server else 'https://' + server).hostname or ''
+        hostname = hostname.encode('idna').decode('ascii').lower()
+    except (ValueError, UnicodeError):
+        return False
     return any(hostname == d or hostname.endswith('.' + d) for d in KEEPER_CLOUD_DOMAINS)
 
 

@@ -399,3 +399,16 @@ class TestDiagnose(RouterHostTestBase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestIsKeeperCloudHost(unittest.TestCase):
+    def test_ipv6_literal_is_not_cloud(self):
+        for value in ('[::1]', '[::1]:8443', '[2001:db8::1]:443', 'https://[::1]:8443'):
+            self.assertFalse(rest_api.is_keeper_cloud_host(value), value)
+
+    def test_idn_form_is_normalized(self):
+        # The full-width "k" maps to "k" in the idna codec.
+        self.assertTrue(rest_api.is_keeper_cloud_host('\uff4beepersecurity.com'))
+        self.assertTrue(rest_api.is_keeper_cloud_host('EU.KeeperSecurity.com:443'))
+        self.assertFalse(rest_api.is_keeper_cloud_host('keepersecurity.com.evil.test'))
+        self.assertFalse(rest_api.is_keeper_cloud_host('a' * 64 + '.keepersecurity.com'))
