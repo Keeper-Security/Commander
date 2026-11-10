@@ -852,8 +852,8 @@ class ShareFolderCommand(Command):
                     elif action == 'remove':
                         rq.sharedFolderRemoveTeam.append(to.teamUid)
                 elif action == 'grant':
-                    to.manageRecords = True if mr else curr_sf.get('default_manage_records') is True
-                    to.manageUsers = True if mu else curr_sf.get('default_manage_users') is True
+                    to.manageRecords = curr_sf.get('default_manage_records') is True if mr is None else mr == 'on'
+                    to.manageUsers = curr_sf.get('default_manage_users') is True if mu is None else mu == 'on'
                     sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
                     if sf_key:
                         api.load_team_keys(params, [team_uid])
