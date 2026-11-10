@@ -44,6 +44,25 @@ class RegionRedirectTest(unittest.TestCase):
         self.assertEqual(params.server, 'evil.example')
         reg.assert_called_once()
 
+    def test_protobuf_redirect_on_custom_host_is_refused(self):
+        from keepercommander.proto import APIRequest_pb2
+        params = mock.Mock()
+        params.server = 'keeper.corp.example'
+        params.user = 'u@example.com'
+        params.biometric = False
+        params.clone_code = None
+        params.config = {}
+        resp = mock.Mock(loginState=APIRequest_pb2.REGION_REDIRECT, stateSpecificValue='evil.example')
+        api = loginv3.LoginV3API
+        with mock.patch.object(api, 'get_device_id', return_value=b'tok'), \
+                mock.patch.object(api, 'startLoginMessage', side_effect=[resp, RuntimeError('followed the redirect')]), \
+                mock.patch.object(api, 'register_device_in_region') as reg:
+            with self.assertRaises(error.KeeperApiError) as ctx:
+                loginv3.LoginV3Flow().login(params)
+        self.assertEqual(ctx.exception.result_code, 'server_redirect_refused')
+        self.assertEqual(params.server, 'keeper.corp.example')
+        reg.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

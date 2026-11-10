@@ -275,6 +275,7 @@ class LoginV3Flow:
                 raise Exception('This account needs to be created.' % rest_api.CLIENT_VERSION)
 
             elif resp.loginState == APIRequest_pb2.REGION_REDIRECT:
+                LoginV3API.refuse_redirect_on_custom_host(params)
                 params.server = resp.stateSpecificValue
                 print('Redirecting to region: %s' % params.server, file=sys.stderr)
                 LoginV3API.register_device_in_region(params, encryptedDeviceToken)
