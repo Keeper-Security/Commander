@@ -63,6 +63,11 @@ class DelineaPamClient:
         return cls(auth)
 
     def _get(self, key: str, entity_id: int) -> Optional[dict]:
+        """Fetch and cache entity by key and id. Returns None if not found or fetch fails.
+
+        Note: Caches all responses including None (for "not found"). This is safe for
+        single-session imports but assumes server state does not change mid-import.
+        """
         bucket = self._cache.setdefault(key, {})
         if entity_id not in bucket:
             bucket[entity_id] = self.auth.thycotic_entity(
