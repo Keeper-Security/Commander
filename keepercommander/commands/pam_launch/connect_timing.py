@@ -135,24 +135,29 @@ def webrtc_connection_poll_sec() -> float:
 
 
 _PAM_WEBRTC_CONNECT_TIMEOUT_ENV = 'PAM_WEBRTC_CONNECT_TIMEOUT_SEC'
-_PAM_WEBRTC_CONNECT_TIMEOUT_DEFAULT = 24.0  # seconds — see note below
+_PAM_WEBRTC_CONNECT_TIMEOUT_DEFAULT = 60.0  # seconds — see note below
 
 
 def webrtc_connect_timeout_sec() -> float:
     """Maximum wall-clock to wait for the WebRTC data plane to reach
     ``connected`` after ``OpenConnection`` is sent.
 
-    Default 24s — observed ICE completion sometimes lands a few seconds
-    past the prior 16s bound (notably on TURN-relay fallback paths), so
-    the client was aborting just before the connection would have come
-    up. JIT ephemeral accounts need more time to create and connect, so
-    the extra headroom also covers gateway-side account provisioning
-    before the data plane comes up. 24s keeps us clearly above the
-    gateway/guacd-side 15s connect timeout while absorbing that jitter.
-    If ICE really is stuck (state staying at ``Connecting`` / tube_status
-    ``connecting`` indefinitely) we still fail and the user can re-run —
-    the retry typically succeeds on a fresh ICE gathering pass. Set
-    ``PAM_WEBRTC_CONNECT_TIMEOUT_SEC`` to override for targeted diagnostics.
+    Default 60s — raised from 24s because JIT (ephemeral) account
+    provisioning on the gateway adds significant latency on top of the
+    standard TURN-relay ICE round-trip.  In environments with JIT
+    enabled, ICE completion regularly lands between 30–45s; the old 24s
+    default caused the client to abort with "WebRTC connection not
+    established within timeout" even though the connection succeeded
+    ~10s later (visible as the "Connection established successfully"
+    ghost message that appears after the error).
+
+    60s keeps us well above the worst observed JIT+TURN path (~45s) while
+    still bounding truly stuck sessions (ICE state permanently
+    ``Connecting`` / tube_status ``connecting``).  The retry path is
+    unchanged — a stuck session can always be re-run and the fresh ICE
+    gathering pass typically succeeds immediately.
+
+    Set ``PAM_WEBRTC_CONNECT_TIMEOUT_SEC`` to override.
     """
     return _env_float(_PAM_WEBRTC_CONNECT_TIMEOUT_ENV, _PAM_WEBRTC_CONNECT_TIMEOUT_DEFAULT)
 
