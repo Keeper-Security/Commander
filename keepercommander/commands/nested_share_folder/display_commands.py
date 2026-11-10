@@ -24,11 +24,13 @@ from ..record import RecordGetUidCommand
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
 from ... import vault
+from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
 from .helpers import (
     RECORD_PERM_LABELS, FOLDER_PERM_LABELS,
     get_access_role_label, format_role_display,
     format_timestamp, load_record_metadata, command_error_handler,
-    ensure_nested_share_record, collect_records_in_folder, ROOT_FOLDER_UID,
+    ensure_nested_share_record, collect_records_in_folder, resolve_record_uid,
+    ROOT_FOLDER_UID,
 )
 from .parsers import (
     nested_share_record_get_details_parser,
@@ -56,7 +58,7 @@ class NestedShareRecordGetDetailsCommand(Command):
 
         record_uids = []
         for ident in identifiers:
-            uid = _nsf.resolve_nested_share_record_uid(params, ident) or ident
+            uid = resolve_record_uid(params, ident, 'nsf-record-details') or ident
             ensure_nested_share_record(params, uid, 'nsf-record-details',
                                        identifier=ident)
             record_uids.append(uid)
@@ -107,7 +109,10 @@ class NestedShareGetCommand(Command):
         if not uid:
             raise CommandError('nsf-get', 'UID parameter is required')
 
-        resolved = self._resolve_as_folder(params, uid)
+        try:
+            resolved = self._resolve_as_folder(params, uid)
+        except FolderIdentifierAmbiguousError as e:
+            raise CommandError('nsf-get', str(e)) from e
         if resolved:
             (self._folder_json if fmt == 'json' else self._folder_detail)(params, resolved, verbose)
             return
@@ -131,48 +136,23 @@ class NestedShareGetCommand(Command):
                                      show_inherited=show_inherited, show_denied=show_denied)
             return
 
-        raise CommandError('nsf-get', f'Cannot find any Nested Share Folder object with UID or title: {uid}')
+        raise CommandError(
+            'nsf-get',
+            f'Cannot resolve "{uid}" by name. Use the object UID; run nsf-list '
+            'to find folder UIDs. Shared-in and ambiguous folder names require UID lookup.')
 
     # ── Resolution ────────────────────────────────────────────────────
 
     @staticmethod
     def _resolve_as_folder(params, uid):
-        nsf_folders = getattr(params, 'nested_share_folders', {})
-        if uid in nsf_folders:
-            return uid
-        lower = uid.lower()
-        matches = [f for f, o in nsf_folders.items() if o.get('name', '').lower() == lower]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            from keepercommander.display import dump_report_data
-            rows = [[f, nsf_folders[f].get('name', '')] for f in matches]
-            dump_report_data(rows, ['Folder UID', 'Name'],
-                             title='Multiple folders match the name', row_number=True)
-        return None
+        resolved = _nsf.resolve_folder_identifier(
+            params, uid, raise_on_ambiguous=True)
+        return resolved if resolved in getattr(params, 'nested_share_folders', {}) else None
 
     @staticmethod
     def _resolve_as_record(params, uid):
-        nsf_records = getattr(params, 'nested_share_records', {})
-        if uid in nsf_records:
-            return uid
-        lower = uid.lower()
-        nsf_data = getattr(params, 'nested_share_record_data', {})
-        matches = []
-        for ruid in nsf_records:
-            if ruid in nsf_data and 'data_json' in nsf_data[ruid]:
-                title = nsf_data[ruid]['data_json'].get('title', '')
-                if title and lower in title.lower():
-                    matches.append((ruid, title))
-        if len(matches) == 1:
-            return matches[0][0]
-        if len(matches) > 1:
-            from keepercommander.display import dump_report_data
-            dump_report_data(
-                sorted(matches, key=lambda x: x[1]),
-                ['Record UID', 'Title'],
-                title='Multiple records match the title', row_number=True)
-        return None
+        resolved = resolve_record_uid(params, uid, 'nsf-get')
+        return resolved if resolved in getattr(params, 'nested_share_records', {}) else None
 
     # ── Record display ────────────────────────────────────────────────
 
