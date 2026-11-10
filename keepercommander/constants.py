@@ -637,7 +637,11 @@ def get_router_target(server_hostname, config=None):   # type: (str, Optional[di
             discovered = rest_api.get_discovered_router_url(server_hostname)
             if discovered:
                 return parse_router_override(discovered, 'routerUrl')
-            raise RouterHostError('Router host', f'the server {server_hostname} did not publish a routerUrl. '
+            key = rest_api._resolved_server_keys.get(rest_api.server_host(server_hostname))
+            reason = ('the server key of ' + server_hostname + ' was set by the user and has no routerUrl'
+                      if key is not None and not key.fetched
+                      else f'the server {server_hostname} did not publish a routerUrl')
+            raise RouterHostError('Router host', f'{reason}. '
                                   'Router is not available. Set KROUTER_URL or "router_hosts" to use one.')
     return RouterTarget(f'connect.{get_keeper_host_for_services(server_hostname)}', '', None)
 

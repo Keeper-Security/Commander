@@ -412,3 +412,25 @@ class TestIsKeeperCloudHost(unittest.TestCase):
         self.assertTrue(rest_api.is_keeper_cloud_host('EU.KeeperSecurity.com:443'))
         self.assertFalse(rest_api.is_keeper_cloud_host('keepersecurity.com.evil.test'))
         self.assertFalse(rest_api.is_keeper_cloud_host('a' * 64 + '.keepersecurity.com'))
+
+
+class TestConfiguredKeyRouterMessage(RouterHostTestBase):
+    def test_configured_key_says_it_has_no_router_url(self):
+        host = 'smk-configured.test'
+        key = rest_api.SelfManagedServerKey(key_id=1, public_key='AAAA', source='set by the user', fetched=False)
+        with mock.patch.dict(rest_api._resolved_server_keys, {host: key}):
+            with self.assertRaises(constants.RouterHostError) as ctx:
+                constants.get_router_host(host)
+        text = str(ctx.exception)
+        self.assertNotIn('did not publish', text)
+        self.assertIn('has no routerUrl', text)
+        self.assertIn('KROUTER_URL', text)
+        self.assertIn('router_hosts', text)
+
+    def test_fetched_key_keeps_the_published_text(self):
+        host = 'smk-fetched.test'
+        key = rest_api.SelfManagedServerKey(key_id=1, public_key='AAAA', source='from the server', fetched=True)
+        with mock.patch.dict(rest_api._resolved_server_keys, {host: key}):
+            with self.assertRaises(constants.RouterHostError) as ctx:
+                constants.get_router_host(host)
+        self.assertIn('did not publish a routerUrl', str(ctx.exception))
