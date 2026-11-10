@@ -3157,6 +3157,15 @@ class PAMConnectionEditCommand(Command):
                         choices=['any', 'nla', 'tls', 'vmconnect', 'rdp', 'default'],
                         help='RDP Security Mode (any/nla/tls/vmconnect/rdp, or default to unset). '
                              'Supported for rdp protocol only.')
+    parser.add_argument('--allow-copy', required=False, dest='allow_copy', choices=choices,
+                        help='Allow copying from remote session (on/off/default). '
+                             'Supported for rdp, vnc, ssh, telnet, mysql, postgresql, and sql-server.')
+    parser.add_argument('--allow-paste', required=False, dest='allow_paste', choices=choices,
+                        help='Allow pasting into remote session (on/off/default). '
+                             'Supported for rdp, vnc, ssh, telnet, mysql, postgresql, and sql-server.')
+    parser.add_argument('--sftp', required=False, dest='sftp', choices=choices,
+                        help='Enable SFTP file transfer on connection (on/off/default). '
+                             'Supported for ssh, rdp, and vnc protocols.')
     parser.add_argument('--rotate-on-termination', required=False, dest='rotate_on_termination',
                         choices=['on', 'off'],
                         help='Rotate launch credentials when the PAM session ends (DAG resource meta)')
@@ -3291,6 +3300,38 @@ class PAMConnectionEditCommand(Command):
                     f'{bcolors.FAIL}--security-mode is not supported for protocol '
                     f'"{effective_protocol or "(unset)"}" on {record_type} records. '
                     f'Allowed protocols: rdp.{bcolors.ENDC}')
+
+        # --allow-copy / --allow-paste: validate record type + effective protocol before any mutation
+        allow_copy_arg = kwargs.get('allow_copy', None)
+        allow_paste_arg = kwargs.get('allow_paste', None)
+        clipboard_protocols = {'rdp', 'vnc', 'telnet', 'ssh', 'sql-server', 'mysql', 'postgresql'}
+        for flag_name, flag_val in (('--allow-copy', allow_copy_arg), ('--allow-paste', allow_paste_arg)):
+            if flag_val is not None:
+                if record_type not in pam_settings_record_types:
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}{flag_name} is only supported for pamMachine, pamDatabase, and '
+                        f'pamDirectory records. Record "{record_uid}" is of type "{record_type}".{bcolors.ENDC}')
+                effective_protocol = _get_effective_protocol()
+                if effective_protocol not in clipboard_protocols:
+                    raise CommandError('pam connection edit',
+                        f'{bcolors.FAIL}{flag_name} is not supported for protocol '
+                        f'"{effective_protocol or "(unset)"}" on {record_type} records. '
+                        f'Allowed protocols: {", ".join(sorted(clipboard_protocols))}.{bcolors.ENDC}')
+
+        # --sftp: validate record type + effective protocol before any mutation
+        sftp_arg = kwargs.get('sftp', None)
+        sftp_protocols = {'ssh', 'rdp', 'vnc'}
+        if sftp_arg is not None:
+            if record_type not in pam_settings_record_types:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--sftp is only supported for pamMachine, pamDatabase, and '
+                    f'pamDirectory records. Record "{record_uid}" is of type "{record_type}".{bcolors.ENDC}')
+            effective_protocol = _get_effective_protocol()
+            if effective_protocol not in sftp_protocols:
+                raise CommandError('pam connection edit',
+                    f'{bcolors.FAIL}--sftp is not supported for protocol '
+                    f'"{effective_protocol or "(unset)"}" on {record_type} records. '
+                    f'Allowed protocols: {", ".join(sorted(sftp_protocols))}.{bcolors.ENDC}')
 
         encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(params)
         if record_type in "pamNetworkConfiguration pamAwsConfiguration pamAzureConfiguration".split():
@@ -3441,6 +3482,42 @@ class PAMConnectionEditCommand(Command):
                         dirty = True
                     else:
                         logging.debug(f'security is already {target_sec} on record={record_uid}')
+
+            # --allow-copy / --allow-paste: apply inverted disableCopy / disablePaste
+            for field_name, arg_val in (('disableCopy', allow_copy_arg), ('disablePaste', allow_paste_arg)):
+                if arg_val is not None:
+                    psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                    vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                    current_val = vcon.get(field_name) if isinstance(vcon, dict) else None
+                    if arg_val == 'default':
+                        if current_val is not None:
+                            pam_settings.value[0]["connection"].pop(field_name, None)
+                            dirty = True
+                    else:
+                        target_val = False if arg_val == 'on' else True
+                        if current_val != target_val:
+                            pam_settings.value[0]["connection"][field_name] = target_val
+                            dirty = True
+
+            # --sftp: apply sftp.enableSftp
+            if sftp_arg is not None:
+                psv = pam_settings.value[0] if pam_settings and pam_settings.value else {}
+                vcon = psv.get('connection', {}) if isinstance(psv, dict) else {}
+                sftp_dict = vcon.get('sftp') if isinstance(vcon, dict) and isinstance(vcon.get('sftp'), dict) else {}
+                current_sftp = sftp_dict.get('enableSftp')
+                if sftp_arg == 'default':
+                    if 'enableSftp' in sftp_dict:
+                        sftp_dict.pop('enableSftp', None)
+                        if not sftp_dict:
+                            pam_settings.value[0]["connection"].pop('sftp', None)
+                        dirty = True
+                else:
+                    target_sftp = True if sftp_arg == 'on' else False
+                    if current_sftp != target_sftp:
+                        if not isinstance(pam_settings.value[0]["connection"].get('sftp'), dict):
+                            pam_settings.value[0]["connection"]['sftp'] = {}
+                        pam_settings.value[0]["connection"]['sftp']['enableSftp'] = target_sftp
+                        dirty = True
 
             if dirty:
                 was_nsf = update_pam_record(params, record, command='pam connection edit')
@@ -4233,6 +4310,8 @@ class PAMRbiEditCommand(Command):
     parser.add_argument('--session-persistence', '-sp', dest='session_persistence',
                         choices=['none', 'user', 'resource', 'default'],
                         help='RBI session persistence (none/user/resource; default = unset)')
+    parser.add_argument('--url', '-u', dest='url', type=str, action='store',
+                        help='Set the target URL (rbiUrl) on the RBI record')
 
     # Utility
     parser.add_argument('--silent', '-s', required=False, dest='silent', action='store_true',
@@ -4252,6 +4331,7 @@ class PAMRbiEditCommand(Command):
         rbi = kwargs.get('rbi')  # on/off/default
         recording = kwargs.get('recording')  # on/off/default
         silent = kwargs.get('silent') or False
+        url = kwargs.get('url')  # str or None
 
         # New RBI settings (Phase 1 - KC-1034)
         allow_url_navigation = kwargs.get('allow_url_navigation')  # on/off/default/None
@@ -4282,6 +4362,7 @@ class PAMRbiEditCommand(Command):
 
         # Check if any setting argument is provided
         has_new_settings = any([
+            url is not None,
             allow_url_navigation is not None,
             ignore_server_cert is not None,
             allow_file_uploads is not None,
@@ -4346,6 +4427,19 @@ class PAMRbiEditCommand(Command):
         if (isinstance(rbs_fld, vault.TypedField) and rbs_fld.value
                 and isinstance(rbs_fld.value[0], dict)):
             if _coerce_settings_subdicts(rbs_fld.value[0], 'connection'):
+                dirty = True
+
+        if url is not None:
+            rbi_url_fld = record.get_typed_field('rbiUrl')
+            if not rbi_url_fld:
+                rbi_url_fld = record.get_typed_field('url')
+            target_url_values = [url] if url else []
+            if rbi_url_fld:
+                if rbi_url_fld.value != target_url_values:
+                    rbi_url_fld.value = target_url_values
+                    dirty = True
+            elif url:
+                record.fields.append(vault.TypedField.new_field('rbiUrl', url, ''))
                 dirty = True
 
         if autofill:
