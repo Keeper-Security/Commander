@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Set
 from .client import DelineaPamClient
 from .crosswalk import Crosswalk
 from .launcher_mapper import LauncherMapper
-from .models import ChangerMapping, FindingLog, RotationPolicy, RotationState
+from .models import ChangerMapping, FindingLog, RotationPolicy, RotationState, _positive
 from .policy import SecretPolicyResolver
 from .rotation_mapper import RotationMapper
 
@@ -237,15 +237,6 @@ class SecretMapper:
         return list(merged.values())
 
 
-def _positive(value) -> Optional[int]:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str) and value.strip().isdigit():
-        number = int(value.strip())
-        return number if number > 0 else None
-    return None
 
 
 def _dict(value) -> Optional[dict]:

@@ -145,21 +145,21 @@ class DelineaImportOrchestrator:
         rows = crosswalk.discover(self.client)
         mapped = [r for r in rows if r.mapping]
         unmapped = [r.changer_name for r in rows if not r.mapping]
-        print(f'Password changers: {len(rows)} ({len(mapped)} mapped, {len(unmapped)} unmapped)')
+        logging.info('Password changers: %d (%d mapped, %d unmapped)', len(rows), len(mapped), len(unmapped))
         for name in unmapped:
-            print(f'  unmapped: {name}')
+            logging.info('  unmapped: %s', name)
         if opts.crosswalk_out:
             Crosswalk.write_template(rows, opts.crosswalk_out)
             utils.set_file_permissions(opts.crosswalk_out)
-            print(f'Wrote {opts.crosswalk_out}')
+            logging.info('Wrote %s', opts.crosswalk_out)
         if opts.crosswalk_check:
             checks = crosswalk.check(self.client, rows, opts.crosswalk_check)
             failed = [c for c in checks if not c.ok]
-            print(f'Crosswalk check: {len(checks) - len(failed)} ok, {len(failed)} with problems')
+            logging.info('Crosswalk check: %d ok, %d with problems', len(checks) - len(failed), len(failed))
             for item in failed:
-                print(f'  {item.changer_name} / {item.secret_name} (#{item.secret_id})')
+                logging.info('  %s / %s (#%d)', item.changer_name, item.secret_name, item.secret_id)
                 for problem in item.problems:
-                    print(f'    - {problem}')
+                    logging.info('    - %s', problem)
 
     def map(self, crosswalk: Crosswalk) -> DelineaMappedImport:
         """Read Secret Server and map everything; no vault writes.
@@ -242,16 +242,16 @@ class DelineaImportOrchestrator:
                 self.findings.add('Secret permission', str(secret_id), f'Could not be read: {exc}')
                 continue
             folder_rows = self.client.folder_permissions(boundary_id)
-            if PermissionMapper.is_override(secret, secret_rows, folder_rows):
-                grants = self.permissions.secret_grants(secret_rows)
-                if grants:
-                    resource_title = ''
-                    if mapped.resource:
-                        resource_title = str(mapped.resource.get('title') or '')
-                        if resource_title.casefold() == mapped.title.casefold():
-                            resource_title = ''
-                    secret_grants.append(SecretGrantTarget(
-                        secret_id, mapped.title, folder_name, grants, resource_title))
+            if not PermissionMapper.is_override(secret, secret_rows, folder_rows):
+                continue
+            grants = self.permissions.secret_grants(secret_rows)
+            if not grants:
+                continue
+            resource_title = str(mapped.resource.get('title') or '') if mapped.resource else ''
+            if resource_title.casefold() == mapped.title.casefold():
+                resource_title = ''
+            secret_grants.append(SecretGrantTarget(
+                secret_id, mapped.title, folder_name, grants, resource_title))
 
         for ref_id in sorted(references):
             if ref_id in mapped_ids:

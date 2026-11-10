@@ -8,7 +8,7 @@
 
 from typing import Any, Optional, Tuple
 
-from .models import ChangerMapping, FindingLog, PolicySource
+from .models import ChangerMapping, FindingLog, PolicySource, _positive
 from .policy import SecretPolicyResolver
 
 
@@ -115,12 +115,3 @@ class LauncherMapper:
         return SecretPolicyResolver.effective(secret_value, policy_item)
 
 
-def _positive(value) -> Optional[int]:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str) and value.strip().isdigit():
-        number = int(value.strip())
-        return number if number > 0 else None
-    return None

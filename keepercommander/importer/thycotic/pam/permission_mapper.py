@@ -9,7 +9,7 @@
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from ....nested_share_folder.permissions import resolve_role_name
-from .models import AccessGrant, FindingLog, Principal, PrincipalKind
+from .models import AccessGrant, FindingLog, Principal, PrincipalKind, _positive
 
 # (folder role is Owner, secret role) -> NSF role. Never grants more than Delinea did:
 # folder Edit / Add Secret / View have no NSF equivalent beyond the secret dimension.
@@ -243,15 +243,6 @@ class PermissionMapper:
         return resolve_role_name(role)
 
 
-def _positive(value) -> Optional[int]:
-    if isinstance(value, bool) or value is None:
-        return None
-    if isinstance(value, int):
-        return value if value > 0 else None
-    if isinstance(value, str) and value.strip().isdigit():
-        number = int(value.strip())
-        return number if number > 0 else None
-    return None
 
 
 def _role_pairs(rows: List[dict]) -> set:

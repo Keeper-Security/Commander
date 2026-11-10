@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Tuple
 from ...cyberark.pam.master_policy_mapper import MasterPolicyMapper
 from .client import DelineaPamClient
 from .crosswalk import Crosswalk
-from .models import ChangerMapping, FindingLog, PasswordComplexity, RotationPolicy, RotationState
+from .models import ChangerMapping, FindingLog, PasswordComplexity, RotationPolicy, RotationState, _positive
 from .policy import SecretPolicyResolver
 
 _WEEKDAYS: Tuple[Tuple[str, str], ...] = (
@@ -300,11 +300,6 @@ def _int_id(value) -> Optional[int]:
     return None
 
 
-def _positive(value) -> Optional[int]:
-    number = _int_id(value)
-    if number is None or number <= 0:
-        return None
-    return number
 
 
 def _clock(schedule: dict) -> Tuple[int, int]:
