@@ -38,7 +38,8 @@ from typing import Tuple, Optional, Iterable, Union, Dict, Callable, Any, List
 
 from ..importer import (BaseImporter, BaseDownloadMembership, Record, SharedFolder, Folder, EmptyFolder, Attachment, Permission,
                         RecordField, RecordShare, BytesAttachment, Team, BaseDownloadRecordType, RecordType,
-                        RecordTypeField)
+                        RecordTypeField,
+                        replace_email_domain, NsfRecordShare)
 from ...constants import EMAIL_PATTERN
 from ...params import KeeperParams
 from ... import record_types, vault, api
@@ -1445,9 +1446,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             failed += len(active_users)
             active_users = []
 
-        requests = []
+        reqs = []
         for user in queued_users:
-            requests.append({
+            reqs.append({
                 'command': 'team_queue_user',
                 'team_uid': team_uid,
                 'enterprise_user_id': user.get('enterprise_user_id'),
@@ -1455,14 +1456,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         for user in active_users:
             request = EnterpriseTeamCommand._create_add_user_request(params, team_uid, team_key, user, '')
             if request:
-                requests.append(request)
+                reqs.append(request)
             else:
                 failed += 1
 
         added = 0
         queued = 0
-        for offset in range(0, len(requests), _TEAM_BATCH_SIZE):
-            chunk = requests[offset:offset + _TEAM_BATCH_SIZE]
+        for offset in range(0, len(reqs), _TEAM_BATCH_SIZE):
+            chunk = reqs[offset:offset + _TEAM_BATCH_SIZE]
             try:
                 responses = api.execute_batch(params, chunk) or []
             except Exception as e:
@@ -1734,6 +1735,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             del constructed_folders[1]
         folders = constructed_folders
 
+        # Fetch folder permissions if needed for NSF
+        use_nsf = kwargs.get('use_nsf') or False
+        if use_nsf:
+            folders_with_perms = ThycoticImporter.get_folders(auth, skip_permissions=False)
+            for folder_id, folder_data in folders_with_perms.items():
+                if folder_id in folders:
+                    folders[folder_id].update(folder_data)
+
         # Determine which folders to query
         matched_folder_ids = None
         if filter_folder:
@@ -1784,6 +1793,19 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
               return
 
         self._send_keep_alive_if_needed(params)
+
+        # NSF: yield shared folders with NSF ACL before secrets
+        if use_nsf:
+            users_by_id = ThycoticMixin.get_user_lookup(auth) or {}
+            groups_by_id = ThycoticMixin.get_group_lookup(auth) or {}
+            for shared_folder in self._yield_nsf_shared_folders(auth, folders, users_by_id, groups_by_id, **kwargs):
+                yield shared_folder
+
+            # If users_only mode, skip record import
+            users_only = kwargs.get('users_only') or False
+            if users_only:
+                return
+
         print(f'Loading {len(secrets_ids)} Records ', flush=True, end='')
         secrets = []
         skipped_secrets = []
@@ -2144,6 +2166,10 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 field_label = ThycoticImporter.adjust_field_label(record, 'oneTimeCode', '', rt)
                 record.fields.append(RecordField(type='oneTimeCode', label=field_label, value=field_value))
 
+            if use_nsf and secret_id:
+                self._apply_nsf_secret_acl(
+                    record, secret, secret_id, folder_id, folders, users_by_id, auth, **kwargs)
+
             yield record
         print(' Done', flush=True)
         ThycoticImporter.print_skipped(skipped_secrets, skipped_fields)
@@ -2159,6 +2185,279 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             print(f'\nSkipped {len(skipped_fields)} Fields:')
             print(tabulate(skipped_fields, headers='keys', maxcolwidths=[None, 40, None, None, 80]), end='\n\n')
 
+    def _yield_nsf_shared_folders(self, auth, folders, users_by_id, groups_by_id=None, **kwargs):
+        # type: (ThycoticAuth, Dict[int, Dict], Dict[int, Dict], Optional[Dict[int, Dict]], ...) -> Iterable[SharedFolder]
+        """Yield NSF SharedFolder objects with NSF role permissions from Delinea folders."""
+        from .nsf_acl import thycotic_roles_to_nsf_role, is_lossy_folder_secret_pair
+
+        old_domain = kwargs.get('old_domain')
+        new_domain = kwargs.get('new_domain')
+        groups_by_id = groups_by_id or {}
+
+        for folder in folders.values():
+            if folder.get('inheritPermissions', True):
+                continue
+            if 'permissions' not in folder:
+                continue
+
+            permissions = folder.get('permissions', [])
+            if not isinstance(permissions, list) or len(permissions) == 0:
+                continue
+
+            shared_folder = SharedFolder()
+            shared_folder.uid = None
+            shared_folder.path = folder['folderPath']
+            shared_folder.break_inheritance = folder.get('inheritPermissions') is False
+            shared_folder.permissions = []
+
+            for p in permissions:
+                folder_role = p.get('folderAccessRoleName')
+                secret_role = p.get('secretAccessRoleName')
+
+                nsf_role = thycotic_roles_to_nsf_role(folder_role, secret_role)
+                if not nsf_role:
+                    continue
+
+                if is_lossy_folder_secret_pair(folder_role, secret_role):
+                    logging.warning(
+                        'Lossy NSF role mapping for folder %s: %s folder + %s secret → %s',
+                        shared_folder.path, folder_role, secret_role, nsf_role
+                    )
+
+                user_id = p.get('userId') or 0
+                if user_id > 0 and user_id in users_by_id:
+                    user = users_by_id[user_id]
+                    email = user.get('emailAddress')
+                    if email:
+                        email = replace_email_domain(email, old_domain, new_domain)
+                        perm = Permission()
+                        perm.name = email
+                        perm.role = nsf_role
+                        shared_folder.permissions.append(perm)
+                else:
+                    group_id = p.get('groupId') or 0
+                    if group_id > 0 and group_id in groups_by_id:
+                        group = groups_by_id[group_id]
+                        team_name = (group.get('name') or '').strip()
+                        if team_name:
+                            perm = Permission()
+                            perm.name = team_name
+                            perm.role = nsf_role
+                            params = kwargs.get('params')
+                            if params is not None:
+                                from ...nested_share_folder.common import resolve_team_identifier
+                                resolved = resolve_team_identifier(params, team_name)
+                                if resolved:
+                                    perm.uid = resolved[0]
+                                else:
+                                    logging.warning(
+                                        'NSF folder "%s": Keeper team not found for Delinea group "%s" — skipped',
+                                        shared_folder.path, team_name)
+                                    continue
+                            shared_folder.permissions.append(perm)
+                    elif group_id > 0:
+                        logging.warning(
+                            'Group %d not found for folder %s permissions', group_id, shared_folder.path)
+
+            if shared_folder.permissions:
+                yield shared_folder
+
+    @staticmethod
+    def _permission_rows_for_secret(auth, secret_id):
+        # type: (ThycoticAuth, int) -> List[Dict]
+        """Fetch all permission rows for a secret."""
+        try:
+            permissions = auth.thycotic_search(f'/v1/secret-permissions?filter.secretId={secret_id}')
+            return permissions if isinstance(permissions, list) else []
+        except Exception as exc:
+            logging.warning('Failed to fetch permissions for secret %d: %s', secret_id, exc)
+            return []
+
+    @staticmethod
+    def _folder_nsf_role_by_email(folder, users_by_id, old_domain=None, new_domain=None):
+        # type: (Dict, Dict[int, Dict], Optional[str], Optional[str]) -> Dict[str, str]
+        from .nsf_acl import thycotic_roles_to_nsf_role
+
+        folder_perms_by_email = {}  # type: Dict[str, str]
+        for p in folder.get('permissions', []) or []:
+            user_id = p.get('userId') or 0
+            if user_id <= 0 or user_id not in users_by_id:
+                continue
+            email = users_by_id[user_id].get('emailAddress')
+            if not email:
+                continue
+            nsf_role = thycotic_roles_to_nsf_role(
+                p.get('folderAccessRoleName'), p.get('secretAccessRoleName'))
+            if nsf_role:
+                folder_perms_by_email[replace_email_domain(email, old_domain, new_domain)] = nsf_role
+        return folder_perms_by_email
+
+    @staticmethod
+    def _secret_nsf_role_by_email(perm_rows, users_by_id, groups_by_id, old_domain=None, new_domain=None):
+        # type: (List[Dict], Dict[int, Dict], Dict[int, Dict], Optional[str], Optional[str]) -> Dict[str, str]
+        from .nsf_acl import thycotic_roles_to_nsf_role
+
+        users_by_id = users_by_id or {}
+        groups_by_id = groups_by_id or {}
+        secret_nsf_role_by_email = {}  # type: Dict[str, str]
+
+        for perm in perm_rows:
+            user_id = perm.get('userId') or 0
+            group_id = perm.get('groupId') or 0
+            secret_role = perm.get('secretAccessRoleName')
+            if not secret_role:
+                continue
+            nsf_role = thycotic_roles_to_nsf_role(perm.get('folderAccessRoleName'), secret_role)
+            if not nsf_role:
+                continue
+
+            emails = []
+            if user_id > 0 and user_id in users_by_id:
+                email = users_by_id[user_id].get('emailAddress')
+                if email:
+                    emails.append(email)
+            elif group_id > 0 and group_id in groups_by_id:
+                for mid in groups_by_id[group_id].get('users', []) or []:
+                    if mid in users_by_id:
+                        member_email = users_by_id[mid].get('emailAddress')
+                        if member_email:
+                            emails.append(member_email)
+
+            for email in emails:
+                email = replace_email_domain(email, old_domain, new_domain)
+                secret_nsf_role_by_email[email] = nsf_role
+
+        return secret_nsf_role_by_email
+
+    @staticmethod
+    def _folder_permission_rows_for_folder(auth, folder_id):
+        # type: (ThycoticAuth, int) -> List[Dict]
+        try:
+            rows = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+            return rows if isinstance(rows, list) else []
+        except Exception as exc:
+            logging.warning('Failed to fetch folder permissions for folder %d: %s', folder_id, exc)
+            return []
+
+    def _apply_nsf_secret_acl(self, record, secret, secret_id, folder_id, folders, users_by_id, auth, **kwargs):
+        # type: (Record, Dict, int, Optional[int], Dict[int, Dict], Dict[int, Dict], ThycoticAuth, ...) -> None
+        """Apply NSF record shares from Delinea secret ACL (inherit broken or folder deltas)."""
+        from .nsf_acl import (
+            parse_secret_inherit_permissions,
+            secret_acl_differs_from_folder_rows,
+            nsf_acl_log,
+        )
+
+        old_domain = kwargs.get('old_domain')
+        new_domain = kwargs.get('new_domain')
+        users_lookup = ThycoticImporter.get_user_lookup(auth) or users_by_id or {}
+        groups_lookup = ThycoticImporter.get_group_lookup(auth) or {}
+
+        title = record.title or ''
+        inherit_raw = secret.get('inheritPermissions')
+        secret_inherits = parse_secret_inherit_permissions(secret)
+
+        perm_rows = self._permission_rows_for_secret(auth, secret_id)
+        nsf_acl_log(
+            'secret id=%s title=%r inheritPermissions raw=%r parsed_inherit=%s perm_rows=%d',
+            secret_id, title, inherit_raw, secret_inherits, len(perm_rows))
+
+        folder_nsf_role_by_email = {}  # type: Dict[str, str]
+        folder_perm_rows = []  # type: List[Dict]
+        if folder_id in folders:
+            folder = folders[folder_id]
+            if not folder.get('inheritPermissions', True) and folder.get('permissions'):
+                folder_nsf_role_by_email = self._folder_nsf_role_by_email(
+                    folder, users_lookup, old_domain, new_domain)
+                folder_perm_rows = folder.get('permissions') or []
+            elif folder_id:
+                folder_perm_rows = self._folder_permission_rows_for_folder(auth, folder_id)
+
+        secret_inherits_folder_permissions = secret_inherits
+        if secret_inherits and perm_rows and folder_id:
+            if secret_acl_differs_from_folder_rows(perm_rows, folder_perm_rows):
+                secret_inherits_folder_permissions = False
+                nsf_acl_log(
+                    'secret id=%s: secret-permissions differ from folder-permissions — treating as custom secret ACL',
+                    secret_id)
+            else:
+                logging.debug(
+                    '[NSF-ACL] secret id=%s: secret-permissions match folder-permissions (inherit)',
+                    secret_id)
+
+        if secret_inherits_folder_permissions and not folder_nsf_role_by_email:
+            nsf_acl_log(
+                'secret id=%s title=%r: skip record shares (inherits folder; no custom folder ACL baseline)',
+                secret_id, title)
+            return
+
+        if secret_inherits_folder_permissions:
+            nsf_acl_log('secret id=%s: folder-delta record share mode', secret_id)
+        else:
+            nsf_acl_log('secret id=%s: full secret-permissions record share mode', secret_id)
+
+        self._attach_secret_nsf_permissions(
+            record, secret_id, folder_nsf_role_by_email, users_lookup, groups_lookup, auth,
+            secret_inherits_folder_permissions=secret_inherits_folder_permissions,
+            perm_rows=perm_rows, **kwargs)
+
+    def _attach_secret_nsf_permissions(self, record, secret_id, folder_nsf_role_by_email,
+                                       users_by_id, groups_by_id, auth, secret_inherits_folder_permissions=True,
+                                       perm_rows=None, **kwargs):
+        # type: (Record, int, Dict[str, str], Dict[int, Dict], Dict[int, Dict], ThycoticAuth, bool, Optional[List[Dict]], ...) -> None
+        """
+        Attach NSF record shares from Delinea secret-permissions.
+
+        If ``secret_inherits_folder_permissions`` is False, every secret grant
+        becomes a direct record share. Otherwise only deltas vs folder baseline.
+        """
+        from .nsf_acl import nsf_record_shares_for_secret_acl, nsf_acl_log
+
+        old_domain = kwargs.get('old_domain')
+        new_domain = kwargs.get('new_domain')
+
+        if perm_rows is None:
+            perm_rows = self._permission_rows_for_secret(auth, secret_id)
+        if not perm_rows:
+            nsf_acl_log('secret id=%s: no secret-permission rows — no record shares', secret_id)
+            return
+
+        secret_nsf_role_by_email = self._secret_nsf_role_by_email(
+            perm_rows, users_by_id, groups_by_id, old_domain, new_domain)
+        if not secret_nsf_role_by_email:
+            nsf_acl_log(
+                'secret id=%s: %d permission row(s) but no mappable user/group emails',
+                secret_id, len(perm_rows))
+            logging.debug('[NSF-ACL] secret id=%s perm_rows=%s', secret_id, perm_rows)
+            return
+
+        params = kwargs.get('params')
+        import_user = (getattr(params, 'user', None) or '').strip().lower()
+        if import_user:
+            secret_nsf_role_by_email = {
+                email: role for email, role in secret_nsf_role_by_email.items()
+                if email.strip().lower() != import_user
+            }
+
+        shares = nsf_record_shares_for_secret_acl(
+            secret_nsf_role_by_email, folder_nsf_role_by_email, secret_inherits_folder_permissions)
+        if not shares:
+            nsf_acl_log(
+                'secret id=%s title=%r: no record share deltas (folder baseline matches secret)',
+                secret_id, record.title)
+            return
+
+        record.nsf_record_shares = []
+        for email, nsf_role in shares:
+            nsr = NsfRecordShare()
+            nsr.uid = email
+            nsr.role = nsf_role
+            record.nsf_record_shares.append(nsr)
+
+        nsf_acl_log(
+            'secret id=%s title=%r: queued %d record share(s): %s',
+            secret_id, record.title, len(shares),
+            ', '.join(f'{e}={r}' for e, r in shares))
 
 class ThycoticAuth:
     max_throttle_retries = 3
