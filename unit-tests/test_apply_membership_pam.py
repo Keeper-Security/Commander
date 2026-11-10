@@ -54,6 +54,29 @@ class TestApplyPamProjectPrefix(unittest.TestCase):
         expected = PathDelimiter.join(["PAM Environments", "Proj", "Bad_Name"])
         self.assertEqual(path, expected)
 
+    def test_multiple_leading_trailing_separators(self):
+        """Test that multiple leading/trailing separators are properly stripped."""
+        path = "///Acme_Safe\\\\"
+        result = commands.membership_safe_name(path)
+        self.assertEqual(result, "Acme_Safe")
+
+    def test_mixed_separators_in_middle_are_sanitized(self):
+        """Test that mixed separators in the middle are sanitized to underscores."""
+        path = commands.apply_pam_project_prefix("Path/With\\Mixed", "Proj")
+        self.assertIn("Path_With_Mixed", path)
+
+    def test_empty_safe_name_after_sanitization(self):
+        """Test handling when safe name becomes empty after sanitization."""
+        path = commands.apply_pam_project_prefix("///", "Proj")
+        self.assertIsNotNone(path)
+
+    def test_prefix_case_variation_in_project_name(self):
+        """Test prefix matching with different case variations."""
+        existing = PathDelimiter.join(["PAM Environments", "acme test", "Safe"])
+        result = commands.apply_pam_project_prefix(existing, "Acme Test")
+        count = result.count("PAM Environments")
+        self.assertEqual(count, 1, "Should not duplicate PAM Environments prefix")
+
 
 class TestFilterSharedFoldersBySafes(unittest.TestCase):
     def _folder(self, path):
@@ -81,6 +104,78 @@ class TestFilterSharedFoldersBySafes(unittest.TestCase):
     def test_membership_safe_name_uses_leaf(self):
         path = PathDelimiter.join(["PAM Environments", "Acme Test Import", "Acme_X"])
         self.assertEqual(commands.membership_safe_name(path), "Acme_X")
+
+    def test_multiple_glob_patterns(self):
+        """Test filtering with multiple comma-separated glob patterns."""
+        folders = [
+            self._folder("Acme_A"),
+            self._folder("Acme_B"),
+            self._folder("Corp_C"),
+            self._folder("Corp_D"),
+        ]
+        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*,Corp_*")
+        self.assertEqual(len(matched), 4)
+
+    def test_glob_with_brackets_and_questions(self):
+        """Test glob patterns with ? and [] wildcards."""
+        folders = [
+            self._folder("Safe_001"),
+            self._folder("Safe_002"),
+            self._folder("Safe_100"),
+        ]
+        matched = commands.filter_shared_folders_by_safes(folders, "Safe_0??")
+        self.assertEqual(len(matched), 2)
+
+    def test_whitespace_in_patterns_is_trimmed(self):
+        """Test that whitespace in comma-separated patterns is properly trimmed."""
+        folders = [self._folder("A"), self._folder("B"), self._folder("C")]
+        matched = commands.filter_shared_folders_by_safes(folders, " A , B ")
+        self.assertEqual(len(matched), 2)
+
+    def test_deep_nested_paths(self):
+        """Test that deep nested paths correctly identify leaf folder."""
+        deep_path = PathDelimiter.join(
+            ["PAM Environments", "Project", "Safe", "Sub1", "Sub2", "Sub3"]
+        )
+        leaf = commands.membership_safe_name(deep_path)
+        self.assertEqual(leaf, "Sub3")
+
+    def test_special_characters_in_safe_names(self):
+        """Test that special characters are preserved in safe names."""
+        special_cases = [
+            "Safe With Spaces",
+            "Safe-With-Dashes",
+            "Safe_With_Underscores",
+            "Safe (Production)",
+            "Safe [Test]",
+        ]
+        for safe in special_cases:
+            result = commands.membership_safe_name(safe)
+            self.assertEqual(result, safe, f"Failed for: {safe}")
+
+    def test_filter_with_no_matches(self):
+        """Test filtering when glob pattern matches nothing."""
+        folders = [self._folder("PVWAReports"), self._folder("PrivilegeCloud")]
+        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*")
+        self.assertEqual(len(matched), 0)
+
+    def test_unicode_safe_names(self):
+        """Test that unicode characters are handled correctly."""
+        unicode_safe = "Säfe_Nämé"
+        result = commands.membership_safe_name(unicode_safe)
+        self.assertEqual(result, unicode_safe)
+
+    def test_filter_preserves_order(self):
+        """Test that filtering preserves the order of matched folders."""
+        folders = [
+            self._folder("Zebra_1"),
+            self._folder("Acme_1"),
+            self._folder("Zebra_2"),
+            self._folder("Acme_2"),
+        ]
+        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*")
+        paths = [f.path for f in matched]
+        self.assertEqual(paths, ["Acme_1", "Acme_2"])
 
 
 class TestApplyMembershipParserPamArgs(unittest.TestCase):
