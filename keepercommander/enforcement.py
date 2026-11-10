@@ -291,6 +291,7 @@ class MasterPasswordReentryEnforcer:
         try:
             if is_sso_user and has_alternate:
                 # Get salt and iterations for alternate password
+                password_type = 'alternate'
                 try:
                     current_salt = api.communicate_rest(params, None, 'authentication/get_salt_and_iterations',
                                                       rs_type=APIRequest_pb2.Salt)
@@ -307,9 +308,11 @@ class MasterPasswordReentryEnforcer:
                 if hasattr(params, 'salt') and params.salt and hasattr(params, 'iterations') and params.iterations:
                     salt = params.salt
                     iterations = params.iterations
+                    password_type = 'master'
                     logging.debug("Using salt/iterations from params")
                 else:
                     # Fetch salt/iterations from server (persistent login case)
+                    password_type = 'master'
                     try:
                         logging.debug("Fetching salt/iterations from server for persistent login user")
                         current_salt = api.communicate_rest(params, None, 'authentication/get_salt_and_iterations',
@@ -331,6 +334,13 @@ class MasterPasswordReentryEnforcer:
                 return False
             
             try:
+                known_iterations = utils.get_stored_pbkdf2_iterations(
+                    params.config, params.user, password_type)
+                iterations = utils.validate_pbkdf2_parameters(
+                    salt, iterations,
+                    minimum_iterations=max(
+                        utils.get_minimum_pbkdf2_iterations(params.enforcements), known_iterations),
+                    purpose='master password re-entry')
                 # Create authentication hash
                 auth_hash = crypto.derive_keyhash_v1(master_password, salt, iterations)
                 
@@ -344,6 +354,10 @@ class MasterPasswordReentryEnforcer:
                                         rs_type=APIRequest_pb2.MasterPasswordReentryResponse, payload_version=1)
                 
                 if rs.status == APIRequest_pb2.MP_SUCCESS:
+                    utils.store_pbkdf2_iterations(
+                        params.config, params.user, iterations, password_type)
+                    from .config_storage import loader
+                    loader.store_config_properties(params)
                     # Store successful validation time (thread-safe)
                     user_key = params.user if params and params.user else None
                     if user_key:
