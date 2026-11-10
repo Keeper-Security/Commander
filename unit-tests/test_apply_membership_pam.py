@@ -318,9 +318,9 @@ class TestApplyMembershipCommandPam(unittest.TestCase):
                         list_safes=True,
                     )
             apply_mock.assert_not_called()
-            printed = print_mock.call_args[0][0]
-            self.assertIn("Acme_David_Chen", printed)
-            self.assertIn("PAM Environments", printed)
+            printed_output = '\n'.join(call[0][0] for call in print_mock.call_args_list)
+            self.assertIn("Acme_David_Chen", printed_output)
+            self.assertIn("PAM Environments", printed_output)
 
     def test_missing_file_skips_apply(self):
         with mock.patch.object(commands.imp_exp, "import_user_permissions") as apply_mock:

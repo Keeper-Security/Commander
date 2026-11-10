@@ -11,6 +11,7 @@
 
 
 import argparse
+import copy
 import fnmatch
 import importlib
 import json
@@ -19,6 +20,7 @@ import os
 from typing import Optional, List, Dict
 
 from . import imp_exp
+from .cyberark.pam.safe_utils import sanitize_safe_name
 from .. import api, record_types
 from .importer import (SharedFolder, Team, Permission, Record, PathDelimiter, normalize_folder_path,
                        path_components, replace_email_domain, BaseDownloadMembership,
@@ -52,7 +54,6 @@ def apply_pam_project_prefix(folder_path, project):
     project = (project or "").strip().strip("/\\")
     if not project:
         return folder_path
-    from .cyberark.pam.safe_utils import sanitize_safe_name
 
     raw_leaf = (folder_path or "").strip().strip("/\\")
     leaf = raw_leaf.replace("/", PathDelimiter)
@@ -713,6 +714,21 @@ class DownloadMembershipCommand(Command):
             logging.info('No folder memberships downloaded.')
 
 
+def _apply_pam_project_to_folders(shared_folders, pam_project):
+    """Apply PAM project prefix to shared folder paths without mutating original objects."""
+    if not pam_project:
+        return shared_folders
+
+    processed_folders = []
+    for folder in shared_folders:
+        new_folder = copy.copy(folder)
+        new_folder.path = apply_pam_project_prefix(folder.path, pam_project)
+        new_folder.uid = None
+        processed_folders.append(new_folder)
+
+    return processed_folders
+
+
 class ApplyMembershipCommand(Command):
     def get_parser(self):
         return apply_membership_parser
@@ -744,10 +760,7 @@ class ApplyMembershipCommand(Command):
 
         pam_project = (kwargs.get('pam_project') or "").strip()
         if pam_project:
-            for folder in shared_folders:
-                folder.path = apply_pam_project_prefix(folder.path, pam_project)
-                # Membership JSON may carry CyberArk safe ids; force path-based resolve.
-                folder.uid = None
+            shared_folders = _apply_pam_project_to_folders(shared_folders, pam_project)
 
         if kwargs.get('list_safes') is True:
             if not shared_folders:
