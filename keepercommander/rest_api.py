@@ -233,6 +233,14 @@ def set_server_public_key(server, key_id, public_key):   # type: (str, int, str)
     return key
 
 
+def forget_fetched_server_key(server):   # type: (str) -> None
+    """Drop the key that was fetched for this host. The next request fetches it as on first use."""
+    host = server_host(server)
+    key = _resolved_server_keys.get(host)
+    if key is not None and key.fetched:
+        del _resolved_server_keys[host]
+
+
 def get_configured_server_key(server):   # type: (str) -> Optional[SelfManagedServerKey]
     return _configured_server_keys.get(server_host(server))
 
@@ -417,9 +425,17 @@ def refetch_server_key(context):   # type: (RestApiContext) -> Optional[SelfMana
     new_key = get_self_managed_server_key(context)
     if new_key is None:
         return None
-    if old_key is not None and (new_key.key_id, new_key.public_key) == (old_key.key_id, old_key.public_key):
+    if old_key is None:
+        return new_key
+    if (new_key.key_id, new_key.public_key) == (old_key.key_id, old_key.public_key):
         return None
-    return new_key
+    # Commander keeps one key per host, so any other key is a change. Keep the old key and fail.
+    # The user accepts the new key when the user enters the server again (forget_fetched_server_key).
+    _resolved_server_keys[host] = old_key
+    raise KeeperApiError('server_key_changed',
+                         f'The server key changed. Contact your administrator. {host} now has the server key '
+                         f'with key ID {new_key.key_id}, {server_key_fingerprint(new_key.public_key)}. '
+                         f'To trust it, enter the server again: server {host}')
 
 
 def get_server_public_key(context):   # type: (RestApiContext) -> Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]
