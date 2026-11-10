@@ -15,6 +15,7 @@ import unittest
 from unittest import mock
 
 from keepercommander.importer import commands
+from keepercommander.importer import pam_membership
 from keepercommander.importer.importer import PathDelimiter, SharedFolder
 
 

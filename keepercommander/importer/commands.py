@@ -11,8 +11,6 @@
 
 
 import argparse
-import copy
-import fnmatch
 import importlib
 import json
 import logging
@@ -20,68 +18,19 @@ import os
 from typing import Optional, List, Dict
 
 from . import imp_exp
-from .cyberark.pam.safe_utils import sanitize_safe_name
 from .. import api, record_types
 from .importer import (SharedFolder, Team, Permission, Record, PathDelimiter, normalize_folder_path,
                        path_components, replace_email_domain, BaseDownloadMembership,
                        BaseDownloadRecordType, RecordType)
+from .pam_membership import (membership_safe_name, apply_pam_project_prefix,
+                             filter_shared_folders_by_safes, apply_pam_project_to_folders,
+                             PAM_ROOT_FOLDER_NAME)
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
 from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import record_pb2
-
-PAM_ROOT_FOLDER_NAME = "PAM Environments"
-
-
-def membership_safe_name(folder_path):
-    """Return the leaf folder/safe name from a membership path."""
-    leaf = (folder_path or "").strip().strip("/\\").replace("/", PathDelimiter)
-    if not leaf:
-        return ""
-    comps = list(path_components(leaf))
-    return comps[-1] if comps else leaf
-
-
-def apply_pam_project_prefix(folder_path, project):
-    """Map a bare membership path onto PAM Environments/{project}/{safe}.
-
-    Paths already under that project prefix are left unchanged (separators
-    normalized to PathDelimiter). CyberArk-style leaf names are sanitized the
-    same way PAM import names shared folders.
-    """
-    project = (project or "").strip().strip("/\\")
-    if not project:
-        return folder_path
-
-    raw_leaf = (folder_path or "").strip().strip("/\\")
-    leaf = raw_leaf.replace("/", PathDelimiter)
-    prefix = PathDelimiter.join([PAM_ROOT_FOLDER_NAME, project])
-    leaf_cf = leaf.casefold()
-    prefix_cf = prefix.casefold()
-    if leaf_cf == prefix_cf or leaf_cf.startswith(prefix_cf + PathDelimiter):
-        return leaf
-
-    # Membership paths are CyberArk safe names (one folder). Sanitize the whole
-    # leaf so embedded separators become underscores, matching PAM import.
-    safe_leaf = sanitize_safe_name(raw_leaf)
-    return PathDelimiter.join([PAM_ROOT_FOLDER_NAME, project, safe_leaf])
-
-
-def filter_shared_folders_by_safes(shared_folders, safes_pattern):
-    """Keep membership folders whose leaf name matches comma-separated globs."""
-    if not safes_pattern or not shared_folders:
-        return shared_folders
-    patterns = [p.strip() for p in str(safes_pattern).split(",") if p.strip()]
-    if not patterns:
-        return shared_folders
-    matched = []
-    for folder in shared_folders:
-        name = membership_safe_name(folder.path)
-        if any(fnmatch.fnmatch(name, pattern) for pattern in patterns):
-            matched.append(folder)
-    return matched
 
 
 def register_commands(commands):
@@ -714,21 +663,6 @@ class DownloadMembershipCommand(Command):
             logging.info('No folder memberships downloaded.')
 
 
-def _apply_pam_project_to_folders(shared_folders, pam_project):
-    """Apply PAM project prefix to shared folder paths without mutating original objects."""
-    if not pam_project:
-        return shared_folders
-
-    processed_folders = []
-    for folder in shared_folders:
-        new_folder = copy.copy(folder)
-        new_folder.path = apply_pam_project_prefix(folder.path, pam_project)
-        new_folder.uid = None
-        processed_folders.append(new_folder)
-
-    return processed_folders
-
-
 class ApplyMembershipCommand(Command):
     def get_parser(self):
         return apply_membership_parser
@@ -760,7 +694,7 @@ class ApplyMembershipCommand(Command):
 
         pam_project = (kwargs.get('pam_project') or "").strip()
         if pam_project:
-            shared_folders = _apply_pam_project_to_folders(shared_folders, pam_project)
+            shared_folders = apply_pam_project_to_folders(shared_folders, pam_project)
 
         if kwargs.get('list_safes') is True:
             if not shared_folders:
