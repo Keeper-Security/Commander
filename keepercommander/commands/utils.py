@@ -1324,7 +1324,7 @@ class WhoamiCommand(Command):
         return data
 
     def execute(self, params, **kwargs):
-        json_output = kwargs.get('json_output', False)
+        json_output = kwargs.get('json_output', False) or kwargs.get('json', False) or kwargs.get('format') == 'json'
         verbose = kwargs.get('verbose', False)
         
         if json_output:
@@ -1399,16 +1399,28 @@ class WhoamiCommand(Command):
                         paid = x.get('paid') is True
                         if paid:
                             exp = x.get('expiration')
-                            if exp > 0:
-                                dt = datetime.datetime.fromtimestamp(exp // 1000) + datetime.timedelta(days=1)
-                                n = datetime.datetime.now()
-                                td = (dt - n).days
-                                expires = str(dt.date())
-                                if td > 0:
-                                    expires += f' (in {td} days)'
-                                else:
-                                    expires += ' (expired)'
-                                license_info['license_expires'] = expires
+                            try:
+                                exp_seconds = int(exp) // 1000
+                            except (TypeError, ValueError):
+                                exp_seconds = 0
+                            if exp_seconds > 0:
+                                try:
+                                    dt = datetime.datetime.fromtimestamp(exp_seconds)
+                                except (OSError, OverflowError, ValueError):
+                                    try:
+                                        dt = datetime.datetime(1970, 1, 1) + datetime.timedelta(seconds=exp_seconds)
+                                    except (OverflowError, ValueError):
+                                        dt = None
+                                if dt:
+                                    dt = dt + datetime.timedelta(days=1)
+                                    n = datetime.datetime.now()
+                                    td = (dt - n).days
+                                    expires = str(dt.date())
+                                    if td > 0:
+                                        expires += f' (in {td} days)'
+                                    else:
+                                        expires += ' (expired)'
+                                    license_info['license_expires'] = expires
                         
                         license_info['user_licenses'] = {
                             'plan': x.get("number_of_seats", ""),
@@ -1422,7 +1434,7 @@ class WhoamiCommand(Command):
                         
                         addons = []
                         addon_lookup = {a[0]: a[1] for a in constants.MSP_ADDONS}
-                        for ao in x.get('add_ons'):
+                        for ao in (x.get('add_ons') or ()):
                             if isinstance(ao, dict):
                                 enabled = ao.get('enabled') is True
                                 if enabled:
@@ -1450,7 +1462,9 @@ class WhoamiCommand(Command):
             
             # Output JSON
             import json
-            print(json.dumps(data, indent=2))
+            output = json.dumps(data, indent=2)
+            print(output)
+            return output
         else:
             # Clean formatted output
             DIM = Fore.WHITE
