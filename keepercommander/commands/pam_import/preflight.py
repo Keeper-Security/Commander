@@ -12,11 +12,15 @@ from ... import vault
 from ...recordv3 import RecordV3
 from .base import (
     PamCloudResourceObject,
+    PamRemoteBrowserObject,
     PamUserObject,
     SaasConfigurationObject,
+    rbi_requests_keeperai,
 )
 from .batch_step2 import (
+    _is_iam_rotation,
     _is_saas_rotation,
+    _is_scripts_only_rotation,
     resolve_saas_config_uid,
     resolve_service_resource_uids,
 )
@@ -24,6 +28,14 @@ from .batch_step2 import (
 # PAM configuration record types that can federate an IdP (pamCloudResource is always IdP-provisioned)
 IDP_CAPABLE_CONFIG_TYPES = frozenset({
     'pamAwsConfiguration', 'pamGcpConfiguration', 'pamAzureConfiguration',
+    'pamDomainConfiguration', 'pamOktaConfiguration',
+})
+
+# PAM configuration record types whose Gateway provider accepts a user directly under the configuration (kdnrm
+# resource_type.py: Aws Iam User, Azure User, Gcp User, Domain User, Okta IAM User). Network / Local configurations only
+# have "Virtual" users (the NOOP / scripts_only case).
+IAM_USER_CONFIG_TYPES = frozenset({
+    'pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
     'pamDomainConfiguration', 'pamOktaConfiguration',
 })
 
@@ -41,6 +53,13 @@ def _record_type_missing(params, name: str) -> bool:
         return RecordV3.resolve_record_type_by_name(params, name) is None
     except Exception:  # an unreadable cache must not break the dry-run
         return False
+
+
+def keeperai_resources(resources) -> list:
+    """New RBI / cloud resources that ask for KeeperAI (they need ai_threat_detection on the PAM configuration)."""
+    return [r for r in resources or []
+            if isinstance(r, PamRemoteBrowserObject) and _is_new(r)
+            and rbi_requests_keeperai(getattr(r, 'rbi_settings', None))]
 
 
 def collect_preflight_warnings(params, users, resources, pam_cfg_uid: str, extend_mode: bool,
@@ -67,6 +86,27 @@ def _collect(params, users, resources, pam_cfg_uid, extend_mode, tdag, msgs: Lis
             if not resolve_saas_config_uid(params, user.rotation_settings.saas_config, users):
                 msgs.append(f'user "{_title(user)}": saas_config "{user.rotation_settings.saas_config}" '
                             'was not found / is ambiguous - the SaaS rotation will be skipped')
+
+    # 1b) IAM rotation: nested users are skipped; global users need a cloud / IdP PAM configuration
+    for res in resources:
+        for user in getattr(res, 'users', None) or []:
+            if isinstance(user, PamUserObject) and _is_new(user) and _is_iam_rotation(user):
+                msgs.append(f'user "{_title(user)}" under "{_title(res)}": rotation "iam_user" is only supported for '
+                            'users in the global users[] list - the user will be skipped (no link, no rotation)')
+    for res in resources:
+        for user in getattr(res, 'users', None) or []:
+            if isinstance(user, PamUserObject) and _is_new(user) and _is_scripts_only_rotation(user):
+                msgs.append(f'user "{_title(user)}" under "{_title(res)}": rotation "scripts_only" (NOOP) is only '
+                            'supported for users in the global users[] list and never runs the scripts of the machine - '
+                            'the user will be skipped (no link, no rotation); use "general" to run the machine scripts')
+    iam_users = [u for u in users if isinstance(u, PamUserObject) and _is_new(u) and _is_iam_rotation(u)]
+    if iam_users and pam_cfg_uid:
+        cfg = vault.KeeperRecord.load(params, pam_cfg_uid)
+        cfg_type = getattr(cfg, 'record_type', '') if cfg is not None else ''
+        if cfg is not None and cfg_type not in IAM_USER_CONFIG_TYPES:
+            names = ', '.join(f'"{_title(u)}"' for u in iam_users)
+            msgs.append(f'iam_user rotation ({names}) needs a cloud / IdP PAM configuration (AWS, Azure, GCP, Domain '
+                        f'or Okta); the Gateway cannot rotate it on this one (type "{cfg_type or "?"}")')
 
     # 2) Service accounts: unknown / non-pamMachine references are skipped
     for res in resources:
@@ -101,7 +141,18 @@ def _collect(params, users, resources, pam_cfg_uid, extend_mode, tdag, msgs: Lis
                             'identityProviderUid: pamCloudResource JIT / elevation will not work (cloud resources are '
                             'always IdP-provisioned)')
 
-    # 5) Extend only: existing machines that get new users (read-only look at the PAM graph)
+    # 5) KeeperAI on RBI / cloud resources needs ai_threat_detection on the PAM configuration (graph read-only look)
+    ai_resources = keeperai_resources(resources)
+    if ai_resources and tdag is not None and pam_cfg_uid:
+        state = tdag.get_resource_setting(pam_cfg_uid, 'allowedSettings', 'aiEnabled')
+        if state != 'on':
+            names = ', '.join(f'"{_title(r)}"' for r in ai_resources)
+            shown = 'not set' if state in ('', 'default') else state
+            msgs.append(f'KeeperAI is requested for {names} but ai_threat_detection is {shown} on the PAM '
+                        'configuration - KeeperAI will not run (enable it with '
+                        '`pam config edit <config> --ai-threat-detection on`)')
+
+    # 6) Extend only: existing machines that get new users (read-only look at the PAM graph)
     if extend_mode and tdag is not None:
         for res in resources:
             if _is_new(res):

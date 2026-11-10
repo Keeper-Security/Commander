@@ -39,9 +39,10 @@ from .batch_step2 import (
     apply_service_rotations,
     run_step2_extend_existing,
     run_step2_full,
+    run_step2_global_profile_rotations,
     run_step2_global_saas,
 )
-from .preflight import collect_preflight_warnings, load_graph_for_preflight
+from .preflight import collect_preflight_warnings, keeperai_resources, load_graph_for_preflight
 from .record_loader import iter_accessible_record_uids
 from .throttle_retry import (
     IMPORT_ON_EXHAUSTED,
@@ -724,16 +725,24 @@ class BatchPamImportEngine:
         # Pre-flight: problems the live Step 2 would only hit after the records exist (see preflight.py).
         # Extend reads the PAM graph once (read-only) to look at existing machines that receive new users.
         tdag = None
-        needs_graph = self.extend_mode and bool(self.pam_cfg_uid) and any(
+        needs_machine_graph = self.extend_mode and bool(self.pam_cfg_uid) and any(
             getattr(r, '_extend_tag', 'new') == 'existing'
             and any(getattr(u, '_extend_tag', 'new') == 'new' for u in (getattr(r, 'users', None) or []))
             for r in self.resources)
+        # KeeperAI on a new RBI / cloud resource: the PAM configuration must have ai_threat_detection on
+        needs_ai_graph = bool(self.pam_cfg_uid) and bool(keeperai_resources(self.resources))
+        needs_graph = needs_machine_graph or needs_ai_graph
         if needs_graph:
             tdag = load_graph_for_preflight(self.params, self.pam_cfg_uid)
         preflight = collect_preflight_warnings(
             self.params, self.users, self.resources, self.pam_cfg_uid, self.extend_mode, tdag)
         if needs_graph and tdag is None:
-            preflight.append('could not read the PAM graph: the admin / link checks for existing machines were skipped')
+            skipped = []
+            if needs_machine_graph:
+                skipped.append('the admin / link checks for existing machines')
+            if needs_ai_graph:
+                skipped.append('the KeeperAI check of the PAM configuration')
+            preflight.append(f'could not read the PAM graph: {" and ".join(skipped)} {"was" if len(skipped) == 1 else "were"} skipped')
         for msg in preflight:
             logging.warning(f'Dry-run preflight: {msg}')
         return {
@@ -1161,6 +1170,15 @@ class BatchPamImportEngine:
                 )
             except Exception as err:
                 _dag_error('SaaS rotation', err)
+
+            try:
+                # rotation: iam_user / scripts_only for new GLOBAL users (never applied before this pass)
+                run_step2_global_profile_rotations(
+                    self.params, prc, self.users, self.pam_cfg_uid,
+                    rotation_throttle=rotation_throttle,
+                )
+            except Exception as err:
+                _dag_error('IAM / scripts-only rotation', err)
 
             try:
                 if add_jit_domain_links(tdag, self.resources):

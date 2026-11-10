@@ -2300,27 +2300,32 @@ class PamCloudResourceObject(PamRemoteBrowserObject):
         for msg in rbi_keeperai_warnings(self.rbi_settings):
             logging.warning(f"""PAM Cloud "{title}": {msg}""")
 
+def rbi_requests_keeperai(rbi_settings) -> bool:
+    """True when the RBI / cloud resource asks for KeeperAI (ai_threat_detection on, or ai_settings given)."""
+    if not rbi_settings:
+        return False
+    opts = rbi_settings.options
+    return bool((opts and opts.ai_threat_detection and opts.ai_threat_detection.value == "on")
+                or rbi_settings.ai_settings)
+
 def rbi_keeperai_warnings(rbi_settings) -> List[str]:
     """Warnings when KeeperAI is requested for a pamRemoteBrowser but its prerequisites are off.
 
     The Web Vault disables the KeeperAI toggle in that state (it never saves aiEnabled=true); Commander has no UI,
     so it warns and still writes what the JSON says. The PAM-configuration side (ai_threat_detection on the
-    configuration) is not visible here.
+    configuration) is not visible here - the dry-run pre-flight (preflight.py) reads it from the configuration.
     """
     msgs: List[str] = []
-    if not rbi_settings:
+    if not rbi_requests_keeperai(rbi_settings):
         return msgs
     opts = rbi_settings.options
     ai_on = bool(opts and opts.ai_threat_detection and opts.ai_threat_detection.value == "on")
-    if not (ai_on or rbi_settings.ai_settings):
-        return msgs
     if not (opts and opts.graphical_session_recording and opts.graphical_session_recording.value == "on"):
         msgs.append("KeeperAI needs graphical_session_recording = on (KeeperAI analyses the session recording)")
     if not (rbi_settings.connection and getattr(rbi_settings.connection, "recordingIncludeKeys", None)):
         msgs.append("KeeperAI needs connection.recording_include_keys = true")
     if rbi_settings.ai_settings and not ai_on:
         msgs.append("ai_settings is given but options.ai_threat_detection is not 'on' - KeeperAI stays off")
-    msgs.append("KeeperAI also needs ai_threat_detection enabled on the PAM configuration")
     return msgs
 
 # PAM Settings field data

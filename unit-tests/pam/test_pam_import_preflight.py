@@ -9,6 +9,7 @@ from keepercommander.commands.pam_import import preflight
 from keepercommander.commands.pam_import.base import (
     PamCloudResourceObject,
     PamMachineObject,
+    PamRemoteBrowserObject,
     PamRotationParams,
     PamUserObject,
     SaasConfigurationObject,
@@ -110,6 +111,48 @@ class TestRecordTypes:
             assert _run(resources=[cloud]) == []
 
 
+class TestIamRotation:
+    def _cfg(self, rtype):
+        rec = MagicMock()
+        rec.record_type = rtype
+        return rec
+
+    def test_global_iam_user_needs_a_cloud_or_idp_configuration(self):
+        iam = _user('i1', 'iam_user')
+        with patch.object(preflight.vault.KeeperRecord, 'load', return_value=self._cfg('pamNetworkConfiguration')):
+            msgs = _run(users=[iam])
+        assert any('iam_user' in m and '"i1"' in m and 'cloud / IdP' in m and 'pamNetworkConfiguration' in m
+                   for m in msgs)
+
+    def test_supported_configuration_types_are_quiet(self):
+        iam = _user('i1', 'iam_user')
+        for rtype in ('pamAwsConfiguration', 'pamAzureConfiguration', 'pamGcpConfiguration',
+                      'pamDomainConfiguration', 'pamOktaConfiguration'):
+            with patch.object(preflight.vault.KeeperRecord, 'load', return_value=self._cfg(rtype)):
+                assert _run(users=[iam]) == [], rtype
+
+    def test_other_rotations_existing_users_and_unknown_configuration_are_quiet(self):
+        with patch.object(preflight.vault.KeeperRecord, 'load', return_value=self._cfg('pamNetworkConfiguration')):
+            assert _run(users=[_user('s1', 'scripts_only'), _user('g1', 'general')]) == []
+            assert _run(users=[_user('i1', 'iam_user', tag='existing')]) == []
+        with patch.object(preflight.vault.KeeperRecord, 'load', return_value=None):
+            assert _run(users=[_user('i1', 'iam_user')]) == []
+        with patch.object(preflight.vault.KeeperRecord, 'load') as load:     # import into a NEW configuration
+            assert _run(users=[_user('i1', 'iam_user')], cfg='') == []
+        load.assert_not_called()
+
+    def test_nested_iam_user_is_reported(self):
+        msgs = _run(resources=[_machine([_user('n1', 'iam_user')])])
+        assert any('global users[]' in m and 'n1' in m and 'iam_user' in m for m in msgs)
+
+
+class TestNestedScriptsOnly:
+    def test_nested_scripts_only_user_is_reported_global_one_is_not(self):
+        msgs = _run(resources=[_machine([_user('n1', 'scripts_only')])])
+        assert any('scripts_only' in m and 'n1' in m and 'general' in m for m in msgs)
+        assert _run(users=[_user('g1', 'scripts_only')]) == []
+
+
 class TestExtendExistingMachines:
     def _tdag(self, in_config=True, admin='ADMINUID'):
         tdag = MagicMock()
@@ -140,6 +183,63 @@ class TestExtendExistingMachines:
         assert _run(resources=[mach], extend=True, tdag=self._tdag(admin=False)) == []
         existing = _machine([_user('r1', 'general')], tag='existing')
         assert _run(resources=[existing], extend=False, tdag=self._tdag(admin=False)) == []
+
+
+def _rbi(options=None, tag='new', cls=PamRemoteBrowserObject):
+    r = cls.load({'type': 'pamRemoteBrowser', 'title': 'R1', 'url': 'https://x.example',
+                  'pam_settings': {'options': options or {}, 'connection': {'protocol': 'http'}}})
+    r.uid = 'R' * 22
+    r._extend_tag = tag
+    return r
+
+
+class TestKeeperAiOnPamConfiguration:
+    """The 'ai_threat_detection on the PAM configuration' reminder is now a real check against the configuration."""
+
+    def _tdag(self, state):
+        tdag = MagicMock()
+        tdag.get_resource_setting.return_value = state
+        return tdag
+
+    def test_warns_when_the_configuration_has_ai_off_or_unset(self):
+        for state in ('off', 'default', ''):
+            msgs = _run(resources=[_rbi({'ai_threat_detection': 'on'})], tdag=self._tdag(state))
+            assert any('"R1"' in m and 'ai_threat_detection' in m for m in msgs), state
+
+    def test_quiet_when_the_configuration_has_ai_on(self):
+        tdag = self._tdag('on')
+        assert _run(resources=[_rbi({'ai_threat_detection': 'on'})], tdag=tdag) == []
+        tdag.get_resource_setting.assert_called_once_with(CFG, 'allowedSettings', 'aiEnabled')
+
+    def test_quiet_when_ai_is_not_requested_existing_resource_or_no_graph(self):
+        tdag = self._tdag('off')
+        assert _run(resources=[_rbi({'connections': 'on'})], tdag=tdag) == []
+        assert _run(resources=[_rbi({'ai_threat_detection': 'on'}, tag='existing')], tdag=tdag) == []
+        assert _run(resources=[_rbi({'ai_threat_detection': 'on'})], tdag=None) == []
+
+    def test_cloud_resource_is_covered_too(self):
+        msgs = _run(resources=[_rbi({'ai_threat_detection': 'on'}, cls=PamCloudResourceObject)], tdag=self._tdag('off'))
+        assert any('ai_threat_detection' in m for m in msgs)
+
+    def test_simulate_loads_the_graph_for_an_import_with_an_existing_configuration(self):
+        from keepercommander.commands.pam_import.batch_pipeline import BatchPamImportEngine
+        engine = BatchPamImportEngine.__new__(BatchPamImportEngine)
+        engine.params = MagicMock()
+        engine.params.record_cache = {}
+        engine.project = {}
+        engine.users = []
+        engine.resources = [_rbi({'ai_threat_detection': 'on'})]
+        engine.users_folder_uid = engine.resources_folder_uid = 'F'
+        engine.pam_cfg_uid = CFG
+        engine.extend_mode = False
+        with patch.object(BatchPamImportEngine, 'build_plan', return_value=[]),              patch.object(BatchPamImportEngine, '_plan_deferred_links_for_tiers', return_value=[]),              patch.object(BatchPamImportEngine, '_project_record_link_counts', return_value={}),              patch('keepercommander.commands.pam_import.batch_pipeline.plan_deferred_refs_for_tiers', return_value=[]),              patch('keepercommander.commands.pam_import.batch_pipeline.load_graph_for_preflight',
+                   return_value=self._tdag('off')) as load:
+            plan = engine.simulate()
+        load.assert_called_once()
+        assert any('ai_threat_detection' in m for m in plan['preflight_warnings'])
+        with patch.object(BatchPamImportEngine, 'build_plan', return_value=[]),              patch.object(BatchPamImportEngine, '_plan_deferred_links_for_tiers', return_value=[]),              patch.object(BatchPamImportEngine, '_project_record_link_counts', return_value={}),              patch('keepercommander.commands.pam_import.batch_pipeline.plan_deferred_refs_for_tiers', return_value=[]),              patch('keepercommander.commands.pam_import.batch_pipeline.load_graph_for_preflight', return_value=None):
+            plan = engine.simulate()
+        assert any('KeeperAI check' in m and 'skipped' in m for m in plan['preflight_warnings'])
 
 
 class TestRobustness:

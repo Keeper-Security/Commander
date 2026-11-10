@@ -320,7 +320,7 @@ class TestRbiKeeperAi:
         msgs = rbi_keeperai_warnings(rbi.rbi_settings)
         assert any('graphical_session_recording' in m for m in msgs)
         assert any('recording_include_keys' in m for m in msgs)
-        assert any('PAM configuration' in m for m in msgs)
+        assert not any('PAM configuration' in m for m in msgs)    # that part moved to the dry-run pre-flight
 
     def test_warning_when_ai_settings_without_ai_threat_detection(self):
         from keepercommander.commands.pam_import.base import rbi_keeperai_warnings

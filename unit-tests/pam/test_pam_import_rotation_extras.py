@@ -208,6 +208,38 @@ class TestGlobalSaasStep:
         assert not self._run([_user('saas', saas_config='cfg')], resolved='').execute.called
 
 
+class TestGlobalProfileStep:
+    """iam_user / scripts_only of global users were resolved but never sent before this pass."""
+
+    def _run(self, users, exists=False):
+        prc = MagicMock()
+        with patch.object(batch_step2, '_rotation_exists', return_value=exists),              patch.object(batch_step2, 'call_with_throttle_retry', side_effect=lambda fn, **kw: fn()):
+            batch_step2.run_step2_global_profile_rotations(MagicMock(), prc, users, CONFIG_UID)
+        return prc
+
+    def test_iam_user_and_scripts_only_use_the_rotation_profile(self):
+        for profile in ('iam_user', 'scripts_only'):
+            prc = self._run([_user(profile, enabled='on', schedule={'type': 'on-demand'})])
+            kwargs = prc.execute.call_args.kwargs
+            assert kwargs['rotation_profile'] == profile
+            assert kwargs['record_name'] == USER_UID and kwargs['config'] == CONFIG_UID
+            assert kwargs['enable'] is True and kwargs['on_demand'] is True
+            assert 'resource' not in kwargs and 'saas_config_uid' not in kwargs
+
+    def test_skips_saas_general_existing_users_and_existing_rotation(self):
+        assert not self._run([_user('saas', saas_config='cfg')]).execute.called      # saas has its own pass
+        assert not self._run([_user('general')]).execute.called
+        assert not self._run([_user('iam_user', tag='existing')]).execute.called
+        assert not self._run([_user('iam_user')], exists=True).execute.called
+        assert not self._run([MagicMock()]).execute.called                            # not a PamUserObject
+
+    def test_user_without_rotation_is_untouched(self):
+        user = PamUserObject.load({'type': 'pamUser', 'title': 'u1', 'login': 'u1', 'password': 'p'},
+                                  PamRotationParams(configUid=CONFIG_UID, profiles={}))
+        user.uid = USER_UID
+        assert not self._run([user]).execute.called
+
+
 class TestNestedSaasIsSkipped:
     def test_nested_saas_user_is_neither_linked_nor_rotated(self, caplog):
         mach = MagicMock(uid=MACH_UID, title='M1', type='pamMachine', _extend_tag='new', users=[_user('saas', saas_config='c')],
@@ -223,6 +255,39 @@ class TestNestedSaasIsSkipped:
         apply_rot.assert_not_called()
         tdag.link_user_to_resource.assert_not_called()
         assert any('global users[]' in r.message for r in caplog.records)
+
+
+class TestNestedIamIsSkipped:
+    PROFILE = 'iam_user'
+
+    def _run_nested(self, extend):
+        mach = MagicMock(uid=MACH_UID, title='M1', type='pamMachine', _extend_tag='existing' if extend else 'new',
+                         users=[_user(self.PROFILE)], pam_settings=None)
+        tdag = MagicMock()
+        tdag.resource_belongs_to_config.return_value = True
+        with patch.object(batch_step2, '_run_step2_machine'), patch.object(batch_step2, '_apply_rotation') as apply_rot,              patch.object(batch_step2, 'get_admin_credential', return_value=''),              patch.object(batch_step2, 'get_launch_credential', return_value=''),              patch.object(batch_step2, '_apply_machine_allowed_settings'),              patch.object(batch_step2, 'call_with_throttle_retry'):
+            if extend:
+                batch_step2.run_step2_extend_existing(MagicMock(), tdag, mach, CONFIG_UID, MagicMock())
+            else:
+                batch_step2.run_step2_full(MagicMock(), tdag, mach, CONFIG_UID, MagicMock(), 'UF', 'RF')
+        return apply_rot, tdag
+
+    def test_nested_iam_user_is_neither_linked_nor_rotated(self, caplog):
+        for extend in (False, True):
+            with caplog.at_level(logging.WARNING):
+                apply_rot, tdag = self._run_nested(extend)
+            apply_rot.assert_not_called()
+            tdag.link_user_to_resource.assert_not_called()
+        assert sum(self.PROFILE in r.message and 'global users[]' in r.message for r in caplog.records) == 2
+
+
+class TestNestedScriptsOnlyIsSkipped(TestNestedIamIsSkipped):
+    PROFILE = 'scripts_only'
+
+    def test_message_points_to_general_for_machine_scripts(self, caplog):
+        with caplog.at_level(logging.WARNING):
+            self._run_nested(False)
+        assert any('general' in r.message and "scripts of the machine" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

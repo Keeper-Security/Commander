@@ -91,7 +91,8 @@ def run_step2_full(
             continue
         if getattr(user, '_extend_tag', 'new') == 'existing':
             continue
-        if _skip_nested_saas(user, mach):
+        if (_skip_nested_saas(user, mach) or _skip_nested_iam(user, mach)
+                or _skip_nested_scripts_only(user, mach)):
             continue
         if (user.rotation_settings and
                 str(user.rotation_settings.rotation).lower() == 'general'):
@@ -156,7 +157,8 @@ def run_step2_extend_existing(
             continue
         if getattr(user, '_extend_tag', 'new') != 'new':
             continue
-        if _skip_nested_saas(user, mach):
+        if (_skip_nested_saas(user, mach) or _skip_nested_iam(user, mach)
+                or _skip_nested_scripts_only(user, mach)):
             continue
         if (user.rotation_settings and
                 str(user.rotation_settings.rotation).lower() == 'general'):
@@ -315,6 +317,43 @@ def _skip_nested_saas(user, mach) -> bool:
         f'User "{getattr(user, "title", "") or user.uid}" under "{getattr(mach, "title", "") or mach.uid}": '
         'rotation "saas" is only supported for users in the global users[] list (not nested under a machine) - '
         'user skipped (no link, no rotation).')
+    return True
+
+
+def _is_iam_rotation(user) -> bool:
+    rs = getattr(user, 'rotation_settings', None)
+    return bool(rs and str(getattr(rs, 'rotation', '') or '').lower() == 'iam_user')
+
+
+def _skip_nested_iam(user, mach) -> bool:
+    """`rotation: iam_user` users must be top-level (global users[]): an IAM user hangs directly off the PAM
+    configuration (the Gateway's AWS / Azure / GCP / Domain / Okta provider object) and has no resource - the rotation
+    command would unlink it from the machine anyway, and nested it used to be sent as a `general` rotation."""
+    if not _is_iam_rotation(user):
+        return False
+    logging.warning(
+        f'User "{getattr(user, "title", "") or user.uid}" under "{getattr(mach, "title", "") or mach.uid}": '
+        'rotation "iam_user" is only supported for users in the global users[] list (not nested under a machine) - '
+        'user skipped (no link, no rotation).')
+    return True
+
+
+def _is_scripts_only_rotation(user) -> bool:
+    rs = getattr(user, 'rotation_settings', None)
+    return bool(rs and str(getattr(rs, 'rotation', '') or '').lower() == 'scripts_only')
+
+
+def _skip_nested_scripts_only(user, mach) -> bool:
+    """`rotation: scripts_only` (NOOP) users must be top-level (global users[]): the Gateway runs a NOOP rotation on
+    configuration -> virtual resource -> user, so no machine is in the chain and the machine's scripts never run (only
+    the user's and the PAM configuration's, on the Gateway). Nested it used to be sent as a real `general` rotation."""
+    if not _is_scripts_only_rotation(user):
+        return False
+    logging.warning(
+        f'User "{getattr(user, "title", "") or user.uid}" under "{getattr(mach, "title", "") or mach.uid}": '
+        'rotation "scripts_only" (NOOP) is only supported for users in the global users[] list (not nested under a '
+        'machine) and never runs the scripts of the machine; use rotation "general" to run the machine scripts (it also '
+        'rotates the password) - user skipped (no link, no rotation).')
     return True
 
 
@@ -504,7 +543,7 @@ def run_step2_global_saas(params, prc, users, pam_cfg_uid, *,
 
     Follows the Web Vault / router: set_record_rotation carries saasConfiguration (noop, belongs_to=false, SaaS list
     on the PAM-configuration ACL, router checks access to the SaaS record). Only `saas` is applied here; iam_user /
-    scripts_only of global users are not applied by the import (unchanged, pre-existing).
+    scripts_only of global users are applied by `run_step2_global_profile_rotations`.
     """
     for user in users or []:
         if not isinstance(user, PamUserObject) or not _is_saas_rotation(user):
@@ -534,6 +573,50 @@ def run_step2_global_saas(params, prc, users, pam_cfg_uid, *,
             lambda: prc.execute(params, silent=True, **args),
             max_retries=5,
             label=f'saas rotation {user.uid}',
+            fail_on_throttle=rest_fail_on_throttle(params),
+            on_exhausted=IMPORT_ON_EXHAUSTED,
+        )
+
+
+# rotation profiles of GLOBAL users that hang off the PAM configuration (no machine): `pam rotation set
+# --rotation-profile`. `general` is not in the list on purpose - a global user with `general` belongs to a machine's
+# own users list (edit.py warns about it) and is created by the machine's Step 2.
+GLOBAL_PROFILE_ROTATIONS = ('iam_user', 'scripts_only')
+
+
+def run_step2_global_profile_rotations(params, prc, users, pam_cfg_uid, *,
+                                       rotation_throttle: Optional[RotationThrottle] = None) -> None:
+    """Apply `rotation: iam_user` / `scripts_only` for new global users.
+
+    Before this pass such rotations were parsed and resolved (resourceUid = PAM configuration) but never sent, so the
+    user was created without any rotation. The rotation command does the same thing the Web Vault does: iam_user = a
+    rotation with the PAM configuration and an empty resource, scripts_only = a noop rotation linked to the
+    configuration. Users that already have a rotation are skipped (re-running extend must not reset them).
+    """
+    for user in users or []:
+        if not isinstance(user, PamUserObject):
+            continue
+        rs = getattr(user, 'rotation_settings', None)
+        profile = str(getattr(rs, 'rotation', '') or '').lower() if rs else ''
+        if profile not in GLOBAL_PROFILE_ROTATIONS:
+            continue
+        if getattr(user, '_extend_tag', 'new') != 'new':
+            continue
+        if _rotation_exists(params, user.uid, ''):
+            continue
+        args = {
+            'force': True,
+            'config': pam_cfg_uid,
+            'record_name': user.uid,
+            'rotation_profile': profile,
+        }
+        args.update(_rotation_common_args(user))
+        if rotation_throttle:
+            rotation_throttle.before_call()
+        call_with_throttle_retry(
+            lambda: prc.execute(params, silent=True, **args),
+            max_retries=5,
+            label=f'{profile} rotation {user.uid}',
             fail_on_throttle=rest_fail_on_throttle(params),
             on_exhausted=IMPORT_ON_EXHAUSTED,
         )
