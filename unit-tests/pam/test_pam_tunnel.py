@@ -194,6 +194,45 @@ class TestPAMTunnelDiagnose(unittest.TestCase):
         test_websocket.assert_called_once_with(
             'router.example', port=443, proxies=proxies, verify='/path/to/ca.pem')
 
+    def _run_diagnose(self, router_host):
+        params = mock.MagicMock()
+        params.server = 'smk.test'
+        params.rest_context.proxies = None
+        ns = 'keepercommander.commands.tunnel_and_connections.'
+        router = mock.patch(ns + 'get_router_host', side_effect=router_host) if isinstance(
+            router_host, Exception) else mock.patch(ns + 'get_router_host', return_value=router_host)
+        with mock.patch(ns + 'get_relay_host', return_value='relay.example'), router, \
+                mock.patch(ns + 'get_or_create_tube_registry', return_value=None), \
+                mock.patch(ns + 'socket.getaddrinfo',
+                           return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('203.0.113.1', 0))]), \
+                mock.patch(ns + 'socket.gethostbyname', return_value='203.0.113.1'), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_https', return_value=(True, 'ok', 1)) as https, \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_websocket',
+                                  return_value=(True, 'ok', 1)) as ws, \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_tcp_stun',
+                                  return_value=(True, 'ok', 1, None)) as stun, \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_udp_stun',
+                                  return_value=(True, 'ok', 1, None)), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_turn', return_value=(True, 'ok', 1)), \
+                mock.patch.object(PAMTunnelDiagnoseCommand, '_test_udp_port', return_value=(True, 1)):
+            PAMTunnelDiagnoseCommand().execute(params)
+        return https, ws, stun
+
+    def test_router_host_error_is_a_failed_check(self):
+        from keepercommander.constants import RouterHostError
+        https, ws, stun = self._run_diagnose(RouterHostError('Router host', 'no routerUrl'))
+        ws.assert_not_called()
+        https.assert_called_once()
+        stun.assert_called_once()
+
+    def test_bare_ipv6_router_host_loses_brackets(self):
+        _, ws, _ = self._run_diagnose('[2001:db8::1]:8443')
+        self.assertEqual(ws.call_args[0][0], '2001:db8::1')
+        self.assertEqual(ws.call_args[1]['port'], 8443)
+        _, ws, _ = self._run_diagnose('[2001:db8::1]')
+        self.assertEqual(ws.call_args[0][0], '2001:db8::1')
+        self.assertEqual(ws.call_args[1]['port'], 443)
+
     def test_https_uses_configured_proxy(self):
         proxies = {'http': 'http://proxy.example:8080', 'https': 'http://proxy.example:8080'}
         with mock.patch('keepercommander.commands.tunnel_and_connections.requests.get') as mock_get:

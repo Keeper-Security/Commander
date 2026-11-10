@@ -55,7 +55,7 @@ import json
 from ..params import LAST_RECORD_UID
 from ..subfolder import find_folders, try_resolve_path
 from ..utils import value_to_boolean
-from ..constants import get_relay_host, get_router_host, get_keeper_server_hostname
+from ..constants import get_relay_host, get_router_host, get_keeper_server_hostname, RouterHostError
 
 # Per-record map of pending lease-expiry timers. Used by PAMTunnelStartCommand
 # to cancel any prior timer for the same record before scheduling a new one,
@@ -2127,13 +2127,19 @@ class PAMTunnelDiagnoseCommand(Command):
         server = 'keepersecurity.us' if params.server == 'govcloud.keepersecurity.us' else params.server
         server_host = get_keeper_server_hostname(server)
         krelay_server = get_relay_host(params.server)
-        connect_host = get_router_host(params.server, params.config)
+        router_error = None
+        connect_host, connect_port = '', 443
+        try:
+            connect_host = get_router_host(params.server, params.config)
+        except RouterHostError as e:
+            router_error = str(e)
         # The Router host can have a port (KROUTER_URL or "router_hosts"). The default port is 443.
         connect_name, _, port_text = connect_host.rpartition(':')
         if port_text.isdigit():
             connect_host, connect_port = connect_name, int(port_text)
-        else:
-            connect_port = 443
+        # A bare IPv6 literal has brackets in the Router host. The socket calls need none.
+        if connect_host.startswith('[') and connect_host.endswith(']'):
+            connect_host = connect_host[1:-1]
 
         # ── header ────────────────────────────────────────────────────────────
         self._print_header()
@@ -2176,9 +2182,12 @@ class PAMTunnelDiagnoseCommand(Command):
             server_host, proxies=params.rest_context.proxies, verify=params.ssl_verify)
         _record(f'HTTPS  {server_host}:443', passed, detail, ms)
 
-        passed, detail, ms = self._test_websocket(
-            connect_host, port=connect_port, proxies=params.rest_context.proxies, verify=params.ssl_verify)
-        _record(f'WebSocket  {connect_host}:{connect_port}', passed, detail, ms)
+        if router_error:
+            _record('WebSocket  Router host', False, router_error, 0)
+        else:
+            passed, detail, ms = self._test_websocket(
+                connect_host, port=connect_port, proxies=params.rest_context.proxies, verify=params.ssl_verify)
+            _record(f'WebSocket  {connect_host}:{connect_port}', passed, detail, ms)
 
         print()
 
