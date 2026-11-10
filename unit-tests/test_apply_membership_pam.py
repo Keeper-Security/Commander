@@ -18,6 +18,29 @@ from keepercommander.importer import commands
 from keepercommander.importer.importer import PathDelimiter, SharedFolder
 
 
+class TestMembershipSafeName(unittest.TestCase):
+    def test_membership_safe_name_uses_leaf(self):
+        path = PathDelimiter.join(["PAM Environments", "Acme Test Import", "Acme_X"])
+        self.assertEqual(commands.membership_safe_name(path), "Acme_X")
+
+    def test_empty_and_whitespace_return_empty(self):
+        self.assertEqual(commands.membership_safe_name(""), "")
+        self.assertEqual(commands.membership_safe_name("   "), "")
+        self.assertEqual(commands.membership_safe_name(None), "")
+        self.assertEqual(commands.membership_safe_name("/"), "")
+        self.assertEqual(commands.membership_safe_name("\\"), "")
+        self.assertEqual(commands.membership_safe_name("/\\"), "")
+
+    def test_strips_leading_trailing_separators(self):
+        self.assertEqual(commands.membership_safe_name("/AcmeSafe/"), "AcmeSafe")
+        self.assertEqual(commands.membership_safe_name("\\AcmeSafe\\"), "AcmeSafe")
+        self.assertEqual(commands.membership_safe_name("/PAM Environments/AcmeSafe/"), "AcmeSafe")
+
+    def test_nested_backslash_path_uses_last_component(self):
+        nested = PathDelimiter.join(["parent", "child", "leaf"])
+        self.assertEqual(commands.membership_safe_name(nested), "leaf")
+
+
 class TestApplyPamProjectPrefix(unittest.TestCase):
     def test_bare_safe_maps_under_pam_project(self):
         path = commands.apply_pam_project_prefix("Acme_Michael_Rodriguez", "Acme Test Import")
@@ -35,6 +58,14 @@ class TestApplyPamProjectPrefix(unittest.TestCase):
             existing,
         )
 
+    def test_already_prefixed_is_case_insensitive(self):
+        existing = "pam environments/acme test import/Acme_David_Chen"
+        result = commands.apply_pam_project_prefix(existing, "Acme Test Import")
+        expected = PathDelimiter.join(
+            ["pam environments", "acme test import", "Acme_David_Chen"]
+        )
+        self.assertEqual(result, expected)
+
     def test_forward_slash_prefixed_path_is_normalized(self):
         existing = "PAM Environments/Acme Test Import/Acme_Jane_Miller"
         result = commands.apply_pam_project_prefix(existing, "Acme Test Import")
@@ -48,34 +79,57 @@ class TestApplyPamProjectPrefix(unittest.TestCase):
             commands.apply_pam_project_prefix("Safe One", ""),
             "Safe One",
         )
+        self.assertEqual(
+            commands.apply_pam_project_prefix("Safe One", "   "),
+            "Safe One",
+        )
+        self.assertEqual(
+            commands.apply_pam_project_prefix("Safe One", None),
+            "Safe One",
+        )
+
+    def test_project_with_surrounding_separators_is_cleaned(self):
+        path = commands.apply_pam_project_prefix("AcmeSafe", "/Proj\\")
+        expected = PathDelimiter.join(["PAM Environments", "Proj", "AcmeSafe"])
+        self.assertEqual(path, expected)
+
+    def test_empty_folder_path_becomes_unnamed_safe(self):
+        path = commands.apply_pam_project_prefix("", "Proj")
+        expected = PathDelimiter.join(["PAM Environments", "Proj", "Unnamed-Safe"])
+        self.assertEqual(path, expected)
+        path = commands.apply_pam_project_prefix("   ", "Proj")
+        self.assertEqual(path, expected)
 
     def test_sanitize_strips_path_separators_in_leaf(self):
         path = commands.apply_pam_project_prefix("Bad/Name", "Proj")
         expected = PathDelimiter.join(["PAM Environments", "Proj", "Bad_Name"])
         self.assertEqual(path, expected)
 
-    def test_multiple_leading_trailing_separators(self):
-        """Test that multiple leading/trailing separators are properly stripped."""
-        path = "///Acme_Safe\\\\"
-        result = commands.membership_safe_name(path)
-        self.assertEqual(result, "Acme_Safe")
+    def test_sanitize_backslash_and_dotdot_in_leaf(self):
+        path = commands.apply_pam_project_prefix("Bad\\Name..X", "Proj")
+        expected = PathDelimiter.join(["PAM Environments", "Proj", "Bad_Name_X"])
+        self.assertEqual(path, expected)
 
-    def test_mixed_separators_in_middle_are_sanitized(self):
-        """Test that mixed separators in the middle are sanitized to underscores."""
-        path = commands.apply_pam_project_prefix("Path/With\\Mixed", "Proj")
-        self.assertIn("Path_With_Mixed", path)
+    def test_sanitize_control_characters_and_truncation(self):
+        dirty = "Safe\x00Name\nWith\tControl"
+        path = commands.apply_pam_project_prefix(dirty, "Proj")
+        leaf = commands.membership_safe_name(path)
+        self.assertEqual(leaf, "SafeNameWithControl")
+        self.assertNotIn("\x00", leaf)
+        self.assertNotIn("\n", leaf)
 
-    def test_empty_safe_name_after_sanitization(self):
-        """Test handling when safe name becomes empty after sanitization."""
-        path = commands.apply_pam_project_prefix("///", "Proj")
-        self.assertIsNotNone(path)
+        long_name = "A" * 40
+        path = commands.apply_pam_project_prefix(long_name, "Proj")
+        leaf = commands.membership_safe_name(path)
+        self.assertEqual(len(leaf), 28)
+        self.assertTrue(leaf.startswith("A"))
 
-    def test_prefix_case_variation_in_project_name(self):
-        """Test prefix matching with different case variations."""
-        existing = PathDelimiter.join(["PAM Environments", "acme test", "Safe"])
-        result = commands.apply_pam_project_prefix(existing, "Acme Test")
-        count = result.count("PAM Environments")
-        self.assertEqual(count, 1, "Should not duplicate PAM Environments prefix")
+    def test_prefix_only_path_is_unchanged(self):
+        prefix = PathDelimiter.join(["PAM Environments", "Acme Test Import"])
+        self.assertEqual(
+            commands.apply_pam_project_prefix(prefix, "Acme Test Import"),
+            prefix,
+        )
 
 
 class TestFilterSharedFoldersBySafes(unittest.TestCase):
@@ -100,82 +154,56 @@ class TestFilterSharedFoldersBySafes(unittest.TestCase):
         folders = [self._folder("A"), self._folder("B")]
         self.assertEqual(commands.filter_shared_folders_by_safes(folders, ""), folders)
         self.assertEqual(commands.filter_shared_folders_by_safes(folders, None), folders)
+        self.assertEqual(commands.filter_shared_folders_by_safes(folders, " , , "), folders)
 
-    def test_membership_safe_name_uses_leaf(self):
-        path = PathDelimiter.join(["PAM Environments", "Acme Test Import", "Acme_X"])
-        self.assertEqual(commands.membership_safe_name(path), "Acme_X")
+    def test_empty_folder_list_returns_empty(self):
+        self.assertEqual(commands.filter_shared_folders_by_safes([], "Acme_*"), [])
+        self.assertEqual(commands.filter_shared_folders_by_safes(None, "Acme_*"), None)
 
-    def test_multiple_glob_patterns(self):
-        """Test filtering with multiple comma-separated glob patterns."""
+    def test_comma_separated_patterns(self):
         folders = [
             self._folder("Acme_A"),
-            self._folder("Acme_B"),
-            self._folder("Corp_C"),
-            self._folder("Corp_D"),
+            self._folder("Beta_B"),
+            self._folder("Other"),
         ]
-        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*,Corp_*")
-        self.assertEqual(len(matched), 4)
+        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*, Beta_*")
+        self.assertEqual([f.path for f in matched], ["Acme_A", "Beta_B"])
+
+    def test_nested_path_filters_by_leaf_name(self):
+        nested = PathDelimiter.join(["PAM Environments", "Proj", "Acme_Leaf"])
+        folders = [
+            self._folder(nested),
+            self._folder("PVWAReports"),
+            self._folder("/Acme_Trailing/"),
+        ]
+        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*")
+        self.assertEqual(
+            [f.path for f in matched],
+            [nested, "/Acme_Trailing/"],
+        )
+
+    def test_no_match_returns_empty(self):
+        folders = [self._folder("PVWAReports")]
+        self.assertEqual(commands.filter_shared_folders_by_safes(folders, "Acme_*"), [])
 
     def test_glob_with_brackets_and_questions(self):
-        """Test glob patterns with ? and [] wildcards."""
         folders = [
             self._folder("Safe_001"),
             self._folder("Safe_002"),
             self._folder("Safe_100"),
         ]
         matched = commands.filter_shared_folders_by_safes(folders, "Safe_0??")
-        self.assertEqual(len(matched), 2)
-
-    def test_whitespace_in_patterns_is_trimmed(self):
-        """Test that whitespace in comma-separated patterns is properly trimmed."""
-        folders = [self._folder("A"), self._folder("B"), self._folder("C")]
-        matched = commands.filter_shared_folders_by_safes(folders, " A , B ")
-        self.assertEqual(len(matched), 2)
-
-    def test_deep_nested_paths(self):
-        """Test that deep nested paths correctly identify leaf folder."""
-        deep_path = PathDelimiter.join(
-            ["PAM Environments", "Project", "Safe", "Sub1", "Sub2", "Sub3"]
-        )
-        leaf = commands.membership_safe_name(deep_path)
-        self.assertEqual(leaf, "Sub3")
-
-    def test_special_characters_in_safe_names(self):
-        """Test that special characters are preserved in safe names."""
-        special_cases = [
-            "Safe With Spaces",
-            "Safe-With-Dashes",
-            "Safe_With_Underscores",
-            "Safe (Production)",
-            "Safe [Test]",
-        ]
-        for safe in special_cases:
-            result = commands.membership_safe_name(safe)
-            self.assertEqual(result, safe, f"Failed for: {safe}")
-
-    def test_filter_with_no_matches(self):
-        """Test filtering when glob pattern matches nothing."""
-        folders = [self._folder("PVWAReports"), self._folder("PrivilegeCloud")]
-        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*")
-        self.assertEqual(len(matched), 0)
+        self.assertEqual([f.path for f in matched], ["Safe_001", "Safe_002"])
 
     def test_unicode_safe_names(self):
-        """Test that unicode characters are handled correctly."""
-        unicode_safe = "Säfe_Nämé"
-        result = commands.membership_safe_name(unicode_safe)
-        self.assertEqual(result, unicode_safe)
-
-    def test_filter_preserves_order(self):
-        """Test that filtering preserves the order of matched folders."""
-        folders = [
-            self._folder("Zebra_1"),
-            self._folder("Acme_1"),
-            self._folder("Zebra_2"),
-            self._folder("Acme_2"),
+        unicode_cases = [
+            "Säfe_Nämé",
+            "安全_Safe",
+            "Café_DB",
         ]
-        matched = commands.filter_shared_folders_by_safes(folders, "Acme_*")
-        paths = [f.path for f in matched]
-        self.assertEqual(paths, ["Acme_1", "Acme_2"])
+        for safe in unicode_cases:
+            result = commands.membership_safe_name(safe)
+            self.assertEqual(result, safe)
 
 
 class TestApplyMembershipParserPamArgs(unittest.TestCase):
@@ -197,11 +225,14 @@ class TestApplyMembershipParserPamArgs(unittest.TestCase):
 
 
 class TestApplyMembershipCommandPam(unittest.TestCase):
-    def test_execute_rewrites_paths_and_clears_uid(self):
-        folder = SharedFolder()
-        folder.path = "Acme_Michael_Rodriguez"
-        folder.uid = "cyberark-safe-id"
+    def _write_membership(self, tmp, payload):
+        path = os.path.join(tmp, "membership.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            import json
+            json.dump(payload, handle)
+        return path
 
+    def test_execute_rewrites_paths_and_clears_uid(self):
         payload = {
             "shared_folders": [
                 {
@@ -212,11 +243,7 @@ class TestApplyMembershipCommandPam(unittest.TestCase):
             ]
         }
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "membership.json")
-            with open(path, "w", encoding="utf-8") as handle:
-                import json
-                json.dump(payload, handle)
-
+            path = self._write_membership(tmp, payload)
             captured = {}
 
             def fake_import_user_permissions(params, shared_folders, full_sync=False, unsafe=False):
@@ -236,6 +263,40 @@ class TestApplyMembershipCommandPam(unittest.TestCase):
         self.assertEqual(captured["folders"][0].path, expected)
         self.assertIsNone(captured["folders"][0].uid)
 
+    def test_execute_applies_safes_filter_before_prefix(self):
+        payload = {
+            "shared_folders": [
+                {
+                    "path": "Acme_Keep",
+                    "permissions": [{"name": "user@example.com"}],
+                },
+                {
+                    "path": "Skip_Me",
+                    "permissions": [{"name": "user@example.com"}],
+                },
+            ]
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_membership(tmp, payload)
+            captured = {}
+
+            def fake_import_user_permissions(params, shared_folders, full_sync=False, unsafe=False):
+                captured["folders"] = list(shared_folders)
+
+            with mock.patch.object(commands.imp_exp, "import_user_permissions", side_effect=fake_import_user_permissions):
+                commands.ApplyMembershipCommand().execute(
+                    mock.Mock(),
+                    name=path,
+                    pam_project="Proj",
+                    safes="Acme_*",
+                )
+
+        self.assertEqual(len(captured["folders"]), 1)
+        self.assertEqual(
+            captured["folders"][0].path,
+            PathDelimiter.join(["PAM Environments", "Proj", "Acme_Keep"]),
+        )
+
     def test_list_safes_prints_and_skips_apply(self):
         payload = {
             "shared_folders": [
@@ -246,10 +307,7 @@ class TestApplyMembershipCommandPam(unittest.TestCase):
             ]
         }
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "membership.json")
-            with open(path, "w", encoding="utf-8") as handle:
-                import json
-                json.dump(payload, handle)
+            path = self._write_membership(tmp, payload)
 
             with mock.patch.object(commands.imp_exp, "import_user_permissions") as apply_mock:
                 with mock.patch("builtins.print") as print_mock:
@@ -263,6 +321,15 @@ class TestApplyMembershipCommandPam(unittest.TestCase):
             printed = print_mock.call_args[0][0]
             self.assertIn("Acme_David_Chen", printed)
             self.assertIn("PAM Environments", printed)
+
+    def test_missing_file_skips_apply(self):
+        with mock.patch.object(commands.imp_exp, "import_user_permissions") as apply_mock:
+            commands.ApplyMembershipCommand().execute(
+                mock.Mock(),
+                name="does-not-exist-membership.json",
+                pam_project="Proj",
+            )
+        apply_mock.assert_not_called()
 
 
 if __name__ == "__main__":
