@@ -424,6 +424,8 @@ def refetch_server_key(context):   # type: (RestApiContext) -> Optional[SelfMana
     _server_key_errors.pop(host, None)
     new_key = get_self_managed_server_key(context)
     if new_key is None:
+        if old_key is not None:
+            _resolved_server_keys[host] = old_key
         return None
     if old_key is None:
         return new_key

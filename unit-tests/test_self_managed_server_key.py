@@ -389,6 +389,15 @@ class TestExecuteRest(SelfManagedKeyTestCase):
         self.assertEqual((new_key.key_id, new_key.public_key), (8, self.public_key))
         self.assertEqual(rest_api._resolved_server_keys['keeper.example.com'].key_id, 8)
 
+    @patch('keepercommander.rest_api.requests.get')
+    def test_refetch_without_a_key_keeps_the_old_key(self, mock_get):
+        mock_get.side_effect = [make_server_key_response(self.public_key, key_id=7),
+                                Exception('timed out')]
+        ctx = make_context('keeper.example.com')
+        old_key = rest_api.get_self_managed_server_key(ctx)
+        self.assertIsNone(rest_api.refetch_server_key(ctx))
+        self.assertIs(rest_api._resolved_server_keys['keeper.example.com'], old_key)
+
     @patch('keepercommander.rest_api.requests.post')
     @patch('keepercommander.rest_api.requests.get')
     def test_entering_the_server_again_trusts_the_new_key(self, mock_get, mock_post):
