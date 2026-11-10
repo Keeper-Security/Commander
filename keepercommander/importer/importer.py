@@ -152,6 +152,7 @@ class SharedFolder:
         self.can_edit = None
         self.can_share = None
         self.permissions = None  # type: Optional[List[Permission]]
+        self.break_inheritance = None  # type: Optional[bool]
 
     def validate(self):
         if not self.path:
@@ -263,6 +264,12 @@ class RecordReferences:
         self.uids = []      # type: List[Any]
 
 
+class NsfRecordShare:
+    def __init__(self):
+        self.uid = None          # type: Optional[str]
+        self.role = None         # type: Optional[str]
+
+
 class Record:
     def __init__(self):
         self.uid = None          # type: Optional[Any]
@@ -279,6 +286,7 @@ class Record:
         self.attachments = None  # type: Optional[List[Attachment]]
         self.references = None   # type: Optional[List[RecordReferences]]
         self.schema = None       # type: Optional[List[RecordSchemaField]]
+        self.nsf_record_shares = None  # type: Optional[List[NsfRecordShare]]
 
     def validate(self):
         if not self.title:
