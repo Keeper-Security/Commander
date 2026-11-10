@@ -1,6 +1,6 @@
 """Commands for converting Classic records and folders to Nested Share data."""
 
-from collections import deque
+from collections import defaultdict, deque
 import json
 import logging
 
@@ -74,7 +74,7 @@ def _resolve_record_uid(params, identifier):
 
     # Preserve current-folder/path selection above, but still distinguish an
     # ambiguous title from a genuinely missing record.
-    resolve_record_uid(params, identifier, 'nsf-convert')
+    resolve_record_uid(params, identifier, 'nsf-convert-record')
     return None
 
 
@@ -133,23 +133,87 @@ def _print_skipped_pam_records(records):
             f"[{record['record_type']}]")
 
 
-def _resolve_target_folder(params, folder_input):
-    """Resolve a Nested Share Folder; omitted/root means the caller's root."""
+def _folder_path(params, folder_uid):
+    """Return the display path for an NSF folder UID."""
+    folders = getattr(params, 'nested_share_folders', {}) or {}
+    parts = []
+    seen = set()
+    while folder_uid and folder_uid in folders and folder_uid not in seen:
+        seen.add(folder_uid)
+        folder = folders[folder_uid]
+        parts.append(folder.get('name') or folder_uid)
+        parent_uid = folder.get('parent_uid') or ''
+        folder_uid = parent_uid if parent_uid in folders else None
+    return '/'.join(reversed(parts))
+
+
+def _select_numbered_option(prompt, option_count, command, allow_zero=False):
+    """Read a numbered interactive choice, returning None when zero is chosen."""
+    first_option = 0 if allow_zero else 1
+    while True:
+        try:
+            answer = input(prompt).strip()
+        except (EOFError, OSError) as exc:
+            raise CommandError(
+                command, 'Interactive selection is required; use a folder UID instead.') from exc
+        if answer.casefold() in ('q', 'quit', 'cancel'):
+            raise CommandError(command, 'Selection cancelled.')
+        try:
+            selection = int(answer)
+        except ValueError:
+            selection = -1
+        if first_option <= selection <= option_count:
+            return None if selection == 0 else selection - 1
+        print(f'Enter a number from {first_option} to {option_count}, or q to cancel.')
+
+
+def _resolve_destination_folder(params, folder_input, command, force=False):
+    """Resolve an NSF destination, prompting when a flat name is ambiguous."""
     if not folder_input or folder_input.casefold() in ('root', ROOT_FOLDER_UID.casefold()):
         return None
+
+    nested_folders = getattr(params, 'nested_share_folders', {}) or {}
+    if folder_input in nested_folders:
+        return folder_input
+    if '/' not in folder_input and '\\' not in folder_input:
+        matching_uids = sorted(
+            uid for uid, folder in nested_folders.items()
+            if (folder.get('name') or '').casefold() == folder_input.casefold())
+        if len(matching_uids) == 1:
+            return matching_uids[0]
+        if len(matching_uids) > 1:
+            if force:
+                raise CommandError(
+                    command,
+                    f"Destination '{folder_input}' matches multiple NSF folders. "
+                    'Use a folder UID or an unambiguous full path when --force is specified.')
+            print(f"Destination '{folder_input}' matches multiple NSF folders:")
+            for index, folder_uid in enumerate(matching_uids, 1):
+                path = _folder_path(params, folder_uid)
+                print(f'  {index}. {_escape_non_printable(path)} ({folder_uid})')
+            selected = _select_numbered_option(
+                f'Select destination [1-{len(matching_uids)}] (or q to cancel): ',
+                len(matching_uids), command)
+            return matching_uids[selected]
 
     try:
         folder_uid = _nsf.resolve_folder_identifier(
             params, folder_input, raise_on_ambiguous=True)
     except FolderIdentifierAmbiguousError as e:
-        raise CommandError('nsf-convert', str(e)) from e
+        raise CommandError(command, str(e)) from e
     if not folder_uid:
-        raise CommandError('nsf-convert-record', f"Folder '{folder_input}' was not found")
-    if folder_uid not in (getattr(params, 'nested_share_folders', {}) or {}):
+        raise CommandError(command, f"Folder '{folder_input}' was not found")
+    if folder_uid not in nested_folders:
         raise CommandError(
-            'nsf-convert-record',
+            command,
             f"'{folder_input}' is not a Nested Share Folder")
     return folder_uid
+
+
+def _resolve_target_folder(params, folder_input, force=False):
+    """Resolve a Nested Share Folder; omitted/root means the caller's root."""
+    return _resolve_destination_folder(
+        params, folder_input, 'nsf-convert-record', force=force)
 
 
 class NestedShareConvertCommand(Command):
@@ -204,7 +268,8 @@ class NestedShareConvertCommand(Command):
             return
 
         with command_error_handler('nsf-convert-record'):
-            folder_uid = _resolve_target_folder(params, kwargs.get('folder_uid'))
+            folder_uid = _resolve_target_folder(
+                params, kwargs.get('folder_uid'), force=kwargs.get('force', False))
         folder_description = folder_uid or 'Vault (root)'
         if folder_uid:
             folder_data = (getattr(params, 'nested_share_folders', {}) or {}).get(folder_uid) or {}
@@ -607,6 +672,19 @@ class NestedShareFolderConvertCommand(Command):
             raise CommandError(
                 'nsf-convert-folder',
                 'A Classic folder UID, title, or path is required.')
+        retry = bool(kwargs.get('retry'))
+        if retry and kwargs.get('force'):
+            raise CommandError(
+                'nsf-convert-folder',
+                '--retry cannot be combined with --force because retry requires confirmation.')
+        if retry:
+            try:
+                sync_down.sync_down(params)
+            except Exception as exc:
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Could not refresh the vault before retry reconciliation: {exc}') from exc
+
         source_uid = _resolve_classic_folder(params, source_arg)
         if not source_uid:
             raise CommandError(
@@ -618,16 +696,26 @@ class NestedShareFolderConvertCommand(Command):
                 'nsf-convert-folder',
                 f"'{source_arg}' is not a Classic folder.")
 
-        destination_uid = self._resolve_destination(params, kwargs.get('folder_uid'))
+        destination_uid = self._resolve_destination(
+            params, kwargs.get('folder_uid'), force=kwargs.get('force', False))
         nodes, parents, depths, records_by_folder = _collect_classic_subtree(params, source_uid)
         destination_depth = self._destination_depth(params, destination_uid)
         available_depth, target_levels, target_parent_sources = _folder_plan(
             parents, depths, destination_depth)
 
         source_record_uids, placements, skipped_pam_records = self._collect_records(
-            params, nodes, records_by_folder)
+            params, nodes, records_by_folder, allow_converted=retry)
+        preconverted_uids = (
+            set(source_record_uids) &
+            set(getattr(params, 'nested_share_records', {}) or {})
+            if retry else set())
+        records_to_convert = [
+            uid for uid in source_record_uids if uid not in preconverted_uids
+        ]
         records_to_convert_by_folder = {uid: [] for uid in nodes}
         for record_uid, folder_uids in placements.items():
+            if record_uid in preconverted_uids:
+                continue
             for folder_uid in folder_uids:
                 records_to_convert_by_folder[folder_uid].append(record_uid)
         external_placements = self._external_placements(
@@ -653,9 +741,14 @@ class NestedShareFolderConvertCommand(Command):
         }
 
         self._validate_folder_keys(params, destination_uid)
+        existing_target_uids = {}
+        if retry:
+            existing_target_uids = self._select_retry_folders(
+                params, nodes, target_levels, target_parent_sources,
+                destination_uid, records_by_folder)
         self._print_preview(
             params, nodes, records_to_convert_by_folder, source_node, destination_uid,
-            available_depth, source_record_uids, depths, target_levels,
+            available_depth, records_to_convert, depths, target_levels,
             skipped_pam_records)
 
         if kwargs.get('dry_run'):
@@ -688,7 +781,8 @@ class NestedShareFolderConvertCommand(Command):
         _print_conversion_step(1, 6, 'Creating NSF folder structure...')
         target_uids = self._create_target_tree(
             params, nodes, target_levels, target_parent_sources,
-            destination_uid, show_progress=True)
+            destination_uid, show_progress=True,
+            existing_target_uids=existing_target_uids)
         params.sync_data = True
         self._print_uid_mapping(nodes, target_uids)
 
@@ -709,16 +803,17 @@ class NestedShareFolderConvertCommand(Command):
 
         _print_conversion_step(
             3, 6,
-            f'Converting {len(source_record_uids)} supported Classic record(s)...')
-        converted_uids = self._convert_records(
-            params, source_record_uids, placements, target_uids)
+            f'Converting {len(records_to_convert)} supported Classic record(s)...')
+        converted_uids = preconverted_uids | self._convert_records(
+            params, records_to_convert, placements, target_uids)
         if converted_uids:
             sync_down.sync_down(params)
 
         _print_conversion_step(
             4, 6, 'Preserving additional record placements and app shares...')
         link_failures = self._create_additional_placements(
-            params, converted_uids, placements, target_uids)
+            params, converted_uids, placements, target_uids,
+            include_primary_for=converted_uids if retry else set())
         if link_failures:
             for failure in link_failures:
                 logging.warning('Could not preserve record placement: %s', failure)
@@ -753,6 +848,20 @@ class NestedShareFolderConvertCommand(Command):
                 logging.warning(
                     'Sync-down did not confirm %d converted record(s).',
                     len(missing_records))
+        if retry and conversion_complete:
+            folder_records = getattr(params, 'nested_share_folder_records', {}) or {}
+            missing_placements = [
+                (record_uid, target_uids[source_uid])
+                for record_uid in source_record_uids
+                for source_uid in placements.get(record_uid) or []
+                if record_uid in (getattr(params, 'nested_share_records', {}) or {})
+                and record_uid not in (folder_records.get(target_uids[source_uid]) or set())
+            ]
+            if missing_placements:
+                conversion_complete = False
+                logging.warning(
+                    'Sync-down did not confirm %d record placement(s) in retry targets.',
+                    len(missing_placements))
 
         params.sync_data = True
         if not conversion_complete:
@@ -761,8 +870,12 @@ class NestedShareFolderConvertCommand(Command):
                 f'The Classic source tree was retained.{bcolors.ENDC}')
             return
         print(f'\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Conversion complete{bcolors.ENDC}')
-        print(f'  NSF folders created: {len(target_uids)}')
+        print(f'  NSF folders created: {len(target_uids) - len(existing_target_uids)}')
+        if existing_target_uids:
+            print(f'  Existing NSF folders reused: {len(existing_target_uids)}')
         print(f'  Classic records converted: {len(converted_uids)}')
+        if preconverted_uids:
+            print(f'  Records already converted before retry: {len(preconverted_uids)}')
         print(f'  PAM records skipped: {len(skipped_pam_records)}')
         if skipped_pam_records:
             _print_conversion_step(
@@ -783,18 +896,11 @@ class NestedShareFolderConvertCommand(Command):
         self._delete_classic_source(params, source_uid)
 
     @staticmethod
-    def _resolve_destination(params, folder_arg):
+    def _resolve_destination(params, folder_arg, force=False):
         if not folder_arg or folder_arg.casefold() in ('root', ROOT_FOLDER_UID.casefold()):
             return None
-        folder_uid = _nsf.resolve_folder_identifier(params, folder_arg)
-        if not folder_uid:
-            raise CommandError(
-                'nsf-convert-folder', f"Destination folder '{folder_arg}' was not found.")
-        if folder_uid not in (getattr(params, 'nested_share_folders', {}) or {}):
-            raise CommandError(
-                'nsf-convert-folder',
-                f"Destination '{folder_arg}' is not a Nested Share Folder.")
-        return folder_uid
+        return _resolve_destination_folder(
+            params, folder_arg, 'nsf-convert-folder', force=force)
 
     @staticmethod
     def _destination_depth(params, destination_uid):
@@ -821,7 +927,7 @@ class NestedShareFolderConvertCommand(Command):
                     f'Destination folder key is unavailable; run sync-down and retry. {exc}')
 
     @staticmethod
-    def _collect_records(params, nodes, records_by_folder):
+    def _collect_records(params, nodes, records_by_folder, allow_converted=False):
         nested_records = getattr(params, 'nested_share_records', {}) or {}
         record_cache = getattr(params, 'record_cache', {}) or {}
         records = set()
@@ -829,11 +935,11 @@ class NestedShareFolderConvertCommand(Command):
         skipped_pam_records = {}
         for folder_uid in nodes:
             for record_uid in records_by_folder.get(folder_uid) or []:
-                if record_uid in nested_records:
+                if record_uid in nested_records and not allow_converted:
                     raise CommandError(
                         'nsf-convert-folder',
                         f'Record {record_uid} is already a Nested Share Record.')
-                if record_uid not in record_cache:
+                if record_uid not in record_cache and record_uid not in nested_records:
                     raise CommandError(
                         'nsf-convert-folder',
                         f'Record {record_uid} is missing from the Classic record cache; '
@@ -946,15 +1052,182 @@ class NestedShareFolderConvertCommand(Command):
         print(f'{"=" * 72}\n')
 
     @staticmethod
+    def _select_retry_folders(params, nodes, target_levels, target_parent_sources,
+                              destination_uid, records_by_folder):
+        """Offer structurally matching existing NSF folders for manual retry."""
+        nsf_folders = getattr(params, 'nested_share_folders', {}) or {}
+        target_uids = {}
+        used_uids = set()
+        candidate_uids_seen = set()
+        inaccessible_uids = set()
+        found_candidates = False
+
+        def normalized_parent(folder_uid):
+            parent_uid = (nsf_folders.get(folder_uid) or {}).get('parent_uid') or ''
+            return parent_uid if parent_uid in nsf_folders else None
+
+        for target_level in sorted(set(target_levels.values())):
+            groups = defaultdict(list)
+            for source_uid, level in target_levels.items():
+                if level != target_level:
+                    continue
+                parent_source_uid = target_parent_sources[source_uid]
+                if parent_source_uid and parent_source_uid not in target_uids:
+                    continue
+                parent_uid = (
+                    target_uids.get(parent_source_uid) if parent_source_uid else destination_uid)
+                groups[(parent_uid, nodes[source_uid].name)].append(source_uid)
+
+            for (parent_uid, name), source_uids in groups.items():
+                candidates = []
+                for uid, folder in nsf_folders.items():
+                    if (normalized_parent(uid) != parent_uid or
+                            folder.get('name') != name or uid in used_uids):
+                        continue
+                    if not _nsf.get_folder_key(params, uid, raise_on_missing=False):
+                        inaccessible_uids.add(uid)
+                        continue
+                    candidates.append(uid)
+                candidates.sort()
+                if not candidates:
+                    continue
+                found_candidates = True
+                candidate_uids_seen.update(candidates)
+                if len(source_uids) == 1 and len(candidates) == 1:
+                    selected_uid = candidates[0]
+                    target_uids[source_uids[0]] = selected_uid
+                    used_uids.add(selected_uid)
+                    continue
+
+                for source_uid in source_uids:
+                    available = [uid for uid in candidates if uid not in used_uids]
+                    if not available:
+                        break
+                    print(
+                        f'\nClassic folder {_escape_non_printable(nodes[source_uid].name)} '
+                        f'({source_uid}) has matching NSF folder(s):')
+                    for index, candidate_uid in enumerate(available, 1):
+                        path = _folder_path(params, candidate_uid)
+                        record_matches = (
+                            set(records_by_folder.get(source_uid) or []) &
+                            set((getattr(params, 'nested_share_folder_records', {}) or {})
+                                .get(candidate_uid, set()) or set()))
+                        print(
+                            f'  {index}. {_escape_non_printable(path)} ({candidate_uid}) — '
+                            f'{len(record_matches)} matching record(s)')
+                    print('  0. Create a new NSF folder for this Classic folder')
+                    choice = _select_numbered_option(
+                        f'Select a matching folder [0-{len(available)}]: ',
+                        len(available), 'nsf-convert-folder', allow_zero=True)
+                    if choice is not None:
+                        selected_uid = available[choice]
+                        target_uids[source_uid] = selected_uid
+                        used_uids.add(selected_uid)
+
+        if not target_uids:
+            if found_candidates:
+                message = (
+                    'No existing NSF folders were selected for reuse; '
+                    'a new NSF folder structure will be created.')
+            elif inaccessible_uids:
+                message = (
+                    'Matching NSF folders were found but their keys are unavailable; '
+                    'a new NSF folder structure will be created.')
+            else:
+                message = (
+                    'No matching existing NSF folders were found for this retry; '
+                    'a new NSF folder structure will be created.')
+            print(f'\n{message}')
+            unselected_uids = candidate_uids_seen | inaccessible_uids
+            if unselected_uids:
+                print('Matching NSF folders left untouched:')
+                for candidate_uid in sorted(unselected_uids):
+                    path = _escape_non_printable(_folder_path(params, candidate_uid))
+                    suffix = ' — folder key unavailable' if candidate_uid in inaccessible_uids else ''
+                    print(f'  {path} ({candidate_uid}){suffix}')
+            return {}
+
+        print('\nProposed retry folder mapping:')
+        folder_records = getattr(params, 'nested_share_folder_records', {}) or {}
+        for source_uid, target_uid in target_uids.items():
+            source_label = _escape_non_printable(nodes[source_uid].name)
+            target_path = _escape_non_printable(_folder_path(params, target_uid))
+            record_matches = (
+                set(records_by_folder.get(source_uid) or []) &
+                set(folder_records.get(target_uid) or set()))
+            print(
+                f'  {source_label} ({source_uid}) -> {target_path} ({target_uid}) — '
+                f'{len(record_matches)} matching record(s)')
+        print(f'  NSF folders to create: {len(nodes) - len(target_uids)}')
+        try:
+            reuse = user_choice(
+                'Reuse these existing NSF folders and create any missing folders?',
+                'yn', default='n').lower() == 'y'
+        except (EOFError, OSError) as exc:
+            raise CommandError(
+                'nsf-convert-folder',
+                'Interactive confirmation is required for --retry.') from exc
+        if not reuse:
+            print(
+                'Existing NSF folders will be left untouched; creating a new '
+                'structure may leave duplicate partial folders.')
+            for candidate_uid in sorted(candidate_uids_seen):
+                path = _escape_non_printable(_folder_path(params, candidate_uid))
+                print(f'  {path} ({candidate_uid})')
+            return {}
+        for target_uid in target_uids.values():
+            try:
+                _nsf.get_folder_key(params, target_uid, raise_on_missing=True)
+            except Exception as exc:
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Cannot reuse NSF folder {target_uid} because its key is unavailable: '
+                    f'{exc}') from exc
+        unused_candidates = candidate_uids_seen - used_uids
+        unused_candidates.update(inaccessible_uids)
+        if unused_candidates:
+            print('Other matching NSF folders will be left untouched:')
+            for candidate_uid in sorted(unused_candidates):
+                path = _escape_non_printable(_folder_path(params, candidate_uid))
+                suffix = ' — folder key unavailable' if candidate_uid in inaccessible_uids else ''
+                print(f'  {path} ({candidate_uid}){suffix}')
+        return target_uids
+
+    @staticmethod
     def _create_target_tree(params, nodes, target_levels, target_parent_sources,
-                            destination_uid, show_progress):
+                            destination_uid, show_progress, existing_target_uids=None):
         if getattr(params, 'nested_share_folders', None) is None:
             params.nested_share_folders = {}
-        target_uids = {}
+        target_uids = dict(existing_target_uids or {})
+        if len(set(target_uids.values())) != len(target_uids):
+            raise CommandError(
+                'nsf-convert-folder',
+                'The retry mapping selects the same NSF folder more than once.')
+
+        def normalized_parent(folder_uid):
+            parent_uid = (params.nested_share_folders.get(folder_uid) or {}).get('parent_uid') or ''
+            return parent_uid if parent_uid in params.nested_share_folders else None
+
+        for source_uid, target_uid in target_uids.items():
+            target_folder = params.nested_share_folders.get(target_uid)
+            parent_source_uid = target_parent_sources[source_uid]
+            expected_parent_uid = (
+                target_uids.get(parent_source_uid) if parent_source_uid else destination_uid)
+            if (not target_folder or
+                    target_folder.get('name') != nodes[source_uid].name or
+                    normalized_parent(target_uid) != expected_parent_uid):
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Retry target folder {target_uid} no longer matches Classic folder '
+                    f'{source_uid}; run sync-down and inspect before retrying.')
+
         for target_level in sorted(set(target_levels.values())):
             source_uids = [
-                uid for uid, level in target_levels.items() if level == target_level
+                uid for uid, level in target_levels.items()
+                if level == target_level and uid not in target_uids
             ]
+            if not source_uids:
+                continue
             for start in range(0, len(source_uids), NSF_FOLDER_BATCH_SIZE):
                 chunk = source_uids[start:start + NSF_FOLDER_BATCH_SIZE]
                 specs = []
@@ -1074,20 +1347,35 @@ class NestedShareFolderConvertCommand(Command):
     @staticmethod
     def _grant_folder_app_shares(params, folder_app_shares, scope_by_folder,
                                  target_uids, applications):
+        from ...proto import APIRequest_pb2
+
+        folder_share_type = APIRequest_pb2.SHARE_TYPE_FOLDER
         for source_uid, scope_uid in scope_by_folder.items():
             if not scope_uid:
                 continue
             for share in folder_app_shares.get(scope_uid) or []:
                 app = applications[share['app_uid']]
+                target_uid = target_uids[source_uid]
+                if any(
+                        existing.get('uid') == target_uid and
+                        existing.get('type') == folder_share_type and
+                        bool(existing.get('editable')) == bool(share['editable'])
+                        for existing in app['shares']):
+                    continue
                 with command_error_handler('nsf-convert-folder'):
                     result = _nsf.grant_folder_access_to_application_v3(
-                        params, target_uids[source_uid], share['app_uid'],
+                        params, target_uid, share['app_uid'],
                         app['key'], is_editable=share['editable'])
                     if not result.get('success'):
                         raise CommandError(
                             'nsf-convert-folder',
                             f"Could not preserve KSM application access on "
-                            f"{target_uids[source_uid]}: {result.get('message')}")
+                            f"{target_uid}: {result.get('message')}")
+                    app['shares'].append({
+                        'uid': target_uid,
+                        'type': folder_share_type,
+                        'editable': bool(share['editable']),
+                    })
 
     @staticmethod
     def _convert_records(params, record_uids, placements, target_uids):
@@ -1146,12 +1434,19 @@ class NestedShareFolderConvertCommand(Command):
         return converted
 
     @staticmethod
-    def _create_additional_placements(params, converted_uids, placements, target_uids):
+    def _create_additional_placements(params, converted_uids, placements, target_uids,
+                                      include_primary_for=None):
         additional_by_target = {}
+        existing_placements = getattr(params, 'nested_share_folder_records', {}) or {}
+        include_primary_for = include_primary_for or set()
         for record_uid in converted_uids:
             locations = placements.get(record_uid) or []
             target_locations = list(dict.fromkeys(target_uids[uid] for uid in locations))
-            for target_uid in target_locations[1:]:
+            for index, target_uid in enumerate(target_locations):
+                if index == 0 and record_uid not in include_primary_for:
+                    continue
+                if record_uid in (existing_placements.get(target_uid) or set()):
+                    continue
                 additional_by_target.setdefault(target_uid, []).append(record_uid)
 
         failures = []

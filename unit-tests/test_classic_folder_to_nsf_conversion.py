@@ -13,6 +13,7 @@ from keepercommander.commands.nested_share_folder.conversion_commands import (
     _folder_plan,
     _pam_record_details,
     _read_applications,
+    _resolve_destination_folder,
     _scope_accessors,
 )
 from keepercommander.commands.nested_share_folder.parsers import (
@@ -114,6 +115,7 @@ class TestClassicFolderConversionPlanning(TestCase):
         self.assertEqual(classic_perms_to_nsf_role(False, True), 'content-manager')
         self.assertEqual(classic_perms_to_nsf_role(True, True), 'content-share-manager')
 
+
     def test_classic_shared_folder_descendant_carries_its_shared_scope(self):
         shared_uid, child_uid = _uid(), _uid()
         shared = SharedFolderNode()
@@ -186,6 +188,58 @@ class TestClassicFolderConversionPlanning(TestCase):
                 nodes, {private_uid: None, shared_uid: private_uid},
                 scope_by_folder),
             [(shared_uid, shared_uid)])
+
+
+class TestNsfConversionDestinationSelection(TestCase):
+
+    def test_exact_folder_uid_takes_precedence_over_a_matching_name(self):
+        uid = _uid()
+        params = SimpleNamespace(nested_share_folders={
+            uid: {'name': 'Destination', 'parent_uid': ''},
+            _uid(): {'name': uid, 'parent_uid': ''},
+        })
+
+        with patch('builtins.input') as prompt:
+            result = _resolve_destination_folder(
+                params, uid, 'nsf-convert-folder')
+
+        self.assertEqual(result, uid)
+        prompt.assert_not_called()
+
+    def test_duplicate_destination_names_prompt_and_select_uid(self):
+        parent_uid, first_uid, second_uid = _uid(), _uid(), _uid()
+        params = SimpleNamespace(nested_share_folders={
+            parent_uid: {'name': 'Parent', 'parent_uid': ''},
+            first_uid: {'name': 'Destination', 'parent_uid': ''},
+            second_uid: {'name': 'Destination', 'parent_uid': parent_uid},
+        })
+
+        with patch('builtins.input', return_value='2') as prompt, \
+             redirect_stdout(io.StringIO()) as output:
+            result = _resolve_destination_folder(
+                params, 'Destination', 'nsf-convert-folder')
+
+        selected_uid = sorted((first_uid, second_uid))[1]
+        self.assertEqual(result, selected_uid)
+        expected_path = (
+            f'Parent/Destination ({selected_uid})'
+            if selected_uid == second_uid else
+            f'Destination ({selected_uid})')
+        self.assertIn(expected_path, output.getvalue())
+        prompt.assert_called_once()
+
+    def test_force_requires_uid_for_ambiguous_destination(self):
+        params = SimpleNamespace(nested_share_folders={
+            _uid(): {'name': 'Destination', 'parent_uid': ''},
+            _uid(): {'name': 'Destination', 'parent_uid': ''},
+        })
+
+        with patch('builtins.input') as prompt:
+            with self.assertRaisesRegex(CommandError, 'Use a folder UID'):
+                _resolve_destination_folder(
+                    params, 'Destination', 'nsf-convert-record', force=True)
+
+        prompt.assert_not_called()
 
 
 class TestClassicFolderConversionApplicationReads(TestCase):
@@ -310,6 +364,146 @@ class TestClassicFolderConversionApplicationReads(TestCase):
 
 class TestClassicFolderConversionTargetCreation(TestCase):
 
+    def test_retry_reuses_unique_existing_folders_and_creates_missing_folders(self):
+        source_root_uid, source_child_uid = _uid(), _uid()
+        destination_uid, existing_root_uid = _uid(), _uid()
+        source_root = UserFolderNode()
+        source_root.uid, source_root.name = source_root_uid, 'Root'
+        source_child = UserFolderNode()
+        source_child.uid, source_child.name = source_child_uid, 'Child'
+        params = SimpleNamespace(nested_share_folders={
+            destination_uid: {'name': 'Destination', 'parent_uid': ''},
+            existing_root_uid: {
+                'name': 'Root',
+                'parent_uid': destination_uid,
+                'folder_key_unencrypted': utils.generate_aes_key(),
+            },
+        }, nested_share_folder_records={})
+        nodes = {source_root_uid: source_root, source_child_uid: source_child}
+        levels = {source_root_uid: 1, source_child_uid: 2}
+        parents = {source_root_uid: None, source_child_uid: source_root_uid}
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'user_choice', return_value='y'):
+            retry_mapping = NestedShareFolderConvertCommand._select_retry_folders(
+                params, nodes, levels, parents, destination_uid, {})
+
+        self.assertEqual(retry_mapping, {source_root_uid: existing_root_uid})
+        created_specs = []
+
+        def create_batch(_params, specs):
+            created_specs.extend(specs)
+            return [{
+                'folder_uid': _uid(),
+                'folder_key_unencrypted': utils.generate_aes_key(),
+                'name': spec['name'],
+                'parent_uid': spec['parent_uid'],
+                'success': True,
+            } for spec in specs]
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_nsf.create_folders_batch_v3', side_effect=create_batch), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'user_choice', return_value='y'):
+            target_uids = NestedShareFolderConvertCommand._create_target_tree(
+                params, nodes, levels, parents, destination_uid, False,
+                existing_target_uids=retry_mapping)
+
+        self.assertEqual(target_uids[source_root_uid], existing_root_uid)
+        self.assertEqual(len(created_specs), 1)
+        self.assertEqual(created_specs[0]['name'], 'Child')
+        self.assertEqual(created_specs[0]['parent_uid'], existing_root_uid)
+
+    def test_retry_requires_explicit_mapping_for_same_name_candidates(self):
+        source_one_uid, source_two_uid = _uid(), _uid()
+        candidate_one_uid, candidate_two_uid = 'A' * 22, 'B' * 22
+        source_one, source_two = UserFolderNode(), UserFolderNode()
+        source_one.uid, source_one.name = source_one_uid, 'Same'
+        source_two.uid, source_two.name = source_two_uid, 'Same'
+        params = SimpleNamespace(
+            nested_share_folders={
+                candidate_one_uid: {
+                    'name': 'Same', 'parent_uid': '',
+                    'folder_key_unencrypted': utils.generate_aes_key(),
+                },
+                candidate_two_uid: {
+                    'name': 'Same', 'parent_uid': '',
+                    'folder_key_unencrypted': utils.generate_aes_key(),
+                },
+            },
+            nested_share_folder_records={},
+        )
+
+        with patch('builtins.input', side_effect=['2', '1']), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'user_choice', return_value='y') as confirm, \
+             redirect_stdout(io.StringIO()):
+            mapping = NestedShareFolderConvertCommand._select_retry_folders(
+                params,
+                {source_one_uid: source_one, source_two_uid: source_two},
+                {source_one_uid: 1, source_two_uid: 1},
+                {source_one_uid: None, source_two_uid: None},
+                None,
+                {},
+            )
+
+        self.assertEqual(mapping, {
+            source_one_uid: candidate_two_uid,
+            source_two_uid: candidate_one_uid,
+        })
+        confirm.assert_called_once()
+
+    def test_retry_does_not_reuse_candidates_when_user_rejects(self):
+        source_uid, candidate_uid = _uid(), _uid()
+        source = UserFolderNode()
+        source.uid, source.name = source_uid, 'Same'
+        params = SimpleNamespace(
+            nested_share_folders={
+                candidate_uid: {
+                    'name': 'Same',
+                    'parent_uid': '',
+                    'folder_key_unencrypted': utils.generate_aes_key(),
+                },
+            },
+            nested_share_folder_records={},
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'user_choice', return_value='n'), \
+             redirect_stdout(io.StringIO()):
+            mapping = NestedShareFolderConvertCommand._select_retry_folders(
+                params, {source_uid: source}, {source_uid: 1},
+                {source_uid: None}, None, {})
+
+        self.assertEqual(mapping, {})
+
+    def test_retry_does_not_reuse_candidate_without_decrypted_folder_key(self):
+        source_uid, candidate_uid = _uid(), _uid()
+        source = UserFolderNode()
+        source.uid, source.name = source_uid, 'Same'
+        params = SimpleNamespace(
+            nested_share_folders={
+                candidate_uid: {'name': 'Same', 'parent_uid': ''},
+            },
+            nested_share_folder_records={},
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'user_choice') as confirm, \
+             redirect_stdout(io.StringIO()) as output:
+            mapping = NestedShareFolderConvertCommand._select_retry_folders(
+                params, {source_uid: source}, {source_uid: 1},
+                {source_uid: None}, None, {})
+
+        self.assertEqual(mapping, {})
+        self.assertIn('folder key unavailable', output.getvalue())
+        confirm.assert_not_called()
+
     def test_source_root_inherits_destination_permissions_but_vault_root_does_not(self):
         scenarios = (
             ('private destination root', UserFolderNode(), _uid(), True),
@@ -431,6 +625,28 @@ class TestClassicFolderConversionTargetCreation(TestCase):
 
 
 class TestPamRecordConversionRestrictions(TestCase):
+
+    def test_retry_collects_records_already_converted_in_a_prior_attempt(self):
+        source_uid, record_uid = _uid(), _uid()
+        params = SimpleNamespace(
+            nested_share_records={record_uid: {}},
+            record_cache={},
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_record_type', return_value='login'):
+            record_uids, placements, skipped = (
+                NestedShareFolderConvertCommand._collect_records(
+                    params,
+                    {source_uid: object()},
+                    {source_uid: [record_uid]},
+                    allow_converted=True,
+                ))
+
+        self.assertEqual(record_uids, [record_uid])
+        self.assertEqual(placements, {record_uid: [source_uid]})
+        self.assertEqual(skipped, [])
 
     def test_pam_detection_uses_typed_record_type_and_captures_title(self):
         pam_uid, regular_uid = _uid(), _uid()
@@ -611,6 +827,7 @@ class TestPamRecordConversionRestrictions(TestCase):
     def test_conversion_help_explains_pam_records_are_skipped(self):
         self.assertIn('PAM', nested_share_convert_parser.format_help())
         self.assertIn('PAM', nested_share_folder_convert_parser.format_help())
+        self.assertIn('--retry', nested_share_folder_convert_parser.format_help())
 
 
 class TestClassicFolderConversionExecution(TestCase):
@@ -707,6 +924,11 @@ class TestClassicFolderConversionExecution(TestCase):
         user_choice.assert_not_called()
         delete_source.assert_not_called()
 
+    def test_retry_cannot_be_combined_with_force(self):
+        with self.assertRaisesRegex(CommandError, 'cannot be combined with --force'):
+            NestedShareFolderConvertCommand().execute(
+                SimpleNamespace(), source='source', retry=True, force=True)
+
     def test_force_retains_classic_source_when_pam_records_are_skipped(self):
         params, folder_uid, record_uid, target_uid = self._params()
 
@@ -739,3 +961,27 @@ class TestClassicFolderConversionExecution(TestCase):
 
         self.assertEqual(len(failures), 1)
         self.assertIn('no link result returned', failures[0])
+
+    def test_retry_adds_only_missing_record_placements(self):
+        source_folders = [_uid(), _uid()]
+        target_folders = [_uid(), _uid()]
+        record_uid = _uid()
+        params = SimpleNamespace(
+            nested_share_folder_records={target_folders[0]: {record_uid}},
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_nsf.manage_folder_records_batch_v3',
+                return_value=[{'record_uid': record_uid, 'success': True}]) as add:
+            failures = NestedShareFolderConvertCommand._create_additional_placements(
+                params,
+                {record_uid},
+                {record_uid: source_folders},
+                dict(zip(source_folders, target_folders)),
+                include_primary_for={record_uid},
+            )
+
+        self.assertEqual(failures, [])
+        add.assert_called_once_with(
+            params, target_folders[1], records_to_add=[record_uid])
