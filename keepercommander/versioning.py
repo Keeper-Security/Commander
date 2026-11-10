@@ -14,7 +14,7 @@ import sys
 
 import requests
 
-from . import __version__, display
+from . import __version__, display, rest_api
 from .params import KeeperParams
 
 
@@ -23,6 +23,14 @@ def is_up_to_date_version(params):  # type: (KeeperParams) -> dict
     curr_git_version = None
     version_comparison = None
     release_download_url = 'https://github.com/Keeper-Security/Commander/releases'
+
+    # Air-gap: a self-hosted server must cause no outside call.
+    if not rest_api.is_keeper_cloud_host(params.server):
+        return {
+            'is_up_to_date': True,
+            'current_github_version': __version__,
+            'new_version_download_url': release_download_url
+        }
 
     try:
         repo_owner = "Keeper-Security"
