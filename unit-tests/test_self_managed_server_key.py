@@ -378,6 +378,17 @@ class TestExecuteRest(SelfManagedKeyTestCase):
         # The stored key stays the old key.
         self.assertEqual(rest_api._resolved_server_keys['keeper.example.com'].public_key, old_public_key)
 
+    @patch('keepercommander.rest_api.requests.get')
+    def test_refetch_with_a_new_key_id_returns_the_new_key(self, mock_get):
+        _, old_public_key = make_key_pair()
+        mock_get.side_effect = [make_server_key_response(old_public_key, key_id=7),
+                                make_server_key_response(self.public_key, key_id=8)]
+        ctx = make_context('keeper.example.com')
+        rest_api.get_self_managed_server_key(ctx)
+        new_key = rest_api.refetch_server_key(ctx)
+        self.assertEqual((new_key.key_id, new_key.public_key), (8, self.public_key))
+        self.assertEqual(rest_api._resolved_server_keys['keeper.example.com'].key_id, 8)
+
     @patch('keepercommander.rest_api.requests.post')
     @patch('keepercommander.rest_api.requests.get')
     def test_entering_the_server_again_trusts_the_new_key(self, mock_get, mock_post):

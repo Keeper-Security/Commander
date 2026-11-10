@@ -429,7 +429,10 @@ def refetch_server_key(context):   # type: (RestApiContext) -> Optional[SelfMana
         return new_key
     if (new_key.key_id, new_key.public_key) == (old_key.key_id, old_key.public_key):
         return None
-    # Commander keeps one key per host, so any other key is a change. Keep the old key and fail.
+    if new_key.key_id != old_key.key_id:
+        # A new key ID is a key rotation. Commander keeps one key per host, so the new key replaces the old key.
+        return new_key
+    # The same key ID with another public key is a change. Keep the old key and fail.
     # The user accepts the new key when the user enters the server again (forget_fetched_server_key).
     _resolved_server_keys[host] = old_key
     raise KeeperApiError('server_key_changed',
