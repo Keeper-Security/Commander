@@ -292,7 +292,12 @@ class SwitchToMcCommand(EnterpriseCommand, MSPMixin):
             raise CommandError('switch-to-mc',
                                f"Already switched to Managed Company id={current_mc_id}")
 
-        managed_companies = params.enterprise['managed_companies']
+        if not params.enterprise or 'managed_companies' not in params.enterprise:
+            api.query_enterprise(params)
+        if not params.enterprise:
+            raise CommandError('switch-to-mc', 'This command is only available for Administrators of Keeper.')
+
+        managed_companies = params.enterprise.get('managed_companies', [])
         mc_input = kwargs.get('mc')
         current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
         if not current_mc:
@@ -309,6 +314,7 @@ class SwitchToMcCommand(EnterpriseCommand, MSPMixin):
 
         msp_params = params
         logging.info("Switched to MC '%s'", current_mc['mc_enterprise_name'])
+        return mc_params
 
 
 class MSPInfoCommand(EnterpriseCommand, MSPMixin):
@@ -316,6 +322,10 @@ class MSPInfoCommand(EnterpriseCommand, MSPMixin):
         return msp_info_parser
 
     def execute(self, params, **kwargs):
+        if not params.enterprise:
+            api.query_enterprise(params)
+        if not params.enterprise:
+            raise CommandError('msp-info', 'This command is only available for Administrators of Keeper.')
         report_format = kwargs.get('format')
         output_file = kwargs.get('output')
         if kwargs.get('restriction'):
@@ -457,7 +467,11 @@ class MSPUpdateCommand(EnterpriseCommand):
         return msp_update_parser
 
     def execute(self, params, **kwargs):
-        managed_companies = params.enterprise['managed_companies']
+        if not params.enterprise or 'managed_companies' not in params.enterprise:
+            api.query_enterprise(params)
+        if not params.enterprise:
+            raise CommandError('msp-update', 'This command is only available for Administrators of Keeper.')
+        managed_companies = params.enterprise.get('managed_companies', [])
         mc_input = kwargs.get('mc')
         current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
         if not current_mc:
@@ -1091,6 +1105,10 @@ class MSPRemoveCommand(EnterpriseCommand):
         mc_input = kwargs.get('mc', '')
         if not mc_input:
             raise CommandError('msp-remove', 'Managed Company name or id is required')
+        if not params.enterprise or 'managed_companies' not in params.enterprise:
+            api.query_enterprise(params)
+        if not params.enterprise:
+            raise CommandError('msp-remove', 'This command is only available for Administrators of Keeper.')
         managed_companies = params.enterprise.get('managed_companies', [])
         current_mc = get_mc_by_name_or_id(managed_companies, mc_input)
         if not current_mc:
@@ -1114,12 +1132,15 @@ class MSPRemoveCommand(EnterpriseCommand):
 
 
 def get_mc_by_name_or_id(msc, name_or_id):
-    if loginv3.CommonHelperMethods.check_int(name_or_id):
+    if not msc or name_or_id is None:
+        return None
+    name_or_id_str = str(name_or_id)
+    if loginv3.CommonHelperMethods.check_int(name_or_id_str):
         # get by id
-        found_mc = find(lambda mc: mc['mc_enterprise_id'] == int(name_or_id), msc)
+        found_mc = find(lambda mc: mc['mc_enterprise_id'] == int(name_or_id_str), msc)
     else:
         # get by company name (all lower case)
-        found_mc = find(lambda mc: mc['mc_enterprise_name'].lower() == name_or_id.lower(), msc)
+        found_mc = find(lambda mc: mc['mc_enterprise_name'].lower() == name_or_id_str.lower(), msc)
 
     return found_mc
 
