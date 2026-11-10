@@ -315,8 +315,18 @@ class DelineaCrosswalkTest(unittest.TestCase):
             orchestrator = DelineaImportOrchestrator(None, client, options)
             with mock.patch('keepercommander.commands.pam_import.delinea_import.utils.set_file_permissions'):
                 with mock.patch('sys.stdout', new_callable=StringIO) as stdout:
-                    orchestrator.run_crosswalk(Crosswalk())
-            text = stdout.getvalue()
+                    with mock.patch('keepercommander.commands.pam_import.delinea_import.logging') as mock_logging:
+                        orchestrator.run_crosswalk(Crosswalk())
+            # Extract logged messages and format them with their arguments
+            text_parts = []
+            for call in mock_logging.info.call_args_list:
+                fmt = call[0][0]
+                args = call[0][1:] if len(call[0]) > 1 else ()
+                if args:
+                    text_parts.append(fmt % args)
+                else:
+                    text_parts.append(fmt)
+            text = ' '.join(text_parts)
             self.assertIn('1 mapped, 0 unmapped', text)
             self.assertIn('1 with problems', text)
             self.assertIn('no host', text)
