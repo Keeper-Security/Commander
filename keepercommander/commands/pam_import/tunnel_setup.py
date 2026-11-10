@@ -13,7 +13,7 @@ from .base import PamRemoteBrowserObject, PamSettingsFieldData, parse_command_op
 from .batch_nsf import sync_down_after_batch
 
 _SEED_RECORD_TYPES = frozenset({
-    'pamdatabase', 'pamdirectory', 'pammachine', 'pamremotebrowser',
+    'pamdatabase', 'pamdirectory', 'pammachine', 'pamremotebrowser', 'pamcloudresource',
 })
 
 

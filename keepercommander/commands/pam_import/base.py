@@ -32,6 +32,8 @@ from ...recordv3 import RecordV3
 
 PAM_RECORD_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamUser", "pamRemoteBrowser")
 PAM_RESOURCES_RECORD_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamRemoteBrowser")
+# resource types accepted by pam project import/extend (export still handles PAM_RESOURCES_RECORD_TYPES only)
+PAM_IMPORT_RESOURCE_TYPES = PAM_RESOURCES_RECORD_TYPES + ("pamCloudResource",)
 PAM_ROTATION_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamUser")
 PAM_CONFIG_TYPES = ("pamNetworkConfiguration", "pamAwsConfiguration", "pamAzureConfiguration", "pamDomainConfiguration", "pamGcpConfiguration", "pamOciConfiguration")
 PAM_ENVIRONMENT_TYPES = ("local", "aws", "azure", "domain", "gcp", "oci")
@@ -513,11 +515,22 @@ class PamRotationSettingsObject():
         self.enabled: str = ""   # on|off|default
         self.schedule = None  # {"type": "on-demand"}|{"type": "CRON", "cron": "30 18 * * *"}
         self.password_complexity: str = ""  # "32,5,5,5,5<length,upper,lower,digits,symbols>"
-        self.resourceUid: str = "" # general:machineUID, iam_user,scripts_only:PamConfigUID
+        self.resourceUid: str = "" # general:machineUID, iam_user,scripts_only,saas:PamConfigUID
+        # rotation: saas - reference (title or uid) of the SaaS configuration record (a REGULAR vault record of type
+        # saasConfiguration, or a legacy login with the custom field "SaaS Type"; defined in the import JSON via
+        # pam_data.saas_configurations[] / users[] or already in the vault). Resolved to saas_config_uid in Step 2.
+        self.saas_config: str = ""
+        self.saas_config_uid: str = ""
+        # Service accounts (general rotation of a user nested under a machine): machines (titles or uids) whose
+        # services/tasks/IIS pools run as this user. update_services mirrors the Web Vault "Update services"
+        # checkbox (default on when service_resources is given). None = not given.
+        self.update_services: Optional[bool] = None
+        self.service_resources: Optional[List[str]] = None
+        self.service_resource_uids: Optional[List[str]] = None  # resolved in Step 2
 
     @classmethod
     def load(cls, data: Optional[Union[str, dict]], rotation_params: Optional[PamRotationParams] = None) -> PamRotationSettingsObject:
-        rotation_types = ("general", "iam_user", "scripts_only")
+        rotation_types = ("general", "iam_user", "scripts_only", "saas")
         enabled_types = ("on", "off", "default")
         rx_complexity = r"^(\d+,\d+,\d+,\d+,\d+)$"
         obj = cls()
@@ -550,9 +563,33 @@ class PamRotationSettingsObject():
                                     f"""configured owner "resource":"{obj.resource}" """
                                     f"""with actual parent "{rotation_params.ownerTitle}" """)
                 obj.resource = rotation_params.ownerTitle
-        elif obj.rotation in ("iam_user", "scripts_only"):
+        elif obj.rotation in ("iam_user", "scripts_only", "saas"):
             if rotation_params and rotation_params.configUid:
                 obj.resource = rotation_params.configUid
+
+        if obj.rotation == "saas":
+            saas_config = data.get("saas_config", None)
+            if isinstance(saas_config, str) and saas_config.strip():
+                obj.saas_config = saas_config.strip()
+            else:
+                logging.error('Rotation type "saas" requires "saas_config" (title or uid of the SaaS configuration record)')
+
+        update_services = utils.value_to_boolean(data.get("update_services", None))
+        service_resources = data.get("service_resources", None)
+        if isinstance(service_resources, str):
+            service_resources = [service_resources]
+        if isinstance(service_resources, list):
+            refs = [str(x).strip() for x in service_resources if isinstance(x, (str, int)) and str(x).strip()]
+            obj.service_resources = refs  # [] is meaningful: clear all service links
+        elif service_resources is not None:
+            logging.error('"service_resources" must be a list of machine titles or uids')
+        if obj.rotation == "saas" and (obj.service_resources is not None or update_services is not None):
+            logging.warning("service_resources / update_services do not apply to saas rotation - ignored")
+            obj.service_resources = None
+            update_services = None
+        if update_services is None and obj.service_resources:
+            update_services = True   # Web Vault: updateServices defaults to on when service accounts are linked
+        obj.update_services = update_services
 
         enabled = data.get("enabled", None)
         if enabled and isinstance(enabled, str) and enabled.strip().lower() in enabled_types:
@@ -593,10 +630,33 @@ class DagSettingsObject():
         self.text_session_recording: Optional[DagOptionValue] = None
         self.ai_threat_detection: Optional[DagOptionValue] = None
         self.ai_terminate_session_on_detection: Optional[DagOptionValue] = None
+        # Vault "Update services" (Rotation tab, machine/db/dir only): on = service/task/IIS-pool passwords are
+        # updated after a rotation (default); off = DAG resource meta no_update_services=true. Not for RBI.
+        self.update_services: Optional[DagOptionValue] = None
         # NB! PAM User has its own rotation_settings: {}, cannot enable con/tun on user anyways
         # remote_browser_isolation uses rbi, pam_resource, graphical_session_recording
         # rotation uses only pam_resource, rotation
         # machine/db/dir uses all
+        #
+        # ######################################################################################################
+        # # DO NOT REMOVE THIS COMMENT BLOCK - DO NOT ENABLE THE MEMBER BELOW (known DAG property, kept for    #
+        # # completeness and for future coders).                                                               #
+        # #                                                                                                    #
+        # # `locked` (resource meta in the PAM link DAG) is CONTROLLED BY THE BACK-END, NOT BY COMMANDER:      #
+        # # the Gateway reports a KeeperAI-closed session (aiSessionTerminate), KRouter then sets locked=true  #
+        # # and refuses new launches ("Connection Locked"). Only the unlock action (api/user/unlock_pam_       #
+        # # connections) clears it, and KRouter itself preserves it on every configure_resource call.          #
+        # # pam project import/extend must NEVER read or write it. A `locked` key in the import JSON is        #
+        # # ignored like any other unknown key.                                                                #
+        # ######################################################################################################
+        # self.locked: Optional[bool] = None
+
+    @staticmethod
+    def _map_option(value) -> Optional[DagOptionValue]:
+        """on|off|default, also accepts JSON booleans (true -> on, false -> off)."""
+        if isinstance(value, bool):
+            return DagOptionValue.ON if value else DagOptionValue.OFF
+        return DagOptionValue.map(value or "")
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -615,6 +675,7 @@ class DagSettingsObject():
         obj.text_session_recording = DagOptionValue.map(data.get("text_session_recording", None) or "")
         obj.ai_threat_detection = DagOptionValue.map(data.get("ai_threat_detection", None) or "")
         obj.ai_terminate_session_on_detection = DagOptionValue.map(data.get("ai_terminate_session_on_detection", None) or "")
+        obj.update_services = cls._map_option(data.get("update_services", None))
 
         return obj
 
@@ -767,6 +828,34 @@ class DagJitSettingsObject():
         self.ephemeral_account_type: Optional[str] = None  # Omit if missing
         self.pam_directory_record: Optional[str] = None  # Title of pamDirectory from pam_data.resources[], resolved to UID
         self.pam_directory_uid: Optional[str] = None  # Resolved pamDirectory record UID (set in process_data)
+        # "Expire privilege after": JSON duration string ("30m", "8h", "1d"), stored in MILLISECONDS on the plaintext
+        # resource meta edge (`defaultElevationTime`), NOT in the encrypted jit_settings blob (see to_dag_dict).
+        self.default_elevation_time_ms: Optional[int] = None
+        # Encrypted jit_settings.useIDPElevation (Gateway reads it when `elevate` is on). Omitted unless set.
+        self.use_idp_elevation: Optional[bool] = None
+
+    # Web Vault limits for the elevation time (dag-pam-link.ts MIN_ACCESS_TIME / MAX_ACCESS_TIME).
+    MIN_ELEVATION_TIME_MS = 300_000            # 5 minutes
+    MAX_ELEVATION_TIME_MS = 31_536_000_000     # 1 year
+
+    @classmethod
+    def parse_elevation_time(cls, value) -> Optional[int]:
+        """Duration string ("30m", "8h", "1d"; a bare number means minutes) -> milliseconds.
+
+        Single unit only ("1h30m" is not supported - write "90m"). Returns None (and logs a warning) when the value is
+        invalid or outside the Web Vault range of 5 minutes .. 1 year (the Vault itself falls back to 1 day outside it).
+        """
+        if value is None or isinstance(value, bool) or str(value).strip() == "":
+            return None
+        try:
+            ms = WorkflowFormatter.parse_duration(str(value))
+        except CommandError:
+            logging.warning(f"""JIT default_elevation_time "{value}" is invalid - use a positive value like "30m", "8h" or "1d". Skipping.""")
+            return None
+        if ms < cls.MIN_ELEVATION_TIME_MS or ms > cls.MAX_ELEVATION_TIME_MS:
+            logging.warning(f"""JIT default_elevation_time "{value}" is outside the allowed range 5 minutes .. 1 year. Skipping.""")
+            return None
+        return ms
 
     @classmethod
     def validate_enum_value(cls, value: str, allowed_values: List[str], field_name: str) -> Optional[str]:
@@ -848,6 +937,18 @@ class DagJitSettingsObject():
             obj.pam_directory_record = str(pam_directory_record).strip()
             has_valid_fields = True
 
+        # default_elevation_time: duration string -> ms (meta edge, not the encrypted blob)
+        elevation_ms = cls.parse_elevation_time(data.get("default_elevation_time", None))
+        if elevation_ms is not None:
+            obj.default_elevation_time_ms = elevation_ms
+            has_valid_fields = True
+
+        # use_idp_elevation: encrypted jit_settings.useIDPElevation (omitted unless given)
+        use_idp = utils.value_to_boolean(data.get("use_idp_elevation", None))
+        if use_idp is not None:
+            obj.use_idp_elevation = use_idp
+            has_valid_fields = True
+
         # Silently ignore any other unknown fields (permissive parsing)
 
         # Return None if no valid fields were found (empty object)
@@ -865,6 +966,11 @@ class DagJitSettingsObject():
         # Only include ephemeralAccountType if it was set (omit if missing/invalid)
         if self.ephemeral_account_type:
             result["ephemeralAccountType"] = self.ephemeral_account_type
+        # Only when given (Web Vault omits it unless the IdP elevation checkbox is used)
+        if self.use_idp_elevation is not None:
+            result["useIDPElevation"] = self.use_idp_elevation
+        # NB! defaultElevationTime is deliberately NOT here: the Vault strips it from the encrypted blob and keeps it
+        # on the plaintext resource meta edge (the Gateway/KRouter read it there) - see default_elevation_time_ms.
         return result
 
 
@@ -980,6 +1086,13 @@ class DagAiSettingsObject():
             "version": self.version,
             "riskLevels": risk_levels
         }
+
+
+# SaaS configuration records (rotation: saas): a regular vault record of type `saasConfiguration`, or a legacy `login`,
+# that carries these custom text fields (see `pam action saas config --create`; the Gateway reads them by label).
+SAAS_TYPE_LABEL = "SaaS Type"    # name of the SaaS plugin in the Gateway catalog, e.g. "AWS Access Key"
+SAAS_ACTIVE_LABEL = "Active"     # "TRUE" / "FALSE" - the Gateway skips a plugin that is not active
+SAAS_CONFIG_RECORD_TYPES = ("saasconfiguration", "login")
 
 
 def load_custom_text_fields(data) -> list:
@@ -1164,6 +1277,9 @@ class LoginUserObject():
         self.url = None
         self.oneTimeCode = None
         self.attachments = None
+        # custom fields, same JSON as pamUser: [{"type": "text", "label": "SaaS Type", "value": "..."}]. A legacy `login`
+        # SaaS configuration is a login record carrying the custom field "SaaS Type" (see SaasConfigurationObject).
+        self.custom = None
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -1186,6 +1302,7 @@ class LoginUserObject():
         obj.url = str(data["url"]) if "url" in data else None
         obj.oneTimeCode = str(data["otp"]) if "otp" in data else None
         obj.attachments = PamAttachmentsObject.load(data.get("attachments", None))
+        obj.custom = load_custom_text_fields(data.get("custom"))
 
         obj.folder_path = str(data["folder_path"]) if "folder_path" in data else None
         obj.uid_imported = str(data["uid"]) if "uid" in data else None
@@ -1193,6 +1310,14 @@ class LoginUserObject():
         obj.validate_record()
 
         return obj
+
+    def has_saas_type(self) -> bool:
+        """True when the record carries a non-empty custom field "SaaS Type" (i.e. it is usable as a SaaS config)."""
+        for field in (self.custom or []):
+            if (isinstance(field, dict) and str(field.get("label") or "").strip() == SAAS_TYPE_LABEL
+                    and str(field.get("value") or "").strip()):
+                return True
+        return False
 
     def create_record(self, params, folder_uid):
         args = {
@@ -1209,6 +1334,7 @@ class LoginUserObject():
         if self.password: fields.append(f"f.password={self.password}")
         if self.url: fields.append(f"f.url={self.url}")
         if self.oneTimeCode: fields.append(f"f.oneTimeCode={self.oneTimeCode}")
+        append_custom_text_fields(fields, self.custom)
 
         files = self.attachments.attachments if self.attachments and isinstance(self.attachments, PamAttachmentsObject) else []
         if files and isinstance(files, list):
@@ -1226,6 +1352,80 @@ class LoginUserObject():
     def validate_record(self):
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"Login User uid_imported is not a valid UID: {self.uid_imported}")
+
+class SaasConfigurationObject(LoginUserObject):
+    """SaaS configuration record (record type `saasConfiguration`) defined in the import JSON.
+
+    It is a REGULAR vault record (not the PAM configuration): the Gateway loads it through its KSM application, so it
+    is created in the project Users folder, which import shares with that application. A pamUser references it with
+    `rotation_settings: {"rotation": "saas", "saas_config": "<title or uid>"}`.
+
+    JSON (pam_data.saas_configurations[], or an users[] entry with "type": "saasConfiguration"):
+        {"title": "AWS keys", "saas_type": "AWS Access Key", "active": true,
+         "fields": {"AWS Region": "us-east-1", "AWS Access Key ID": {"value": "AKIA...", "type": "text"}}}
+    Plugin field values are stored as Hidden (`secret`) fields unless an entry gives its own "type". The plugin catalog
+    is NOT consulted here (it needs a live Gateway); field names / required fields are not validated.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.type = "saasConfiguration"
+        self.saas_type = None
+        self.active = True
+
+    @classmethod
+    def load(cls, data: Union[str, dict]):
+        obj = cls()
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: logging.error(f"Record type `saasConfiguration` failed to load from: {str(data)[:80]}")
+        if not isinstance(data, dict): return obj
+
+        obj.uid = ""
+        obj.title = str(data["title"]) if "title" in data else None
+        obj.notes = str(data["notes"]) if "notes" in data else None
+        obj.folder_path = str(data["folder_path"]) if "folder_path" in data else None
+        obj.uid_imported = str(data["uid"]) if "uid" in data else None
+
+        saas_type = data.get("saas_type", None)
+        obj.saas_type = str(saas_type).strip() if saas_type is not None and str(saas_type).strip() else None
+        active = utils.value_to_boolean(data.get("active", None))
+        obj.active = True if active is None else active
+
+        custom = []
+        if obj.saas_type:
+            custom.append({"type": "text", "label": SAAS_TYPE_LABEL, "value": obj.saas_type})
+        custom.append({"type": "text", "label": SAAS_ACTIVE_LABEL, "value": "TRUE" if obj.active else "FALSE"})
+        plugin_fields = data.get("fields", None)
+        if isinstance(plugin_fields, dict):
+            for label, raw in plugin_fields.items():
+                label = str(label).strip()
+                ftype, value = "secret", raw
+                if isinstance(raw, dict):
+                    ftype = str(raw.get("type") or "secret").strip() or "secret"
+                    value = raw.get("value")
+                if isinstance(value, (list, tuple)):
+                    value = value[0] if value else ""
+                if not label or value is None or str(value) == "":
+                    continue
+                if isinstance(value, bool):
+                    value = "TRUE" if value else "FALSE"
+                custom.append({"type": ftype, "label": label, "value": str(value)})
+        elif plugin_fields is not None:
+            logging.error('saasConfiguration "fields" must be an object {"<plugin field label>": "<value>"}')
+        obj.custom = custom
+
+        obj.validate_record()
+        return obj
+
+    def validate_record(self):
+        if not self.saas_type:
+            logging.error(f"""SaaS configuration "{self.title}" is missing required "saas_type" (the SaaS plugin name, """
+                          """e.g. "AWS Access Key") - the Gateway cannot use it without the custom field "SaaS Type".""")
+        if not self.active:
+            logging.warning(f"""SaaS configuration "{self.title}" is not active - the Gateway skips its rotation.""")
+        if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
+            logging.error(f"SaaS configuration uid_imported is not a valid UID: {self.uid_imported}")
+
 
 class PamBaseMachineParser():
     def __init__(self):
@@ -1527,6 +1727,8 @@ class PamMachineObject():
             logging.warning(f"""PAM Machine "{self.title}" has incorrect connection setup: {errmsg}""")
         for msg in (getattr(self.pam_settings, "sftp_warnings", None) or []):
             logging.warning(f"""PAM Machine "{self.title}": {msg}""")
+        for msg in (self.pam_settings.dag_flag_warnings() if self.pam_settings else []):
+            logging.warning(f"""PAM Machine "{self.title}": {msg}""")
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"PAM Machine uid_imported is not a valid UID: {self.uid_imported}")
 
@@ -1730,6 +1932,8 @@ class PamDatabaseObject():
             logging.warning(f"""PAM Database "{self.title}" has incorrect connection setup: {errmsg}""")
         for msg in (getattr(self.pam_settings, "sftp_warnings", None) or []):
             logging.warning(f"""PAM Database "{self.title}": {msg}""")
+        for msg in (self.pam_settings.dag_flag_warnings() if self.pam_settings else []):
+            logging.warning(f"""PAM Database "{self.title}": {msg}""")
         # KeeperDB-only protocols need dbConnectionMethod=keeperDB on the record (the Gateway reads only the stored value),
         # and it is only written when a connection is given - the record would be created without it.
         proto = KEEPERDB_ONLY_DB_PROTOCOLS.get(str(self.databaseType or "").lower())
@@ -1899,10 +2103,15 @@ class PamDirectoryObject():
             logging.warning(f"""PAM Directory "{self.title}" has incorrect connection setup: {errmsg}""")
         for msg in (getattr(self.pam_settings, "sftp_warnings", None) or []):
             logging.warning(f"""PAM Directory "{self.title}": {msg}""")
+        for msg in (self.pam_settings.dag_flag_warnings() if self.pam_settings else []):
+            logging.warning(f"""PAM Directory "{self.title}": {msg}""")
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"PAM Directory uid_imported is not a valid UID: {self.uid_imported}")
 
 class PamRemoteBrowserObject():
+    RECORD_TYPE = "pamRemoteBrowser"
+    TITLE_PREFIX = "PAM RBI"     # default title: "<prefix> - <hostname of url>"
+
     def __init__(self):
         self.folder_path = None  # pam extend only
         self.uid_imported = None # pam extend only - lookup by 1) uid 2) folder_path/title
@@ -1925,10 +2134,10 @@ class PamRemoteBrowserObject():
         if not isinstance(data, dict): return obj
 
         dtype = data.get("type", None)
-        if dtype and str(dtype).lower() != "pamRemoteBrowser".lower():
-            logging.warning(f"""PAM RBI data using wrong type "pamRemoteBrowser" != "{dtype}" """)
+        if dtype and str(dtype).lower() != cls.RECORD_TYPE.lower():
+            logging.warning(f"""PAM RBI data using wrong type "{cls.RECORD_TYPE}" != "{dtype}" """)
 
-        obj.type = "pamRemoteBrowser"
+        obj.type = cls.RECORD_TYPE
         obj.title = str(data["title"]) if "title" in data else None
         obj.notes = str(data["notes"]) if "notes" in data else None
         obj.rbiUrl = str(data["url"]) if "url" in data else None
@@ -1946,7 +2155,7 @@ class PamRemoteBrowserObject():
             hostname = re.sub(r"^\s*https?://", "", hostname, flags=re.IGNORECASE)
             hostname = hostname.split("/", 1)[0]
             if hostname:
-                obj.title = f"PAM RBI - {hostname}"
+                obj.title = f"{cls.TITLE_PREFIX} - {hostname}"
 
         obj.folder_path = str(data["folder_path"]) if "folder_path" in data else None
         obj.uid_imported = str(data["uid"]) if "uid" in data else None
@@ -1999,8 +2208,120 @@ class PamRemoteBrowserObject():
         errmsg = validate_pam_connection(self.rbi_settings.connection, "pamRemoteBrowser") if self.rbi_settings else ""
         if errmsg:
             logging.warning(f"""PAM RBI "{self.title}" has incorrect connection setup: {errmsg}""")
+        for msg in rbi_keeperai_warnings(self.rbi_settings):
+            logging.warning(f"""PAM RBI "{self.title}": {msg}""")
         if self.uid_imported is not None and (not isinstance(self.uid_imported, str) or not RecordV3.is_valid_ref_uid(self.uid_imported)):
             logging.error(f"PAM RBI uid_imported is not a valid UID: {self.uid_imported}")
+
+class PamCloudResourceObject(PamRemoteBrowserObject):
+    """pamCloudResource ("PAM Cloud"): an RBI-style resource that opens a cloud console / IdP application in an
+    isolated browser, signed in through the IdP with a launch credential.
+
+    Record template: rbiUrl (required), accountNumber labelled pamCloudResourceAccountIdentifier,
+    pamRemoteBrowserSettings, trafficEncryptionSeed, fileRef. JSON (same keys as pamRemoteBrowser plus):
+        "account_identifier": Okta app-instance id / Entra application (client) id (AWS: not used),
+        "pam_settings": {"options": {"jit_settings": {...}, "ai_settings": {...}, "workflow": {...}, ...},
+                         "connection": {"protocol": "http", "autofill_credentials": "<pamUser>", ...}}
+    Requires a PAM configuration that is IdP-capable (or carries identityProviderUid). The launch credential is a
+    pamUser referenced by `autofill_credentials` (stored only as httpCredentialsUid, no DAG ACL link). JIT: cloud
+    resources are always IdP-provisioned, so use_idp_elevation, ephemeral_account_type, base_distinguished_name and
+    pam_directory_record are not used.
+    """
+    RECORD_TYPE = "pamCloudResource"
+    TITLE_PREFIX = "PAM Cloud"
+
+    def __init__(self):
+        super().__init__()
+        self.type = self.RECORD_TYPE
+        self.accountIdentifier = None   # accountNumber field, label pamCloudResourceAccountIdentifier
+        self.jit_settings: Optional[DagJitSettingsObject] = None
+
+    @classmethod
+    def load(cls, data: Union[str, dict], rotation_params: Optional[PamRotationParams] = None):
+        obj = super().load(data, rotation_params)
+        try: data = json.loads(data) if isinstance(data, str) else data
+        except: data = None
+        if not isinstance(data, dict):
+            return obj
+        aid = data.get("account_identifier", None)
+        obj.accountIdentifier = str(aid).strip() if aid is not None and str(aid).strip() else None
+
+        psd = data.get("pam_settings", None)
+        options = psd.get("options", None) if isinstance(psd, dict) else None
+        if isinstance(options, dict) and options.get("jit_settings", None) is not None:
+            jit = DagJitSettingsObject.load(options.get("jit_settings"))
+            if jit:
+                ignored = []
+                if jit.use_idp_elevation is not None:
+                    ignored.append("use_idp_elevation")
+                    jit.use_idp_elevation = None
+                if jit.ephemeral_account_type:
+                    ignored.append("ephemeral_account_type")
+                    jit.ephemeral_account_type = None
+                if jit.base_distinguished_name:
+                    ignored.append("base_distinguished_name")
+                    jit.base_distinguished_name = ""
+                if jit.pam_directory_record:
+                    ignored.append("pam_directory_record")
+                    jit.pam_directory_record = None
+                if ignored:
+                    logging.warning(f"""PAM Cloud "{obj.title}": jit_settings {", ".join(ignored)} not used for """
+                                    "pamCloudResource (always IdP-provisioned) - ignored")
+                obj.jit_settings = jit
+        # The Gateway copies rbiUrl into connection.url only when connection.protocol is http: always write it.
+        if obj.rbi_settings is None:
+            obj.rbi_settings = PamRemoteBrowserSettings(connection=ConnectionSettingsHTTP())
+        elif obj.rbi_settings.connection is None:
+            obj.rbi_settings.connection = ConnectionSettingsHTTP()
+        obj.validate_cloud()
+        return obj
+
+    def validate_cloud(self):
+        title = self.title
+        if not (self.rbiUrl and str(self.rbiUrl).strip()):
+            logging.error(f"""PAM Cloud "{title}" is missing the required `url` (rbiUrl, the console / application URL)""")
+        conn = self.rbi_settings.connection if self.rbi_settings else None
+        has_cred = bool(conn and getattr(conn, "httpCredentials", None))
+        jit = self.jit_settings
+        if jit and jit.create_ephemeral:
+            if has_cred:
+                logging.warning(f"""PAM Cloud "{title}": autofill_credentials is ignored at launch while """
+                                "jit_settings.create_ephemeral is on (an ephemeral account is created instead)")
+            if not (jit.elevate and jit.elevation_string):
+                logging.warning(f"""PAM Cloud "{title}": create_ephemeral without elevate + elevation_string - the """
+                                "ephemeral account may have no permissions (AWS: attach a group or role)")
+        elif not has_cred:
+            logging.warning(f"""PAM Cloud "{title}" has no pam_settings.connection.autofill_credentials (a pamUser) - """
+                            "there is no launch credential for the cloud sign-in")
+        host = re.sub(r"^\s*https?://", "", str(self.rbiUrl or "").lower()).split("/", 1)[0]
+        if not self.accountIdentifier and "console.aws.amazon.com" not in host and "amazonaws.com" not in host:
+            logging.warning(f"""PAM Cloud "{title}": account_identifier is missing - Okta (app-instance id 0oa...) """
+                            "and Entra (application / client id) launches need it; AWS does not")
+        for msg in rbi_keeperai_warnings(self.rbi_settings):
+            logging.warning(f"""PAM Cloud "{title}": {msg}""")
+
+def rbi_keeperai_warnings(rbi_settings) -> List[str]:
+    """Warnings when KeeperAI is requested for a pamRemoteBrowser but its prerequisites are off.
+
+    The Web Vault disables the KeeperAI toggle in that state (it never saves aiEnabled=true); Commander has no UI,
+    so it warns and still writes what the JSON says. The PAM-configuration side (ai_threat_detection on the
+    configuration) is not visible here.
+    """
+    msgs: List[str] = []
+    if not rbi_settings:
+        return msgs
+    opts = rbi_settings.options
+    ai_on = bool(opts and opts.ai_threat_detection and opts.ai_threat_detection.value == "on")
+    if not (ai_on or rbi_settings.ai_settings):
+        return msgs
+    if not (opts and opts.graphical_session_recording and opts.graphical_session_recording.value == "on"):
+        msgs.append("KeeperAI needs graphical_session_recording = on (KeeperAI analyses the session recording)")
+    if not (rbi_settings.connection and getattr(rbi_settings.connection, "recordingIncludeKeys", None)):
+        msgs.append("KeeperAI needs connection.recording_include_keys = true")
+    if rbi_settings.ai_settings and not ai_on:
+        msgs.append("ai_settings is given but options.ai_threat_detection is not 'on' - KeeperAI stays off")
+    msgs.append("KeeperAI also needs ai_threat_detection enabled on the PAM configuration")
+    return msgs
 
 # PAM Settings field data
 FONT_SIZES = (8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72, 96)
@@ -2204,6 +2525,12 @@ class SFTPConnectionSettings(SFTPRootDirectorySettings):
         self.sftpTimeout = sftpTimeout
         self.sftpResourceUid = None # resolve from sftpResource
         self.sftpUserUid = None # resolve from sftpUser
+        # UPCOMING (not implemented - re-check when it ships): KRouter PR-8 ("SFTP user PAM configuration", branch
+        # PR-8-pam-rbi-user-access-fix-FORDEV, not merged yet) adds `configure_resource.sftpUser` (a UidList) and a new
+        # user->resource ACL flag `is_sftp_credential` on the PAM link DAG, with a record-access check for every newly
+        # linked record. Today the SFTP user is stored ONLY as the record field `sftpUserUid` (Web Vault and Gateway
+        # master read that). When the router change lands, the import should also write the `is_sftp_credential` link
+        # for the resolved sftpUserUid (and require access to that record).
 
     @classmethod
     def load(cls, data: Union[str, dict]):
@@ -4441,10 +4768,20 @@ class PamRemoteBrowserSettings:
         options: Optional[DagSettingsObject] = None,
         connection: Optional[ConnectionSettingsHTTP] = None,
         workflow: Optional[PamWorkflowOptions] = None,
+        ai_settings: Optional[DagAiSettingsObject] = None,
     ):
         self.options = options
         self.connection = connection
         self.workflow = workflow  # not on record nor in DAG; applied via Krouter
+        # KeeperAI risk-level settings (ai_settings DAG edge). The Web Vault RBI modal has a KeeperAI tab and
+        # `pam connection ai` already supports pamRemoteBrowser. Needs: PAM configuration ai_threat_detection on,
+        # graphical session recording on and recording_include_keys on (otherwise AI does not run).
+        self.ai_settings = ai_settings
+        # NOT SUPPORTED (known gap, kept for future coders): `jit_settings` for pamRemoteBrowser. The Web Vault has no
+        # UI for it yet (its pamRemoteBrowser modal has no JIT tab; the JIT tab exists only for pamCloudResource) and
+        # the Gateway does not support JIT for pamRemoteBrowser. Do not enable until the Web Vault offers it and the
+        # Gateway supports it; then it must be enabled on all clients in sync (README + examples).
+        # self.jit_settings: Optional[DagJitSettingsObject] = None
 
     @classmethod
     def load(cls, data: Optional[Union[str, dict]]):
@@ -4461,6 +4798,11 @@ class PamRemoteBrowserSettings:
             workflow_value = options_dict.get("workflow")
             if workflow_value is not None:
                 obj.workflow = PamWorkflowOptions.load(workflow_value)
+            ai_value = options_dict.get("ai_settings", None)
+            if ai_value is not None:
+                ai_settings = DagAiSettingsObject.load(ai_value)
+                if ai_settings:
+                    obj.ai_settings = ai_settings
 
         cdata = data.get("connection", {})
         # TO DO: if isinstance(cdata, str): lookup_by_name(pam_data.connections)
@@ -4500,6 +4842,38 @@ class PamSettingsFieldData:
         self.ai_settings = ai_settings
         self.workflow = workflow  # not on record nor in DAG; applied via Krouter
         self.sftp_warnings: List[str] = []  # import-time only, logged by validate_record
+        # pam_settings.connection.rotate_creds_on_session_termination: DAG resource meta `rotateOnTermination`
+        # (NOT a connection record field). Rotates the LAUNCH credentials when the session ends; machine/database/
+        # directory only (never RBI). None = not given (leave as is).
+        self.rotate_on_termination: Optional[bool] = None
+
+    def effective_rotate_on_termination(self) -> Optional[bool]:
+        """Value to write to the DAG, or None when it must not be written.
+
+        Mirrors the Web Vault: the checkbox lives on the Connection tab (needs a connection protocol) and is disabled
+        while "create ephemeral account" is on (the launch credential is then a temporary account).
+        """
+        if self.rotate_on_termination is None:
+            return None
+        if not self.connection or not getattr(self.connection, "protocol", None):
+            return None
+        if self.jit_settings and self.jit_settings.create_ephemeral:
+            return None
+        return self.rotate_on_termination
+
+    def dag_flag_warnings(self) -> List[str]:
+        """Import-time warnings for the DAG-only flags of a machine/database/directory (logged by validate_record)."""
+        msgs: List[str] = []
+        if self.rotate_on_termination is not None:
+            if not self.connection or not getattr(self.connection, "protocol", None):
+                msgs.append("rotate_creds_on_session_termination needs pam_settings.connection with a protocol - ignored")
+            elif self.jit_settings and self.jit_settings.create_ephemeral:
+                msgs.append("rotate_creds_on_session_termination is ignored while jit_settings.create_ephemeral is on "
+                            "(the Web Vault disables it for ephemeral launch accounts)")
+            elif not getattr(self.connection, "launch_credentials", None):
+                msgs.append("rotate_creds_on_session_termination rotates the LAUNCH credentials but no "
+                            "launch_credentials are configured - it will have no effect until one is set")
+        return msgs
 
     # PamConnectionSettings excludes ConnectionSettingsHTTP
     pam_connection_classes = [
@@ -4579,6 +4953,8 @@ class PamSettingsFieldData:
         obj.connection = cls.get_connection_class(cdata)
         if isinstance(cdata, dict):
             obj.sftp_warnings = sftp_import_warnings(cdata)
+            # DAG-only flag that the Vault shows on the Connection tab (not a connection record field)
+            obj.rotate_on_termination = utils.value_to_boolean(cdata.get("rotate_creds_on_session_termination", None))
         if not obj.connection and cdata and isinstance(cdata, dict):
             logging.error(f"PAM Settings failed to load from: {str(cdata)[:80]}...")
 
@@ -4840,14 +5216,15 @@ def parse_command_options(obj, enable:bool) -> dict:
             val = opts.remote_browser_isolation.value if opts.remote_browser_isolation else ""
             key = "enable_remote_browser_isolation" if val == "on" else "disable_remote_browser_isolation" if val == "off" else None
             if key is not None: args[key] = True
-            # AI and JIT settings don't apply to RBI records
-            if not isinstance(obj, PamRemoteBrowserObject):
-                val = opts.ai_threat_detection.value if opts.ai_threat_detection else ""
-                key = "enable_ai_threat_detection" if val == "on" else "disable_ai_threat_detection" if val == "off" else None
-                if key is not None: args[key] = True
-                val = opts.ai_terminate_session_on_detection.value if opts.ai_terminate_session_on_detection else ""
-                key = "enable_ai_terminate_session_on_detection" if val == "on" else "disable_ai_terminate_session_on_detection" if val == "off" else None
-                if key is not None: args[key] = True
+            # KeeperAI applies to RBI too (Web Vault RBI modal KeeperAI tab; `pam connection ai` supports
+            # pamRemoteBrowser). JIT does NOT apply to pamRemoteBrowser (no Web Vault UI yet, see
+            # PamRemoteBrowserSettings) - it is simply never read for RBI.
+            val = opts.ai_threat_detection.value if opts.ai_threat_detection else ""
+            key = "enable_ai_threat_detection" if val == "on" else "disable_ai_threat_detection" if val == "off" else None
+            if key is not None: args[key] = True
+            val = opts.ai_terminate_session_on_detection.value if opts.ai_terminate_session_on_detection else ""
+            key = "enable_ai_terminate_session_on_detection" if val == "on" else "disable_ai_terminate_session_on_detection" if val == "off" else None
+            if key is not None: args[key] = True
         else:  # TunnelDAG.set_resource_allowed format rotation=True/False
             if opts.rotation and opts.rotation.value in ("on", "off"):
                 args["rotation"] = choices[opts.rotation.value]
@@ -4863,12 +5240,26 @@ def parse_command_options(obj, enable:bool) -> dict:
                 args["session_recording"] = choices[opts.graphical_session_recording.value]
             if opts.remote_browser_isolation and opts.remote_browser_isolation.value in ("on", "off"):
                 args["remote_browser_isolation"] = choices[opts.remote_browser_isolation.value]
-            # AI and JIT settings don't apply to RBI records
-            if not isinstance(obj, PamRemoteBrowserObject):
-                if opts.ai_threat_detection and opts.ai_threat_detection.value in ("on", "off"):
-                    args["ai_enabled"] = choices[opts.ai_threat_detection.value]
-                if opts.ai_terminate_session_on_detection and opts.ai_terminate_session_on_detection.value in ("on", "off"):
-                    args["ai_session_terminate"] = choices[opts.ai_terminate_session_on_detection.value]
+            # KeeperAI applies to RBI too; JIT never does (see above)
+            if opts.ai_threat_detection and opts.ai_threat_detection.value in ("on", "off"):
+                args["ai_enabled"] = choices[opts.ai_threat_detection.value]
+            if opts.ai_terminate_session_on_detection and opts.ai_terminate_session_on_detection.value in ("on", "off"):
+                args["ai_session_terminate"] = choices[opts.ai_terminate_session_on_detection.value]
+
+    # DAG resource meta flags that live outside pam_settings.options (set_resource_allowed format only).
+    # Machine/database/directory only: never RBI (no launch credential to rotate, no JIT/services), never users.
+    if not enable and not isinstance(obj, (PamRemoteBrowserObject, PamUserObject, LoginUserObject)):
+        ps = getattr(obj, "pam_settings", None)
+        if ps:
+            rot = ps.effective_rotate_on_termination()
+            if rot is not None:
+                args["rotate_on_termination"] = rot
+            jit = ps.jit_settings
+            if jit and jit.default_elevation_time_ms is not None:
+                args["default_elevation_time"] = jit.default_elevation_time_ms  # ms, plaintext meta edge
+            upd = ps.options.update_services if ps.options else None
+            if upd and upd.value in ("on", "off"):
+                args["update_services"] = choices[upd.value]
 
     return args
 

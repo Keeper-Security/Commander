@@ -38,7 +38,8 @@ Notes:
 - **Telnet** (`server-telnet`, `ddhhz/nyancat-server`) has no authentication; the Keeper pamUser exists only for rotation/discovery testing.
 
 
-Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.  
+Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.
+**Extend only adds - it never updates existing records.** A new resource is created with all of its settings, users and credentials (administrative and launch credentials, options, JIT, KeeperAI, workflow, ...). An **existing** resource found in the JSON is left exactly as it is: its entry only anchors the **new** users nested under it, and those users are added (linked to the machine, with their rotation and service accounts). Extend ignores all machine-level settings of an existing machine entry - its options, `administrative_credentials` and `launch_credentials` included - without a warning; changing existing records is left to a separate update command (or the Web Vault / `pam connection edit`).  
 `pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--resources-folder=<uid_or_path>] [--users-folder=<uid_or_path>] [--dry-run]`
 
 - `--config`, `-c` → PAM Configuration record UID or title.
@@ -48,8 +49,8 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 - `--dry-run`, `-d` → Test import without modifying vault.
 
 > **Notes:**
-- Folder for new records: 1) `--resources-folder`/`--users-folder`, 2) `folder_path` in the JSON, 3) autodetect — folders named `<project> - Resources`/`<project> - Users`, otherwise the folder where existing resources (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser) or users (pamUser, login) live. If autodetect is ambiguous or finds nothing the command fails; add `folder_path` or use the options above.
-- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault. Import/extend dry-run prints the **batch plan** (creation tiers + Step 2 dispatch + `import_tail` on import) from `BatchPamImportEngine.simulate()` — no vault or DAG writes.
+- Folder for new records: 1) `--resources-folder`/`--users-folder`, 2) `folder_path` in the JSON, 3) autodetect — folders named `<project> - Resources`/`<project> - Users`, otherwise the folder where existing resources (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser, pamCloudResource) or users (pamUser, login) live. If autodetect is ambiguous or finds nothing the command fails; add `folder_path` or use the options above.
+- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault. Import/extend dry-run prints the **batch plan** (creation tiers + Step 2 dispatch + `import_tail` on import) from `BatchPamImportEngine.simulate()` — no vault or DAG writes. It also runs **pre-flight checks** for problems the live run would only hit after the records exist, printed as `Dry-run preflight: ...` warnings and listed under `preflight_warnings` in the plan: an unresolved `saas_config` or `service_resources`, a `saas` user nested under a machine, a record type the tenant does not have (`pamCloudResource`, `saasConfiguration`), a `pamCloudResource` on a PAM configuration that cannot federate an IdP, and, for `extend`, an existing machine that is not linked to the configuration or has **no admin credential** while new users with a rotation are added (their rotation would fail). The extend checks read the PAM graph once (read-only).
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
 ### Phase 0 skeleton (not batched)
@@ -369,7 +370,7 @@ _You can have only one `pam_configuration` section and the only required paramet
 </details>
 
 #### Resources (users, machines etc.):
-Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrative Credentials** (admin user) and **Launch Credentials** (the credentials used to establish the protocol connection). Both are identified by title or login/username of a pamUser (e.g. `"administrative_credentials": "admin1"`, `"launch_credentials": "user1"`). pamUser and pamRemoteBrowser do not have launch credentials; pamRemoteBrowser uses `pam_settings.connection.autofill_credentials` for RBI login.
+Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrative Credentials** (admin user) and **Launch Credentials** (the credentials used to establish the protocol connection). Both are identified by title or login/username of a pamUser (e.g. `"administrative_credentials": "admin1"`, `"launch_credentials": "user1"`). pamUser, pamRemoteBrowser and pamCloudResource do not have launch credentials; pamRemoteBrowser and pamCloudResource use `pam_settings.connection.autofill_credentials` for the browser / cloud login.
 - **Machines** are defined in `pam_data.resources` where each machine can have its own list of `"users": []` one of which is the admin user for that machine. Users that don't belong to a single machine are into global `pam_data.users` section (record type: `login`, `pamUser` for NOOP rotation or shared across multiple machines /ex. same user for ssh, vnc, rdp etc./)
   > **Note 1:** `pam_settings` _(options, connection)_ are explained only in pamMachine section below (per protocol) but they are present in all machine types.  
   > **Note 2:** `attachments` and `scripts` examples are in `pam_configuration: local` section.  
@@ -385,8 +386,14 @@ Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrativ
   > **Note 12:** Telnet options (`pam_settings.connection`, protocol `telnet`): `username_regex` and `password_regex` are POSIX extended regular expressions (case-insensitive) that guacd matches against the server output to find the login and password prompts (defaults `[Ll]ogin:` and `[Pp]assword:`; used only when a username is set). `login_success_regex` and `login_failure_regex` detect a successful or failed login with the same kind of expression - give both or neither: guacd ignores a single one (the import warns and writes it anyway). The patterns are not validated by the import. `font_name` (font family, default `monospace`), `font_size` (points: 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72 or 96, default 12; the closest value is used), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000), `read_only` (no input accepted), `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H), `terminal_type` (the `TERM` value sent to the server, default `linux`; common values `xterm`, `xterm-256color`, `vt220`, `vt100`, `ansi`, `linux` - other values are written with a warning because the target host may not know them) and `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). Telnet has no SFTP: an `sftp` object on a Telnet resource is ignored with a warning. Invalid values are ignored with a warning.  
   > **Note 13:** Kubernetes options (`pam_settings.connection`, protocol `kubernetes`): `use_ssl` (use SSL/TLS for the connection to the Kubernetes API server, default false), `ignore_server_cert` (accept a server certificate that cannot be validated), `ca_certificate`, `client_certificate` and `client_key` (PEM-encoded), `namespace` (the namespace of the pod), `pod_name` (the pod to connect to - required), `container` (the container inside the pod), `exec_command` (the command to run in the container; omitted = the default shell), `font_name` (font family, default `monospace`), `font_size` (points: 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72 or 96, default 12), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000), `read_only` (no input accepted) and `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H). Invalid values are ignored with a warning. The Web Vault names the exec command option differently, so the Vault does not show the value set here.  
   > **Note 14:** Database options (`pam_settings.connection`, protocols `mysql`, `postgresql`, `sql-server`, `mariadb`, `oracle`, `mongodb`, `redis`, `elasticsearch`, `clickhouse`, `dynamodb`): `default_database` (database name), `disable_csv_export` / `disable_csv_import` (true blocks CSV download / upload), `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). For `mysql`, `postgresql` and `sql-server` only (the CLI-capable protocols): `font_name` (font family, default `monospace`), `font_size` (points, default 12), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000) and `read_only` (no input accepted). `db_connection_method` (`cli` = guacd database client, `keeperDB` = KeeperDB proxy session, `both` = the user chooses at launch; case-insensitive): for `mysql`, `postgresql` and `sql-server` it is written as given and nothing is written when omitted (CLI); the other seven protocols are KeeperDB-only, so the record always gets `keeperDB` - any other value is replaced with `keeperDB` and a warning says so. `session_persistence` (`none` = incognito, no profile storage; `user` = profile stored per user and resource; `resource` = one profile shared per resource) is written as `rbiSettings.sessionPersistence` and only applies to KeeperDB sessions (`keeperDB` or `both`); with `cli` it has no effect and a warning is printed. The pamDatabase `database_type` has nine values (the Web Vault "Database Type" list): `postgresql`, `postgresql-flexible`, `mysql`, `mysql-flexible`, `mariadb`, `mariadb-flexible`, `mssql`, `oracle` and `mongodb`. `redis`, `elasticsearch`, `clickhouse` and `dynamodb` are chosen through `pam_settings.connection.protocol` instead (leave `database_type` out; `dynamodb` also needs `provider_region`) - the Gateway uses `database_type` first and `connection.protocol` only when `database_type` is empty, so a `database_type` that differs from the connection protocol gets a warning. A KeeperDB-only database resource that has no `pam_settings.connection` at all gets a warning that shows the connection to add, e.g. `"pam_settings": { "connection": { "protocol": "oracle", "db_connection_method": "keeperDB" } }`. Invalid values are ignored with a warning.  
+  > **Note 15:** DAG-only flags of a pamMachine / pamDatabase / pamDirectory (never RBI): `pam_settings.connection.rotate_creds_on_session_termination` (true/false) rotates the **launch credentials** when the session ends (the Web Vault checkbox "Rotate launch credentials upon session termination"); it needs a `connection.protocol`, is ignored while `jit_settings.create_ephemeral` is on, and has no effect without `launch_credentials` (a warning says so). `pam_settings.options.update_services` (`on`/`off`/`default` or true/false; Web Vault "Update services", default on) controls whether service / scheduled-task / IIS-pool passwords are updated after a rotation. `locked` is controlled by the back-end (KeeperAI session termination) and is never read or written by the import - a `locked` key in the JSON is ignored like any unknown key.
+  > **Note 16:** `pam_settings.options.jit_settings` extras: `default_elevation_time` ("Expire privilege after") is a duration string with ONE unit - `30m`, `8h`, `1d` (a bare number means minutes; `1h30m` is not supported, write `90m`), between 5 minutes and 1 year; it is stored in milliseconds on the resource meta (not in the encrypted JIT settings) and is read by the Gateway for elevation. `use_idp_elevation` (true/false) is stored in the encrypted JIT settings, written only when given, and used by the Gateway when `elevate` is on. JIT does not apply to pamRemoteBrowser (the Web Vault has no JIT tab for it); it does for pamCloudResource (Note 20).
+  > **Note 17:** KeeperAI for pamRemoteBrowser (and pamCloudResource): `pam_settings.options.ai_threat_detection`, `ai_terminate_session_on_detection` and `ai_settings` work like on machines (same JSON as in the KeeperAI section). KeeperAI only runs when the PAM configuration has `ai_threat_detection` on, `graphical_session_recording` is `on` and `connection.recording_include_keys` is true - the Web Vault disables the switch otherwise; the import warns and still writes what the JSON says. `pam connection ai` edits the same settings on existing records.
+  > **Note 18:** Service accounts: a pamUser nested under a machine (`rotation: "general"`) can control services / scheduled tasks / IIS pools on Windows machines: `rotation_settings.service_resources` (list of pamMachine titles or uids from this import or the vault) and `rotation_settings.update_services` (true/false, default true when `service_resources` is given). The links are sent with the rotation after all records exist, so the machines can be defined anywhere in the file. A machine that is not a pamMachine or not found is skipped with a warning (non-Windows machines are warned). `pam project extend` only applies this to NEW users; changing existing users is done with `pam action service` / the future update command.
+  > **Note 19:** SaaS rotation (`rotation_settings.rotation: "saas"`, users in the global `pam_data.users[]` only - a `saas` user nested under a machine is skipped with a warning because the Gateway would look for the SaaS configuration on the machine): `saas_config` is the title or uid of the SaaS configuration record - a regular vault record of type `saasConfiguration`, or a legacy `login` record that has the custom field `SaaS Type`. Define it in the import with `pam_data.saas_configurations[]` (created in the Users folder, which is shared with the Gateway application) or reference an existing record. Plugin field values are stored as Hidden fields unless an entry gives its own `type`; the plugin catalog is not checked offline (field names / required fields are not validated). `iam_user` and `scripts_only` rotation of global users are still not applied by the import. Example: `{"title": "AWS keys", "saas_type": "AWS Access Key", "active": true, "fields": {"AWS Region": "us-east-1"}}` and `"rotation_settings": {"rotation": "saas", "saas_config": "AWS keys", "enabled": "on", "schedule": {"type": "on-demand"}}`.
+  > **Note 20:** `pamCloudResource` ("PAM Cloud"): an RBI-style resource that opens a cloud console / IdP application (AWS, Azure/Entra, Okta, GCP) in an isolated browser with a launch credential. Keys: `url` (required console / application URL), `account_identifier` (Okta app-instance id `0oa...` or Entra application (client) id; not used for AWS), and `pam_settings` with `options` (`connections`, `remote_browser_isolation`, `graphical_session_recording`, `ai_*`, `jit_settings`, `workflow`) and `connection` (`protocol: "http"` is always written, `autofill_credentials` = a **pamUser**, plus the RBI browser options). It requires a PAM configuration that can federate an IdP (AWS / Azure / GCP / Domain / Okta configuration, or a configuration with `identityProviderUid`). `jit_settings` supports `create_ephemeral`, `elevate`, `elevation_method`, `elevation_string` and `default_elevation_time`; `use_idp_elevation`, `ephemeral_account_type`, `base_distinguished_name` and `pam_directory_record` are not used (always IdP). With `create_ephemeral` the autofill credential is ignored at launch. Okta needs the credential's password and fails over to autofill when MFA is required; Azure still signs in through autofill. `pam project export` does not export pamCloudResource yet.
 
-JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records. **Workflow** (approvals / checkout / temporal restrictions) is supported on all four resource types: pamMachine, pamDatabase, pamDirectory, **and** pamRemoteBrowser.
+JIT and KeeperAI settings below are shared across the resource types: **JIT** applies to pamMachine, pamDatabase, pamDirectory and pamCloudResource (not to pamRemoteBrowser or users); **KeeperAI** applies to pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser and pamCloudResource; **Workflow** (approvals / checkout / temporal restrictions) is supported on pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser **and** pamCloudResource.
 
 <details>
 <summary>Just-In-Time Access (JIT)</summary>
@@ -404,6 +411,10 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
         "elevation_method": "group",
         "elevation_string": "arn:aws:iam::12345:role/Admin",
         "base_distinguished_name": "OU=Users,DC=example,DC=net",
+        "_comment_default_elevation_time": "Expire privilege after: one unit, 30m | 8h | 1d (5 minutes .. 1 year); omit to leave unset",
+        "default_elevation_time": "1d",
+        "_comment_use_idp_elevation": "optional, elevate through the identity provider (IdP-capable PAM configuration)",
+        "use_idp_elevation": false,
         "_comment_ephemeral_account_types": "<linux|mac|windows|domain>",
         "ephemeral_account_type": "linux",
         "_comment_pam_directory_record": "by title, requried if ephemeral_account_type: domain",
@@ -1210,6 +1221,46 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					"options" : { "remote_browser_isolation": "on" },
 					"connection" : { "protocol": "http" }
 				}
+			},
+			{
+				"type": "pamRemoteBrowser",
+				"title": "RBI with KeeperAI",
+				"url": "https://intranet.example.com",
+				"pam_settings": {
+					"options" : {
+						"remote_browser_isolation": "on",
+						"graphical_session_recording": "on",
+						"ai_threat_detection": "on",
+						"ai_terminate_session_on_detection": "on",
+						"ai_settings": {
+							"risk_levels": {
+								"critical": {"ai_session_terminate": true, "activities": {"deny": ["Delete Database"]}},
+								"low": {"ai_session_terminate": false}
+							}
+						}
+					},
+					"connection" : { "protocol": "http", "recording_include_keys": true, "autofill_credentials": "rbi_user1" }
+				}
+			},
+			{
+				"type": "pamCloudResource",
+				"title": "AWS Console",
+				"url": "https://console.aws.amazon.com/",
+				"pam_settings": {
+					"options" : {
+						"connections": "on",
+						"remote_browser_isolation": "on",
+						"graphical_session_recording": "on",
+						"jit_settings": {
+							"create_ephemeral": false,
+							"elevate": true,
+							"elevation_method": "role",
+							"elevation_string": "arn:aws:iam::12345:role/Admin",
+							"default_elevation_time": "8h"
+						}
+					},
+					"connection" : { "protocol": "http", "autofill_credentials": "aws_console_user" }
+				}
 			}
 		]
 	}
@@ -1287,9 +1338,35 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					"schedule": {"type": "on-demand"},
 					"password_complexity": "32,5,5,5,5"
 				}
+			},
+			{
+				"type": "pamUser",
+				"title": "PAM User4 - SaaS rotation",
+				"login": "pamuser4",
+				"password": "*****",
+				"rotation_settings": {
+					"rotation": "saas",
+					"saas_config": "AWS keys",
+					"enabled": "on",
+					"schedule": {"type": "on-demand"}
+				}
+			}
+		],
+		"saas_configurations": [
+			{
+				"title": "AWS keys",
+				"saas_type": "AWS Access Key",
+				"active": true,
+				"fields": { "AWS Region": "us-east-1" }
 			}
 		]
 	}
 }
+```
+A pamUser nested under a machine can also control Windows services / scheduled tasks (Note 18):
+```json
+{ "type": "pamUser", "login": "svc-app", "password": "*****",
+  "rotation_settings": { "rotation": "general", "enabled": "on", "schedule": {"type": "on-demand"},
+                         "service_resources": ["WinSrv-01", "WinSrv-02"], "update_services": true } }
 ```
 </details>

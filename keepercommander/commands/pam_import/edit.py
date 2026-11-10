@@ -25,14 +25,17 @@ from .playground import compute_network_id as _pg_compute_network_id
 from .port_forward_validation import preflight_port_forward
 from .workflow_apply import validate_workflow_principals
 from .base import (
+    PAM_IMPORT_RESOURCE_TYPES,
     PAM_RESOURCES_RECORD_TYPES,
     PROJECT_IMPORT_JSON_TEMPLATE,
     PamConfigEnvironment,
     PamUserObject,
     LoginUserObject,
+    SaasConfigurationObject,
     PamMachineObject,
     PamDatabaseObject,
     PamDirectoryObject,
+    PamCloudResourceObject,
     PamRemoteBrowserObject,
     PamRotationParams,
     add_pam_scripts,
@@ -1287,7 +1290,8 @@ class PAMProjectImportCommand(Command):
                 ufp = u.get("folder_path")
                 if isinstance(ufp, str) and ufp.strip():
                     paths.add(ufp.strip())
-        for u in pam_data.get("users") or []:
+        # global users and SaaS configuration records (pam_data.saas_configurations[]) are created the same way
+        for u in list(pam_data.get("users") or []) + list(pam_data.get("saas_configurations") or []):
             if not isinstance(u, dict):
                 continue
             fp = u.get("folder_path")
@@ -1510,28 +1514,38 @@ class PAMProjectImportCommand(Command):
 
         for user in usrs:
             rt = str(user.get("type", "")) if isinstance(user, dict) else ""
-            rt = next((x for x in ("login", "pamUser") if x.lower() == rt.lower()), rt)
-            if rt not in ("login", "pamUser") and isinstance(user, dict):
+            rt = next((x for x in ("login", "pamUser", "saasConfiguration") if x.lower() == rt.lower()), rt)
+            if rt not in ("login", "pamUser", "saasConfiguration") and isinstance(user, dict):
                 pam_keys = ("private_pem_key", "distinguished_name", "connect_database", "managed", "scripts", "rotation_settings")
                 if "url" in user: rt = "login"  # RBI login record
                 elif any(key in user for key in pam_keys): rt = "pamUser"
-            rt = next((x for x in ("login", "pamUser") if x.lower() == rt.lower()), "login")
+            rt = next((x for x in ("login", "pamUser", "saasConfiguration") if x.lower() == rt.lower()), "login")
             # If not found default to "login" which can be changed later
 
             if rt == "login":
                 usr = LoginUserObject.load(user)
+            elif rt == "saasConfiguration":
+                usr = SaasConfigurationObject.load(user)
             else:
                 usr = PamUserObject.load(user)
             if usr:
                 users.append(usr)
 
+        # SaaS configuration records (regular vault records, rotation: saas) - created with the other global users
+        saas_cfgs = pam_data.get("saas_configurations") if isinstance(pam_data.get("saas_configurations"), list) else []
+        for cfg in saas_cfgs:
+            if isinstance(cfg, dict):
+                usr = SaasConfigurationObject.load(cfg)
+                if usr:
+                    users.append(usr)
+
         # each machine has its own users list of pamUser
         for machine in rsrs:
             rt = str(machine.get("type", "")).strip() if isinstance(machine, dict) else ""
-            if rt.lower() not in (x.lower() for x in PAM_RESOURCES_RECORD_TYPES):
+            if rt.lower() not in (x.lower() for x in PAM_IMPORT_RESOURCE_TYPES):
                 prefix = "Incorrect " if rt else "Missing "
                 title = str(machine.get("title", "")).strip() if isinstance(machine, dict) else ""
-                logging.error(f"""{prefix} record type "{rt}" - should be one of {PAM_RESOURCES_RECORD_TYPES}, "{title}" record skipped.""")
+                logging.error(f"""{prefix} record type "{rt}" - should be one of {PAM_IMPORT_RESOURCE_TYPES}, "{title}" record skipped.""")
                 continue
 
             obj = None
@@ -1544,6 +1558,8 @@ class PAMProjectImportCommand(Command):
                 obj = PamMachineObject.load(machine, rotation_params)
             elif rt == "pamRemoteBrowser".lower():
                 obj = PamRemoteBrowserObject.load(machine, rotation_params)
+            elif rt == "pamCloudResource".lower():
+                obj = PamCloudResourceObject.load(machine, rotation_params)
             else:
                 logging.warning(f"""Skipping unknown resource type "{rt}" """)
 
@@ -1678,6 +1694,12 @@ class PAMProjectImportCommand(Command):
                     matches = matches or [x for x in users if getattr(x, "login", None) == cred]
                     if len(matches) != 1:
                         logging.warning(f"{bcolors.WARNING}{len(matches)} matches found for RBI record {mach.title}.{bcolors.ENDC} ")
+                    if (isinstance(mach, PamCloudResourceObject) and matches
+                            and not isinstance(matches[0], PamUserObject)):
+                        # the Gateway standalone launch actions read the credential through the PAM record types only
+                        logging.warning(f"{bcolors.WARNING}PAM Cloud {mach.title}: autofill_credentials '{cred}' is not a "
+                                        f"pamUser - use a pamUser record (not resolved).{bcolors.ENDC}")
+                        matches = []
                     uid = getattr(matches[0], "uid", "") if matches else ""
                     if uid:
                         mach.rbi_settings.connection.httpCredentialsUid = [uid]

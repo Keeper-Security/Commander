@@ -213,8 +213,9 @@ class TestExtendStep2DoesNotRunFullPath(unittest.TestCase):
             run_step2_extend_existing(params, tdag, mach, 'cfg', prc)
         tdag.link_user_to_resource.assert_not_called()
 
-    def test_admin_only_links_without_belongs_to(self):
-        """MySQL/RDP/VNC Admin: is_admin=True, belongs_to=False (no Rotate Now)."""
+    def test_extend_never_sets_admin_on_an_existing_machine(self):
+        """Extend does not update existing machines: a NEW user named as the machine's admin is NOT linked as admin
+        (and, with no rotation, not linked at all). Changing admin / launch is left to a separate update command."""
         params = MagicMock()
         tdag = MagicMock()
         tdag.resource_belongs_to_config.return_value = True
@@ -236,9 +237,52 @@ class TestExtendStep2DoesNotRunFullPath(unittest.TestCase):
             return_value=admin_uid,
         ):
             run_step2_extend_existing(params, tdag, mach, 'cfg', prc)
-        tdag.link_user_to_resource.assert_called_once_with(
-            admin_uid, EXISTING_MACH, is_admin=True, belongs_to=False,
-        )
+        tdag.link_user_to_resource.assert_not_called()
+        tdag.set_launch_credentials.assert_not_called()
+
+    def _extend_rotation_user(self, existing_admin):
+        params = MagicMock()
+        tdag = MagicMock()
+        tdag.resource_belongs_to_config.return_value = True
+        tdag.user_belongs_to_resource.return_value = False
+        tdag.check_if_resource_has_admin.return_value = existing_admin
+        mach = PamMachineObject()
+        mach.uid = EXISTING_MACH
+        mach._extend_tag = 'existing'
+        new_user = PamUserObject()
+        new_user.uid = NEW_USER
+        new_user._extend_tag = 'new'
+        new_user.rotation_settings = MagicMock()
+        new_user.rotation_settings.rotation = 'general'
+        new_user.rotation_settings.service_resources = None
+        mach.users = [new_user]
+        with patch(
+            'keepercommander.commands.pam_import.batch_step2._apply_rotation',
+        ) as apply_rot, patch(
+            'keepercommander.commands.pam_import.batch_step2._rotation_exists',
+            return_value=False,
+        ), patch(
+            'keepercommander.commands.pam_import.batch_step2.get_admin_credential',
+            return_value='JSONADMINJSONADMINJSON',     # what the extend JSON says: must NOT be used
+        ):
+            run_step2_extend_existing(params, tdag, mach, 'cfg', MagicMock())
+        return tdag, apply_rot
+
+    def test_extend_passes_the_machines_existing_admin_to_the_rotation(self):
+        """The rotation command gets the machine's CURRENT admin read from the graph (a no-op for the command, which
+        only uses it when the machine has none), never the admin named in the extend JSON."""
+        tdag, apply_rot = self._extend_rotation_user('EXISTINGADMINUID0000000')
+        apply_rot.assert_called_once()
+        assert apply_rot.call_args.args[4] == 'EXISTINGADMINUID0000000'
+        tdag.set_launch_credentials.assert_not_called()
+        tdag.link_user_to_resource.assert_called_once_with(NEW_USER, EXISTING_MACH, is_admin=False, belongs_to=True)
+
+    def test_extend_without_an_existing_admin_passes_none(self):
+        """Machine without an admin: nothing is invented from the JSON (the rotation command reports the missing
+        admin itself)."""
+        tdag, apply_rot = self._extend_rotation_user(False)
+        apply_rot.assert_called_once()
+        assert apply_rot.call_args.args[4] is None
 
 
 class TestConfigureBatchTdag(unittest.TestCase):

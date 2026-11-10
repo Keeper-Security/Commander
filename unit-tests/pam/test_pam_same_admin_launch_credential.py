@@ -144,9 +144,10 @@ def test_batch_step2_full_admin_only_reasserts_admin_without_launch():
         mach.uid, launch_uid=None, admin_uid=SHARED_USER_UID)
 
 
-def test_batch_step2_extend_existing_applies_launch_only_for_new_user():
-    """Existing resource + new launch user: launch set via set_launch_credentials (keeps
-    is_admin when admin == launch); existing admin is not re-asserted."""
+def test_batch_step2_extend_existing_never_sets_launch_or_admin():
+    """Extend does not update existing machines (updates are left to a separate update command): a NEW user named as
+    launch / admin credential of an EXISTING machine is not applied (no set_launch_credentials, no is_admin link).
+    Replaces the earlier KC-1525 behaviour that applied the launch credential (and so replaced the existing one)."""
     from unittest.mock import MagicMock
     from keepercommander.commands.pam_import import batch_step2
     new_uid = 'N' * 22
@@ -155,10 +156,9 @@ def test_batch_step2_extend_existing_applies_launch_only_for_new_user():
     tdag.resource_belongs_to_config.return_value = True
     tdag.user_belongs_to_resource.return_value = False
     batch_step2.run_step2_extend_existing(MagicMock(), tdag, mach, 'CFG', MagicMock())
-    tdag.set_launch_credentials.assert_called_once_with(
-        mach.uid, launch_uid=new_uid, admin_uid=new_uid)
-    tdag.link_user_to_resource.assert_called()  # nested user ACL link (not the launch flag)
-    assert all('is_launch_credential' not in c.kwargs for c in tdag.link_user_to_resource.call_args_list)
+    tdag.set_launch_credentials.assert_not_called()
+    assert all('is_launch_credential' not in c.kwargs and c.kwargs.get('is_admin') is not True
+               for c in tdag.link_user_to_resource.call_args_list)
 
 
 def test_batch_step2_extend_existing_leaves_existing_launch_untouched():

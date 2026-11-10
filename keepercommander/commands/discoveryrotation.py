@@ -775,11 +775,17 @@ class PAMCreateRecordRotationCommand(Command):
             rq.disabled = disabled
             rq.noop = True
             rq.resourceUid = b''
+            # pam project import (not a CLI argument): follow the Web Vault / router - the SaaS configuration travels
+            # in the set_record_rotation request (KRouter sets saas_record_uid_list, noop, belongs_to=false and checks
+            # the caller's access to the SaaS record) instead of the DAG-only link_saas_user write below.
+            saas_in_request = bool(kwargs.get('saas_in_request'))
+            if saas_in_request:
+                rq.saasConfiguration = utils.base64_url_decode(saas_config_uid)
             r_requests.append(rq)
 
-            if not _dag.link_saas_user(user_uid=target_record.record_uid,
-                                       saas_config_record=saas_config_record,
-                                       pam_config_record_type=pam_config.record_type):
+            if not saas_in_request and not _dag.link_saas_user(user_uid=target_record.record_uid,
+                                                               saas_config_record=saas_config_record,
+                                                               pam_config_record_type=pam_config.record_type):
                 raise CommandError('',"Could not connect SaaS user in the graph.")
 
             params.sync_data = True
@@ -1466,6 +1472,14 @@ class PAMCreateRecordRotationCommand(Command):
             if noop_rotation:
                 rq.noop = True
                 rq.resourceUid = b''  # Noop and resource cannot be both assigned
+            # Service accounts (pam project import only - not CLI arguments): the Web Vault always sends both with
+            # the rotation. serviceResources is the AUTHORITATIVE list of machines whose services/tasks this user
+            # controls (absent = no change, empty list = clear all); updateServices maps to meta no_update_services.
+            svc_uids = kwargs.get('service_resource_uids')
+            if svc_uids is not None:
+                rq.serviceResources.uids.extend(utils.base64_url_decode(u) for u in svc_uids)
+            if kwargs.get('update_services') is not None:
+                rq.updateServices = bool(kwargs.get('update_services'))
             r_requests.append(rq)
 
         # Main execute() logic starts here

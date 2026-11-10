@@ -13,12 +13,34 @@ from ...pam._layer_b import should_fallback_on_layer_b_error
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 
+def _latest_meta_content(vertex):
+    """Content of the newest DATA edge on path 'meta', or None if there is none.
+
+    The DAG library is not path aware: `vertex.content_as_dict` is the DATA edge written LAST, whatever its path.
+    A resource also carries `jit_settings` / `ai_settings` DATA edges, so when one of those was written after
+    `meta` the plain property returns that blob and every allowedSettings lookup comes back empty/'default'.
+    """
+    try:
+        meta_edges = [e for e in (vertex.edges or [])
+                      if e is not None and getattr(e, 'edge_type', None) == EdgeType.DATA
+                      and getattr(e, 'path', None) == 'meta']
+        if not meta_edges:
+            return None
+        content = max(meta_edges, key=lambda e: getattr(e, 'version', -1)).content_as_dict
+        return content if isinstance(content, dict) else None
+    except Exception:
+        return None
+
+
 def get_vertex_content(vertex):
+    """Resource / configuration meta of a vertex (all callers read the `meta` path)."""
     return_content = None
     if vertex is None:
         return return_content
     try:
-        return_content = vertex.content_as_dict
+        return_content = _latest_meta_content(vertex)
+        if return_content is None:
+            return_content = vertex.content_as_dict
     except Exception as e:
         import logging
         logging.debug(f"Error getting vertex content: {e}")
@@ -971,7 +993,13 @@ class TunnelDAG:
                              ai_enabled=None, ai_session_terminate=None,
                              allowed_settings_name='allowedSettings', is_config=False,
                              v_type: RefType=str(RefType.PAM_MACHINE), meta_version=None,
-                             rotate_on_termination=None):
+                             rotate_on_termination=None, default_elevation_time=None,
+                             update_services=None):
+        # default_elevation_time: JIT "Expire privilege after" in MILLISECONDS (int), stored on the
+        #   plaintext meta edge (`defaultElevationTime`), NOT in the encrypted jit_settings blob.
+        # update_services: bool, Vault "Update services" (default on); stored as meta
+        #   `no_update_services = not update_services`.
+        # NB: meta `locked` is back-end controlled and is deliberately never a parameter here.
         resetting_allowed_settings = any(
             self._is_allowed_setting_default_reset(v)
             for v in (
@@ -1097,6 +1125,29 @@ class TunnelDAG:
                 content = ensure_resource_meta_v1(dict(content))
                 content["rotateOnTermination"] = bool(rotate_on_termination)
 
+        explicit_meta = {}  # meta keys set by this call; the v1 rebuild below would otherwise drop them
+        if default_elevation_time is not None:
+            if content is None:
+                content = {allowed_settings_name: {}}
+                dirty = True
+            dur = int(default_elevation_time)
+            if content.get("defaultElevationTime") != dur:
+                dirty = True
+                content = dict(content)
+                content["defaultElevationTime"] = dur
+            explicit_meta["defaultElevationTime"] = dur
+
+        if update_services is not None:
+            if content is None:
+                content = {allowed_settings_name: {}}
+                dirty = True
+            no_update = not bool(update_services)
+            if bool(content.get("no_update_services", False)) != no_update or "no_update_services" not in content:
+                dirty = True
+                content = dict(content)
+                content["no_update_services"] = no_update
+            explicit_meta["no_update_services"] = no_update
+
         if dirty:
             # Compute the meta payload (same shape legacy would write).
             # krouter rejects decreasing meta.version (null/0 after a prior v1).
@@ -1122,6 +1173,7 @@ class TunnelDAG:
                     meta_payload.get(allowed_settings_name), dict
                 ):
                     meta_payload[allowed_settings_name] = {}
+            meta_payload.update(explicit_meta)
 
             # Primary: Layer-B (permission-checked). is_config=True writes the
             # config record's network-level allowedSettings via configure_network_graph
@@ -1169,11 +1221,16 @@ class TunnelDAG:
                 endpoint = 'configure_resource'
                 if not is_layer_b_feature_disabled(host, endpoint):
                     try:
+                        # no_update_services travels in the dedicated updateServices field
+                        # (Vault parity; KRouter gates it with the rotation enforcement).
+                        lb_meta = {k: v for k, v in meta_payload.items() if k != 'no_update_services'}
                         rq = pam_pb2.PAMResourceConfig(
                             recordUid=url_safe_str_to_bytes(resource_uid),
                             networkUid=url_safe_str_to_bytes(self.record.record_uid),
-                            meta=json.dumps(meta_payload).encode(),
+                            meta=json.dumps(lb_meta).encode(),
                         )
+                        if 'no_update_services' in explicit_meta:
+                            rq.updateServices = not explicit_meta['no_update_services']
                         router_configure_resource(self.params, rq)
                         logging.debug(
                             f"set_resource_allowed: applied to resource {resource_uid} via configure_resource"
@@ -1192,9 +1249,31 @@ class TunnelDAG:
             # Fallback: legacy direct DAG-write (also used when resetting any
             # allowedSettings key to default — krouter mergeJson never deletes
             # keys absent from a Layer-B payload).
-            resource_vertex.add_data(content=meta_payload, path='meta', needs_encryption=False)
-            self._sync_local_resource_meta(resource_uid, meta_payload)
+            # The legacy write replaces the WHOLE meta edge (Layer-B is merged
+            # server-side), and the v1 payload above is rebuilt from only
+            # version / allowedSettings / rotateOnTermination: carry over every
+            # other key already on the edge (locked, defaultElevationTime,
+            # no_update_services, idpConfigUid, ...) so they are never erased.
+            legacy_payload = self._preserve_unmanaged_meta_keys(meta_payload, content)
+            resource_vertex.add_data(content=legacy_payload, path='meta', needs_encryption=False)
+            self._sync_local_resource_meta(resource_uid, legacy_payload)
             self._persist_graph()
+
+    @staticmethod
+    def _preserve_unmanaged_meta_keys(payload, existing):
+        """Return ``payload`` plus every key of ``existing`` that ``payload`` lacks.
+
+        Used before a legacy whole-edge ``meta`` write. ``payload`` always wins
+        for the keys it carries (version, allowedSettings, rotateOnTermination).
+        NB: ``locked`` is controlled by the back-end; this only keeps whatever
+        value is already on the edge, it never sets one.
+        """
+        out = dict(payload) if isinstance(payload, dict) else {}
+        if isinstance(existing, dict):
+            for key, value in existing.items():
+                if key not in out:
+                    out[key] = value
+        return out
 
     def is_tunneling_config_set_up(self, resource_uid):
         if not self.linking_dag.has_graph:

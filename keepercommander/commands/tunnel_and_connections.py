@@ -3857,6 +3857,11 @@ class PAMConnectionJitCommand(Command):
         if not ok:
             raise CommandError('', f'{bcolors.FAIL}Failed to save JIT settings.{bcolors.ENDC}')
 
+        # The jit_settings write is now the newest DATA edge; re-add `meta` so it stays the newest one
+        # (same as `pam connection ai`) for every reader that takes the last-written edge.
+        from .pam_import.keeper_ai_settings import refresh_meta_to_latest
+        refresh_meta_to_latest(params, record_uid, config_uid)
+
         # Add/replace domain LINK edge if pamDirectory provided
         if pam_dir_uid:
             set_resource_domain_dir(params, record_uid, pam_dir_uid, config_uid)

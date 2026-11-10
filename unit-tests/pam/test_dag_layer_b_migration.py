@@ -1232,6 +1232,53 @@ class TestTunnelGraphSetResourceAllowedMigration:
         assert allowed.get('connections') is True
         tg.linking_dag.save.assert_called_once()
 
+    def test_legacy_v1_write_preserves_unmanaged_meta_keys(self):
+        """B1: the legacy write replaces the whole meta edge and the v1 payload is
+        rebuilt from version/allowedSettings/rotateOnTermination only. Keys owned
+        elsewhere (locked, defaultElevationTime, no_update_services, idpConfigUid)
+        must survive the rewrite."""
+        from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
+
+        tg, resource_vertex = self._build_tg()
+        existing = {
+            'version': 1,
+            'allowedSettings': {'connections': True, 'aiEnabled': True},
+            'rotateOnTermination': False,
+            'locked': True,
+            'defaultElevationTime': 7200000,
+            'no_update_services': True,
+            'idpConfigUid': 'CCCCCCCCCCCCCCCCCCCCCC',
+        }
+
+        with patch.object(tg_mod, 'get_vertex_content', return_value=existing), \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource') as cr_mock:
+            # 'default' reset forces the legacy whole-edge write; meta_version=1
+            # selects the rebuilt v1 payload (the batch import path).
+            tg.set_resource_allowed(RESOURCE_UID_STR, ai_enabled='default', meta_version=1)
+
+        cr_mock.assert_not_called()
+        written = resource_vertex.add_data.call_args.kwargs['content']
+        assert written['version'] == 1
+        assert 'aiEnabled' not in written['allowedSettings']
+        assert written['allowedSettings'].get('connections') is True
+        assert written['locked'] is True
+        assert written['defaultElevationTime'] == 7200000
+        assert written['no_update_services'] is True
+        assert written['idpConfigUid'] == 'CCCCCCCCCCCCCCCCCCCCCC'
+
+    def test_preserve_unmanaged_meta_keys_payload_wins(self):
+        from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
+
+        out = TunnelDAG._preserve_unmanaged_meta_keys(
+            {'version': 1, 'allowedSettings': {'rotation': True}, 'rotateOnTermination': True},
+            {'version': 0, 'allowedSettings': {'connections': True}, 'rotateOnTermination': False,
+             'locked': True})
+        assert out['version'] == 1
+        assert out['allowedSettings'] == {'rotation': True}
+        assert out['rotateOnTermination'] is True
+        assert out['locked'] is True
+        assert TunnelDAG._preserve_unmanaged_meta_keys(None, None) == {}
+
     def test_config_happy_path_uses_configure_network_graph(self):
         """is_config=True flips the call to configure_network_graph with the
         inner allowedSettings dict (matches edit_tunneling_config's shape)."""

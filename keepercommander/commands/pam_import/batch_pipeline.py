@@ -34,7 +34,14 @@ from .batch_nsf import (
     sync_down_after_batch,
     typed_record_to_nsf_record_add,
 )
-from .batch_step2 import add_jit_domain_links, run_step2_extend_existing, run_step2_full
+from .batch_step2 import (
+    add_jit_domain_links,
+    apply_service_rotations,
+    run_step2_extend_existing,
+    run_step2_full,
+    run_step2_global_saas,
+)
+from .preflight import collect_preflight_warnings, load_graph_for_preflight
 from .record_loader import iter_accessible_record_uids
 from .throttle_retry import (
     IMPORT_ON_EXHAUSTED,
@@ -713,7 +720,24 @@ class BatchPamImportEngine:
                     dispatch.append({'resource': res.uid, 'step2': 'skip'})
             else:
                 dispatch.append({'resource': res.uid, 'step2': 'run_step2_full'})
+
+        # Pre-flight: problems the live Step 2 would only hit after the records exist (see preflight.py).
+        # Extend reads the PAM graph once (read-only) to look at existing machines that receive new users.
+        tdag = None
+        needs_graph = self.extend_mode and bool(self.pam_cfg_uid) and any(
+            getattr(r, '_extend_tag', 'new') == 'existing'
+            and any(getattr(u, '_extend_tag', 'new') == 'new' for u in (getattr(r, 'users', None) or []))
+            for r in self.resources)
+        if needs_graph:
+            tdag = load_graph_for_preflight(self.params, self.pam_cfg_uid)
+        preflight = collect_preflight_warnings(
+            self.params, self.users, self.resources, self.pam_cfg_uid, self.extend_mode, tdag)
+        if needs_graph and tdag is None:
+            preflight.append('could not read the PAM graph: the admin / link checks for existing machines were skipped')
+        for msg in preflight:
+            logging.warning(f'Dry-run preflight: {msg}')
         return {
+            'preflight_warnings': preflight,
             'tiers': [{'name': t.name, 'count': len(t.objects), 'uids': [o.uid for o in t.objects]} for t in tiers],
             'step2_dispatch': dispatch,
             'deferred_ref_count': len(planned_deferred),
@@ -1082,6 +1106,8 @@ class BatchPamImportEngine:
         progress.start()
         ok = False
         processed = 0
+        # (user, machine) pairs with service_resources: their rotation is re-sent after the final graph flush
+        service_queue: list = []
 
         # All records are in the vault at this point, so DAG/configuration errors are
         # tracked and counted instead of aborting; run() prints the recovery hint.
@@ -1109,6 +1135,7 @@ class BatchPamImportEngine:
                         self.params, tdag, mach, self.pam_cfg_uid, prc,
                         self.users_folder_uid, self.resources_folder_uid,
                         rotation_throttle=rotation_throttle,
+                        service_queue=service_queue,
                     )
                 except Exception as err:
                     _dag_error(f'configuration of {getattr(mach, "title", "") or mach.uid}', err)
@@ -1120,10 +1147,20 @@ class BatchPamImportEngine:
                     run_step2_extend_existing(
                         self.params, tdag, mach, self.pam_cfg_uid, prc,
                         rotation_throttle=rotation_throttle,
+                        service_queue=service_queue,
                     )
                 except Exception as err:
                     _dag_error(f'configuration of {getattr(mach, "title", "") or mach.uid}', err)
                 _maybe_mid_flush()
+
+            try:
+                # rotation: saas for new GLOBAL users (needs the SaaS configuration records created in Step 1)
+                run_step2_global_saas(
+                    self.params, prc, self.users, self.pam_cfg_uid,
+                    rotation_throttle=rotation_throttle,
+                )
+            except Exception as err:
+                _dag_error('SaaS rotation', err)
 
             try:
                 if add_jit_domain_links(tdag, self.resources):
@@ -1137,6 +1174,14 @@ class BatchPamImportEngine:
                 flush_deferred_graph(tdag, self.params, label='Step 2 graph flush')
             except Exception as err:
                 _dag_error('final graph flush', err)
+            try:
+                # service accounts last: after the flush nothing can overwrite the controls_services ACL flag
+                apply_service_rotations(
+                    self.params, prc, service_queue, self.resources, self.pam_cfg_uid,
+                    rotation_throttle=rotation_throttle,
+                )
+            except Exception as err:
+                _dag_error('service accounts', err)
             ok = not self.dag_errors
         finally:
             set_layer_b_force_legacy(False)

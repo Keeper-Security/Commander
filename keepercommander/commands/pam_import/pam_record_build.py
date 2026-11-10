@@ -12,7 +12,9 @@ from ... import vault, utils
 from ...recordv3 import RecordV3
 from ..record_edit import RecordAddCommand as RecordEditAddCommand
 from .base import (
+    append_custom_text_fields,
     LoginUserObject,
+    PamCloudResourceObject,
     PamAttachmentObject,
     PamAttachmentsObject,
     PamDatabaseObject,
@@ -204,6 +206,8 @@ def _login_user_kwargs(obj: LoginUserObject, folder_uid: str) -> Dict[str, Any]:
         fields.append(f'f.url={obj.url}')
     if obj.oneTimeCode:
         fields.append(f'f.oneTimeCode={obj.oneTimeCode}')
+    # custom fields: a legacy login SaaS configuration ("SaaS Type") or a saasConfiguration record
+    append_custom_text_fields(fields, getattr(obj, 'custom', None))
     fields.extend(_attachment_fields(obj))
     if fields:
         args['fields'] = fields
@@ -259,6 +263,10 @@ def _rbi_kwargs(obj: PamRemoteBrowserObject, folder_uid: str) -> Dict[str, Any]:
         fields.append(f'rbiUrl={obj.rbiUrl}')
     if obj.oneTimeCode:
         fields.append(f'oneTimeCode={obj.oneTimeCode}')
+    if isinstance(obj, PamCloudResourceObject) and obj.accountIdentifier:
+        # standard typed field accountNumber (text) whose template label is pamCloudResourceAccountIdentifier;
+        # the Gateway reads it by field type
+        fields.append(f'f.accountNumber.pamCloudResourceAccountIdentifier={obj.accountIdentifier}')
     fields.extend(_attachment_fields(obj))
     if fields:
         args['fields'] = fields
