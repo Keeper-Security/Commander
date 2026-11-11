@@ -27,6 +27,7 @@ from ...config.config_validation import ConfigValidator, ValidationError
 from ...docker import (
     SetupResult, DockerSetupPrinter, DockerSetupConstants,
     ServiceConfig, DockerComposeBuilder, DockerSetupBase, ApprovalsConfig,
+    WorkflowApprovalConstants,
 )
 from .approvals_setup import ApprovalsChannelProfile, collect_approvals_config, is_valid_keeper_uid
 from .approvals_sync import merge_approvals_custom_fields, run_approvals_sync_down
@@ -122,13 +123,28 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             commands = f'{commands},{self.get_command_name()}'
         return commands
 
+    def supports_pam_workflow_approval(self) -> bool:
+        """Whether this integration can use PAM Workflow approval."""
+        return self.get_integration_name().lower() in {'slack', 'teams', 'gchat'}
+
+    def get_allowed_service_commands(self, workflow_approval_enabled: bool = False) -> str:
+        """Return this integration's allowlist with optional PAM Workflow access."""
+        commands = self.get_service_commands()
+        if workflow_approval_enabled and self.supports_pam_workflow_approval():
+            commands = f'{commands},pam'
+        return commands
+
     def get_banned_commands(self) -> tuple:
         """Commands to always strip from this integration's command list; override per integration if needed."""
         return ()
 
-    def sanitize_service_commands(self, commands: str) -> str:
+    def sanitize_service_commands(
+        self,
+        commands: str,
+        workflow_approval_enabled: bool = False,
+    ) -> str:
         """Restrict `commands` to this integration's own get_service_commands() list."""
-        allowed = self.get_service_commands().split(',')
+        allowed = self.get_allowed_service_commands(workflow_approval_enabled).split(',')
         return sanitize_commands(commands, allowed, self.get_banned_commands())
 
     # -- Parser (auto-built from name, cached per subclass) ----------
@@ -476,7 +492,17 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
         try:
             cfg = asdict(service_config)
-            cfg['commands'] = self.sanitize_service_commands(cfg.get('commands') or '')
+            workflow_approval_enabled = bool(
+                getattr(config, 'workflow_approval_enabled', False)
+            )
+            if workflow_approval_enabled and self.supports_pam_workflow_approval():
+                # The ServiceConfig is assembled before integration prompts, but
+                # its command list is only serialized to Compose here.
+                cfg['commands'] = f"{cfg.get('commands') or ''},pam"
+            cfg['commands'] = self.sanitize_service_commands(
+                cfg.get('commands') or '',
+                workflow_approval_enabled=workflow_approval_enabled,
+            )
             builder = DockerComposeBuilder(
                 setup_result, cfg,
                 commander_service_name=self.get_commander_service_name(),
@@ -537,6 +563,16 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                 f"    • Device Approval: "
                 f"{bcolors.OKBLUE}{'true' if config.device_approval_enabled else 'false'}{bcolors.ENDC}"
             )
+        if hasattr(config, 'workflow_approval_enabled'):
+            print(
+                f"    • PAM Workflow Approval: "
+                f"{bcolors.OKBLUE}{'true' if config.workflow_approval_enabled else 'false'}{bcolors.ENDC}"
+            )
+            if config.workflow_approval_enabled:
+                print(
+                    f"    • PAM Workflow Polling Interval: "
+                    f"{bcolors.OKBLUE}{config.workflow_approval_polling_interval} seconds{bcolors.ENDC}"
+                )
 
     # -- Optional feature collectors -----------------------------------
 
@@ -559,6 +595,34 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         if enabled:
             interval_input = input(f"{bcolors.OKBLUE}Device approval polling interval in seconds [Press Enter for 120]:{bcolors.ENDC} ").strip()
             interval = int(interval_input) if interval_input else 120
+        return enabled, interval
+
+    def _collect_workflow_approval_config(self) -> Tuple[bool, int]:
+        print(f"\n{bcolors.BOLD}PAM Workflow Approval Integration (optional):{bcolors.ENDC}")
+        print(f"  Enable PAM Workflow approvals in this chat integration")
+        enabled = self._prompt_yes_no(
+            'Do you want to set up PAM Workflow approval?',
+            default=False,
+        )
+        interval = WorkflowApprovalConstants.DEFAULT_POLLING_INTERVAL
+        if enabled:
+            while True:
+                interval_input = input(
+                    f"{bcolors.OKBLUE}PAM Workflow approval polling interval in seconds "
+                    f"[Press Enter for {interval}]:{bcolors.ENDC} "
+                ).strip()
+                if not interval_input:
+                    break
+                try:
+                    interval = int(interval_input)
+                    if interval < 1:
+                        raise ValueError
+                    break
+                except ValueError:
+                    print(
+                        f"{bcolors.FAIL}Error: Enter a whole number of seconds greater than zero"
+                        f"{bcolors.ENDC}"
+                    )
         return enabled, interval
 
     # -- Input / validation --------------------------------------------
