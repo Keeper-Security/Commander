@@ -11,6 +11,9 @@ from typing import Dict, Iterable, List, Optional
 from ....constants import DELINEA_PAM_ENDPOINTS
 from ..thycotic import ThycoticAuth, ThycoticMixin
 
+# Secret Server uses -1 when a secret has no secret policy attached.
+UNASSIGNED_POLICY_ID = -1
+
 ENDPOINTS = DELINEA_PAM_ENDPOINTS
 
 
