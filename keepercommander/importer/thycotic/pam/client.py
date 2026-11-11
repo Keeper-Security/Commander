@@ -28,6 +28,7 @@ ENDPOINTS = {
     'secret_policy': '/v2/secret-policy/{id}',
     'secret_templates': '/v1/secret-templates?filter.includeSecretCount=true',
     'secret_template': '/v1/secret-templates/{id}',
+    'secrets_for_template': '/v1/secrets?filter.secretTemplateId={id}&filter.includeRestricted=true&take={take}',
     'password_types': '/v1/remote-password-changing/password-types',
     'password_type': '/v1/remote-password-changing/password-types/{id}',
     'password_requirement': '/v1/password-requirements/{id}',
@@ -280,6 +281,14 @@ class DelineaPamClient:
 
     def secret_template(self, template_id: int) -> Optional[dict]:
         return self._get('secret_template', template_id)
+
+    def secrets_for_template(self, template_id: int, limit: int) -> List[dict]:
+        """Up to *limit* SecretSummary rows (``id``, ``name``) using *template_id*; one page, no items."""
+        if limit <= 0:
+            return []
+        page = self.auth.thycotic_entity(ENDPOINTS['secrets_for_template'].format(id=template_id, take=limit))
+        records = page.get('records') if isinstance(page, dict) else None
+        return [row for row in records or [] if isinstance(row, dict)][:limit]
 
     def password_types(self) -> Dict[int, dict]:
         if self._password_types is None:

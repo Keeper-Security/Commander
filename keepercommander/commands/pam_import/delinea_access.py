@@ -20,7 +20,9 @@ from ...importer.thycotic.pam.models import FindingLog, Principal, SecretGrantTa
 from ...importer.thycotic.pam.permission_mapper import CLASSIC_RECORD_FLAGS
 from ...nested_share_folder.permissions import resolve_role_name
 from ...nested_share_folder.record_api import share_record_v3
+from .cyberark_import import is_matching_title
 from .nsf_helpers import get_folder_record_uids
+from .record_loader import iter_accessible_record_uids, load_pam_record
 
 COMMAND = 'pam project delinea-import'
 
@@ -41,7 +43,14 @@ def choose_nsf(params, requested: bool, findings: FindingLog) -> bool:
 def project_config_uids(params, project_name: str) -> Set[str]:
     """UIDs of PAM configurations titled ``{project_name} Configuration`` or ``... #N``,
     in classic and NSF caches (see ``is_matching_title`` and ``find_pam_configuration``)."""
-    raise NotImplementedError
+    base = f'{project_name} Configuration'.casefold()
+    uids = set()
+    for uid in iter_accessible_record_uids(params):
+        record = load_pam_record(params, uid)
+        if record and getattr(record, 'version', None) == 6 and \
+                is_matching_title(getattr(record, 'title', '') or '', base):
+            uids.add(uid)
+    return uids
 
 
 def run_with_classic_fallback(params, project_name: str, use_nsf: bool,

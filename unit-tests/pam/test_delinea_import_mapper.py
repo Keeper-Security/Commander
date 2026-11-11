@@ -115,11 +115,14 @@ class TestMapping(unittest.TestCase):
                                         resource.get('directory_type')))
 
     def test_types_without_connection_protocol(self):
-        for resource in (_one(1, 'corp ldap', items=items(domain='dc=corp')),
-                         _one(1, 'acct', items=items(server='db', port='1521'))):
-            with self.subTest(resource=resource['title']):
-                self.assertEqual(resource['pam_settings']['options']['connections'], 'off')
-                self.assertNotIn('protocol', connection(resource))
+        resource = _one(1, 'corp ldap', items=items(domain='dc=corp'))
+        self.assertEqual(resource['pam_settings']['options']['connections'], 'off')
+        self.assertNotIn('protocol', connection(resource))
+
+    def test_oracle_uses_oracle_connection(self):
+        resource = _one(1, 'acct', items=items(server='db', port='1521'))
+        self.assertEqual(resource['pam_settings']['options']['connections'], 'on')
+        self.assertEqual(connection(resource)['protocol'], 'oracle')
 
     def test_login_and_unknown_secrets_are_not_imported(self):
         self.assertEqual(resources(build(
