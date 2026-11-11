@@ -9,7 +9,7 @@
 # Contact: ops@keepersecurity.com
 #
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import re, json
 
 from .throttle import RESULT_THROTTLED, clean_throttle_message, is_throttle_text
@@ -38,12 +38,8 @@ class KeeperResponseParser:
         return text
     
     @staticmethod
-    def _preprocess_response(response: Any, log_output: str = None) -> Tuple[str, bool]:
-        """Preprocess response by cleaning ANSI codes and determining source.
-        
-        Returns:
-            tuple: (cleaned_response_str, is_from_log_output)
-        """
+    def _preprocess_response(response: Any, log_output: str = None) -> str:
+        """Preprocess response by cleaning ANSI codes."""
         # Priority: use log_output if no regular response OR if response is empty/whitespace
         if isinstance(response, dict):
             response_str = json.dumps(response)
@@ -54,15 +50,12 @@ class KeeperResponseParser:
         # Use log_output if response is empty/whitespace but log_output has content
         if (not response_str and log_str):
             response_str = log_str
-            is_from_log = True
-        elif response_str:
-            is_from_log = False
         else:
-            return "", False
+            if not response_str:
+                return ""
             
         # Clean ANSI codes once
-        cleaned_response = KeeperResponseParser._clean_ansi_codes(response_str)
-        return cleaned_response, is_from_log
+        return KeeperResponseParser._clean_ansi_codes(response_str)
     
     @staticmethod
     def _find_parser_method(command: str) -> str:
@@ -91,9 +84,6 @@ class KeeperResponseParser:
             if pattern in command:
                 return method_name
 
-        if command.split(maxsplit=1)[:1] in (['nsf-convert-record'], ['nsf-convert-folder']):
-            return '_parse_nsf_convert_command'
-        
         # Check for exact command start matches
         exact_patterns = {
             'generate': '_parse_generate_command',
@@ -138,7 +128,7 @@ class KeeperResponseParser:
                 "data": response,
             }
         # Preprocess response once
-        response_str, is_from_log = KeeperResponseParser._preprocess_response(response, log_output)
+        response_str = KeeperResponseParser._preprocess_response(response, log_output)
 
         # Handle completely empty responses
         if not response_str:
@@ -146,11 +136,6 @@ class KeeperResponseParser:
 
         # Find the appropriate parser method (used for both log and non-log paths)
         parser_method_name = KeeperResponseParser._find_parser_method(command)
-
-        if parser_method_name == '_parse_nsf_convert_command':
-            return KeeperResponseParser._parse_nsf_convert_command(
-                command, response_str, None if is_from_log else log_output
-            )
 
         parser_method = getattr(KeeperResponseParser, parser_method_name)
 
@@ -1344,68 +1329,6 @@ class KeeperResponseParser:
             # No output after cleaning - use existing empty response handler
             return KeeperResponseParser._handle_empty_response(command)
 
-    @staticmethod
-    def _parse_nsf_convert_command(
-        command: str, response_str: str, log_output: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """Treat the permanent-conversion notice as informational, not a command failure."""
-        combined_response = response_str
-        if log_output:
-            cleaned_logs = KeeperResponseParser._clean_ansi_codes(log_output.strip())
-            if cleaned_logs and cleaned_logs not in combined_response:
-                combined_response = '\n'.join(filter(None, (combined_response, cleaned_logs)))
-
-        classification_response = re.sub(
-            r'(?im)^([ \t]*)warning:([ \t]*(?:folder )?conversion is permanent)',
-            r'\1Notice:\2',
-            combined_response,
-        )
-        lowered_response = classification_response.lower()
-        has_conversion_failure = any(
-            phrase in lowered_response
-            for phrase in (
-                'was not converted',
-                'no conversion result was returned',
-                'no conversion results were returned',
-                'conversion result for classic record',
-                'conversion endpoint returned',
-                'folder conversion was partial',
-                'conversion incomplete',
-                'could not preserve record placement',
-                'could not preserve application record share',
-            )
-        )
-        has_conversion_success = any(
-            phrase in lowered_response
-            for phrase in (
-                'converted to a nested share record',
-                'conversion complete',
-                'classic source tree retained',
-                'classic source folder tree deleted',
-            )
-        )
-        if has_conversion_failure:
-            return {
-                'status': 'partial_success' if has_conversion_success else 'warning',
-                'status_code': 207 if has_conversion_success else 400,
-                'command': command.split()[0] if command.split() else command,
-                'message': KeeperResponseParser._format_multiline_message(combined_response),
-                'data': None,
-            }
-
-        result = KeeperResponseParser._parse_logging_based_command(
-            command, classification_response
-        )
-
-        if result.get('status') == 'success':
-            result['message'] = KeeperResponseParser._format_multiline_message(combined_response)
-        elif 'error' in result:
-            result['error'] = combined_response
-        elif 'message' in result:
-            result['message'] = KeeperResponseParser._format_multiline_message(combined_response)
-
-        return result
-    
     @staticmethod
     def _filter_login_messages(response_str: str) -> str:
         """Filter out biometric and persistent login messages from response."""
