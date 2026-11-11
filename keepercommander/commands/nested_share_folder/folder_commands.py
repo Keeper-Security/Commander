@@ -24,7 +24,6 @@ from ... import nested_share_folder as _nsf
 from ... import utils, vault_extensions
 from ...subfolder import ambiguous_identifier_message
 from .helpers import (
-    NSF_FOLDER_REMOVE_BATCH_SIZE,
     ROOT_FOLDER_UID,
     normalize_parent_uid, resolve_folder_uid, parse_expiration,
     validate_rotate_on_expiration,
@@ -34,6 +33,7 @@ from .helpers import (
     ensure_nested_share_folder, is_nested_share_folder,
     is_nested_share_folder_owner_email, owner_share_target_message,
 )
+from ...nested_share_folder.common import NSF_FOLDER_REMOVE_BATCH_SIZE
 from ...nested_share_folder.folder_api import _is_current_account_folder_owner
 from .parsers import (
     nested_share_folder_mkdir_parser,

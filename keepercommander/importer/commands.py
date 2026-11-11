@@ -29,7 +29,7 @@ from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
 from ..error import CommandError
-from ..commands.nested_share_folder.helpers import MAX_NESTED_SHARE_FOLDER_DEPTH
+from ..nested_share_folder.common import MAX_NESTED_SHARE_FOLDER_DEPTH
 from ..params import KeeperParams
 from ..proto import record_pb2
 

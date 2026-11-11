@@ -20,6 +20,7 @@ To get help on a particular command, run:
 | `[nsf-record-add]`        | Create a new Nested Share Record                                    |
 | `[nsf-record-update]`     | Update an existing Nested Share Record                              |
 | `[nsf-convert-record]`    | Convert Classic record(s) to Nested Share Record(s)                 |
+| `[nsf-convert]`           | Deprecated alias for `nsf-convert-record`                           |
 | `[nsf-convert-folder]`    | Convert a Classic folder tree to Nested Share Folders and Records   |
 | `[nsf-rm]`                | Remove (trash or unlink) one or more Nested Share Records           |
 | `[nsf-ln]`                | Link a record into a Nested Share Folder                            |
@@ -312,6 +313,8 @@ One or more Classic record UIDs, titles, or paths
 
 If a destination name matches multiple NSF folders, the command lists each path and UID and asks which destination to use. With `--force`, provide a UID or unambiguous path instead of a name.
 
+`nsf-convert` remains available as a deprecated alias and prints a warning; use `nsf-convert-record` for new scripts.
+
 **Important:** Conversion cannot be rolled back. Direct user shares are retained. Classic shared-folder membership and additional Classic folder placements are not retained.
 
 PAM record types (record types beginning with `pam`, including PAM machine, user, database, directory, and remote-browser records) cannot be converted. They are reported and left in Classic form.
@@ -338,16 +341,16 @@ nsf-convert-record abc123recorduid --folder "Projects/Archive" --force
 
 PAM record types (record types beginning with `pam`, including PAM machine, user, database, directory, and remote-browser records) cannot be converted. Each PAM record is listed and skipped while supported records continue. Skipped PAM records remain in the Classic source tree, so that tree is retained even with `--force`.
 
-When converting under an existing NSF destination (`--folder`), the converted root inherits the destination's permissions. For a Classic Shared Folder root, its mapped Classic grants are added alongside that inherited access. Conversion at the vault root does not add destination permissions. Separate Classic Shared Folder boundaries within a selected tree retain their own mapped access rather than inheriting permissions across the Classic boundary.
+When converting under an existing NSF destination (`--folder`), the converted root inherits the destination's permissions. The preview lists the destination's effective users and teams because they will gain access to the converted folders and records. For a Classic Shared Folder root, its mapped Classic grants are added alongside that inherited access. Conversion at the vault root does not add destination permissions. Separate Classic Shared Folder boundaries within a selected tree retain their own mapped access rather than inheriting permissions across the Classic boundary.
 
-Classic member permissions map as follows:
+Classic `manage_users` maps to NSF `share-manager`. NSF record-edit access is based on the Classic shared-folder records' individual `can_edit` flags, not the member's `manage_records` flag (`manage_records` controls adding/removing records in Classic). NSF has no role that preserves that add/remove capability without also granting record-edit access, so the preview identifies affected members when this permission cannot be mapped. `can_share` also contributes to the mapped share role. When records in one Classic Shared Folder have different edit/share flags, the converter uses the most restrictive values for that NSF permission scope and lists affected record UIDs in the preview; this avoids widening access but may reduce access for records with more permissive flags.
 
-| Classic `manage_users` | Classic `manage_records` | NSF role |
-| ---------------------- | ----------------------- | -------- |
-| Off                    | Off                     | `viewer` |
-| On                     | Off                     | `share-manager` |
-| Off                    | On                      | `content-manager` |
-| On                     | On                      | `content-share-manager` |
+| Scoped `can_edit` | `manage_users` or scoped `can_share` | NSF role |
+| ----------------- | ------------------------------------ | -------- |
+| Off               | Off                                  | `viewer` |
+| Off               | On                                   | `share-manager` |
+| On                | Off                                  | `content-manager` |
+| On                | On                                   | `content-share-manager` |
 
 Existing user/team access expirations retain their absolute expiry time; already-expired grants are not recreated.
 
@@ -363,13 +366,13 @@ Classic folder UID, title, or path
 
 `-f`, `--force` Skip prompts and delete the Classic source only after full success and when no PAM records were skipped.
 
-`--retry` Best-effort, interactive reconciliation of a prior partial conversion. It lists existing NSF folders matching the expected names and parents, lets you map ambiguous same-name folders by UID, reuses only the folders you confirm, and creates missing ones. Records still present in the Classic source are checked by UID so already-converted records are not converted again; missing known placements and application shares are reconciled. This is not a persisted transaction journal and cannot prove that a matching folder came from the earlier attempt, so review the proposed paths, UIDs, and matching-record counts carefully. It requires confirmation and cannot be combined with `--force`. If no existing structure is selected, a new one is created and any prior partial folders are left untouched.
+`--retry` Best-effort, interactive reconciliation of a prior partial conversion. Incomplete conversion output lists records confirmed in NSF, records still placed in Classic, and any unconfirmed results, then suggests a retry command. It lists existing NSF folders matching the expected names and parents, lets you map ambiguous same-name folders by UID, reuses only the folders you confirm, and creates missing ones. Records still present in the Classic source are checked by UID so already-converted records are not converted again; missing known placements and application shares are reconciled. Records no longer listed in the Classic source need manual verification because retry has no persisted transaction journal. Retry also cannot prove that a matching folder came from the earlier attempt, so review the proposed paths, UIDs, and matching-record counts carefully. It requires confirmation and cannot be combined with `--force`. If no existing structure is selected, a new one is created and any prior partial folders are left untouched. Failed permission migration can leave empty NSF folders with partially applied permissions; these are not automatically rolled back.
 
 If a destination name matches multiple NSF folders, the command lists each path and UID and asks which destination to use. With `--force`, provide a UID or unambiguous path instead of a name.
 
 **Depth handling:** Folders within the allowed depth keep their hierarchy. Each folder beyond the limit is promoted to the deepest allowed level as its own folder; its records remain associated with that folder. Duplicate folder names are allowed and handled using source-to-target folder UID mappings. The depth limit is the current NSF limit.
 
-**Deletion:** After a fully successful conversion, the command asks whether to delete the Classic source tree. Use `--force` to skip prompts and delete after success. Partial conversions and conversions that skipped PAM records never delete the Classic source.
+**Deletion:** After a fully successful conversion, the command asks whether to delete the Classic source tree. Immediately before deletion, the command refreshes the vault and checks that the entire Classic subtree has no record placements; it retains the source tree if any records remain or the check fails. Use `--force` to skip prompts and delete after success. Partial conversions and conversions that skipped PAM records never delete the Classic source.
 
 **Important:** A record that also appears outside the selected Classic subtree prevents conversion. Convert the enclosing tree or resolve the extra placement first so the command does not silently lose that placement.
 
@@ -753,6 +756,7 @@ nsf-get rec123abc --format json --verbose
 | `nsf-record-add`    | Create a record                                 |
 | `nsf-record-update` | Update a record                                 |
 | `nsf-convert-record`       | Convert Classic record(s) to Nested Share Record(s) |
+| `nsf-convert`       | Deprecated alias for `nsf-convert-record`        |
 | `nsf-move`          | Move a Nested Share Record or folder            |
 | `nsf-rm`            | Remove / trash / unlink a record                |
 | `nsf-ln`            | Link a record into a folder                     |

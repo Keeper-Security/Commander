@@ -16,7 +16,7 @@ from typing import List, Optional
 
 from .record_loader import iter_accessible_record_uids, load_pam_record
 from ... import api, vault
-from ..nested_share_folder.helpers import NSF_FOLDER_BATCH_SIZE
+from ...nested_share_folder.common import NSF_FOLDER_BATCH_SIZE
 from ...error import CommandError
 
 

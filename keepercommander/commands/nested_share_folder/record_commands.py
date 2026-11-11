@@ -28,12 +28,12 @@ from ...error import CommandError
 from ... import nested_share_folder as _nsf, vault, vault_extensions
 from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
 from .helpers import (
-    NSF_RECORD_REMOVE_BATCH_SIZE,
     resolve_folder_uid, resolve_record_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
     ensure_nested_share_record, ensure_nested_share_folder,
     ROOT_FOLDER_UID,
 )
+from ...nested_share_folder.common import NSF_RECORD_REMOVE_BATCH_SIZE
 from .parsers import (
     nested_share_record_add_parser,
     nested_share_record_update_parser,

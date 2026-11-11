@@ -75,8 +75,8 @@ def _cached_login_record(uid):
 class TestNsfImport(TestCase):
     def test_classic_perms_to_nsf_role(self):
         cases = [
-            ((True, True), 'content-share-manager'),
-            ((True, False), 'share-manager'),
+            ((True, True), 'full-manager'),
+            ((True, False), 'viewer'),
             ((False, True), 'content-manager'),
             ((False, False), 'viewer'),
         ]
@@ -90,7 +90,7 @@ class TestNsfImport(TestCase):
             'share-manager')
         self.assertEqual(
             nsf_import.classic_perms_to_nsf_role(False, False, can_edit=True, can_share=True),
-            'content-share-manager')
+            'content-manager')
 
     def test_flatten_and_find(self):
         rec, fol = _record('')

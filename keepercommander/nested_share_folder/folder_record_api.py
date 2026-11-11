@@ -11,12 +11,9 @@ from ..proto import folder_pb2
 from .common import (
     get_folder_key, get_record_key, get_record_key_type,
     encrypt_record_key_for_folder,
+    NSF_FOLDER_RECORD_BATCH_SIZE, normalize_nsf_user_message,
 )
 from .folder_api import resolve_folder_identifier
-from ..commands.nested_share_folder.helpers import (
-    NSF_FOLDER_RECORD_BATCH_SIZE,
-    normalize_nsf_user_message,
-)
 
 logger = logging.getLogger(__name__)
 

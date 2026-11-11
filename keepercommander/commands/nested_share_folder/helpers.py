@@ -25,10 +25,15 @@ import datetime
 import logging
 from contextlib import contextmanager
 from datetime import timezone, timedelta
-from typing import Optional
 
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
+from ...nested_share_folder.common import (
+    MAX_NESTED_SHARE_FOLDER_DEPTH,
+    ROOT_FOLDER_UID,
+    normalize_nsf_user_message,
+    normalize_parent_uid as _normalize_parent_uid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,25 +41,6 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════
-
-ROOT_FOLDER_UID = 'AAAAAAAAAAAAAAAAAPmtNA'
-"""Sentinel UID the server uses for the Nested Share Folder root folder."""
-
-MAX_NESTED_SHARE_FOLDER_DEPTH = 5
-PAM_RECORD_TYPE_PREFIX = 'pam'
-NSF_FOLDER_BATCH_SIZE = 100
-NSF_FOLDER_ACCESS_BATCH_SIZE = 100
-NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE = 500
-NSF_FOLDER_RECORD_BATCH_SIZE = 500
-NSF_FOLDER_REMOVE_BATCH_SIZE = 100
-NSF_RECORD_BATCH_SIZE = 1000
-NSF_RECORD_REMOVE_BATCH_SIZE = 500
-NSF_RECORD_PAGE_SIZE = 500
-NSF_FOLDER_ACCESS_PAGE_SIZE = 1000
-NSF_APP_INFO_BATCH_SIZE = 100
-NSF_IMPORT_THROTTLE_BASE_WAIT = 10.0
-NSF_IMPORT_THROTTLE_BACKOFF_MULTIPLIER = 1.5
-NSF_IMPORT_THROTTLE_MAX_RETRIES = 5
 
 RECORD_PERM_LABELS = [
     ('can_view_title',       'View Title'),
@@ -120,15 +106,6 @@ def command_error_handler(cmd_name):
         raise CommandError(cmd_name, str(exc))
 
 
-def normalize_nsf_user_message(message):
-    """Replace legacy server terminology in user-facing error text."""
-    if not message:
-        return message
-    return (message
-            .replace('Keeper Drive', 'Nested Share Folder')
-            .replace('keeper drive', 'nested share folder'))
-
-
 def check_result(result, cmd_name):
     """Raise ``CommandError`` when *result['success']* is falsy.
 
@@ -160,12 +137,8 @@ def suppress_exit(self, status=0, message=None):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def normalize_parent_uid(uid):
-    """Normalize root folder UIDs to a consistent ``'root'`` or empty string."""
-    if not isinstance(uid, str):
-        uid = str(uid) if uid else ''
-    if uid == ROOT_FOLDER_UID or uid == 'root':
-        return 'root'
-    return uid or ''
+    """Preserve the legacy helper import path."""
+    return _normalize_parent_uid(uid)
 
 
 # ═══════════════════════════════════════════════════════════════════════════

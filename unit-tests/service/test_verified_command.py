@@ -60,6 +60,8 @@ class TestServiceModeCommandPolicy(TestCase):
     def test_nsf_convert_is_blocked_in_service_mode(self):
         check = Verifycommand.validate_service_mode_restrictions
         for command in (
+            'nsf-convert RECORD_UID',
+            'nsf-convert RECORD_UID --force',
             'nsf-convert-record RECORD_UID',
             'nsf-convert-record RECORD_UID --force',
             'nsf-convert-record RECORD_UID -f',
@@ -74,6 +76,11 @@ class TestServiceModeCommandPolicy(TestCase):
             'not permitted through Service Mode',
             Verifycommand.validate_nsf_convert_command(
                 _tokens('nsf-convert-record -- RECORD_UID -f')),
+        )
+        self.assertIn(
+            'not permitted through Service Mode',
+            Verifycommand.validate_nsf_convert_command(
+                _tokens('nsf-convert RECORD_UID')),
         )
 
     def test_nsf_convert_folder_is_blocked_in_service_mode(self):
