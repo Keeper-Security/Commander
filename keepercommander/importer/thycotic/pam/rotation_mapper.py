@@ -6,8 +6,8 @@
 #
 # Keeper Commander — Delinea PAM import
 
+import datetime
 from collections import Counter
-from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from ...cyberark.pam.master_policy_mapper import MasterPolicyMapper
@@ -307,7 +307,7 @@ def _clock(schedule: dict) -> Tuple[int, int]:
     if isinstance(raw, str) and 'T' in raw:
         text = raw.replace('Z', '+00:00')
         try:
-            parsed = datetime.fromisoformat(text)
+            parsed = datetime.datetime.fromisoformat(text)
         except ValueError:
             parsed = None
         if parsed is not None:
