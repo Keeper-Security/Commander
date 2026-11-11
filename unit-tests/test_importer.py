@@ -6,9 +6,10 @@ from unittest import TestCase, mock, skipUnless
 
 from data_vault import get_synced_params, get_connected_params
 from helper import KeeperApiHelper
-from keepercommander import params as params_module, vault
+from keepercommander import params as params_module, utils, vault
 from keepercommander.error import CommandError
 from keepercommander.importer import importer, commands, imp_exp
+from keepercommander.proto import record_pb2
 
 try:
     from keepercommander.importer.keepass.keepass import KeepassExporter, PyKeePass
@@ -373,3 +374,92 @@ class TestImporterUtils(TestCase):
 
         schedule = {"type": "CRON", "cron": "5 1 * * ?"}
         self.assertEqual(vault.TypedField.export_schedule_field(schedule), '5 1 * * ?')
+
+
+class TestKeeperV3AttachmentDownload(TestCase):
+    def setUp(self):
+        self.params = mock.MagicMock()
+        self.params.rest_context.proxies = None
+        self.rest_requests = []
+        self.denied_uids = set()
+        self.rest_mock = mock.patch.object(imp_exp.api, 'communicate_rest', side_effect=self._files_download).start()
+        self.get_mock = mock.patch.object(imp_exp.requests, 'get').start()
+        mock.patch.object(imp_exp.KeeperV3Attachment, 'set_stream', lambda s, raw, for_encrypt: raw).start()
+
+    def tearDown(self):
+        mock.patch.stopall()
+
+    def _files_download(self, params, rq, endpoint, rs_type):
+        self.rest_requests.append(list(rq.record_uids))
+        rs = record_pb2.FilesGetResponse()
+        for uid in rq.record_uids:
+            f = rs.files.add()
+            f.record_uid = uid
+            if uid in self.denied_uids:
+                f.status = record_pb2.FG_ACCESS_DENIED
+            else:
+                f.status = record_pb2.FG_SUCCESS
+                f.url = 'https://files/' + utils.base64_url_encode(uid)
+                f.success_status_code = 200
+        return rs
+
+    @staticmethod
+    def _http_response(status_code):
+        rs = mock.MagicMock()
+        rs.status_code = status_code
+        rs.raw = io.BytesIO(b'data')
+        return rs
+
+    def _attachments(self, count):
+        return [imp_exp.KeeperV3Attachment(self.params, utils.generate_uid()) for _ in range(count)]
+
+    def test_batches_files_download_requests(self):
+        attachments = self._attachments(205)
+        events = []
+        self.rest_mock.side_effect = lambda *a, **kw: (events.append('prefetch'), self._files_download(*a, **kw))[1]
+        self.get_mock.side_effect = lambda url, **kw: (events.append('download'), self._http_response(200))[1]
+
+        ensure_url = imp_exp.KeeperV3Attachment.batch_prefetcher(attachments)
+        for atta in attachments:
+            ensure_url(atta)
+            atta.open()
+
+        self.assertEqual([len(x) for x in self.rest_requests], [100, 100, 5])
+        self.assertEqual(events.count('download'), 205)
+        first, second, third = [i for i, e in enumerate(events) if e == 'prefetch']
+        self.assertEqual(second - first - 1, 100)
+        self.assertEqual(third - second - 1, 100)
+
+    def test_failed_file_falls_back_to_single_request(self):
+        attachments = self._attachments(3)
+        denied_uid = utils.base64_url_decode(attachments[1].file_uid)
+        self.denied_uids.add(denied_uid)
+        self.get_mock.side_effect = lambda url, **kw: self._http_response(200)
+
+        imp_exp.KeeperV3Attachment.prefetch_urls(attachments)
+        self.assertIsNone(attachments[1]._url)
+        self.assertIsNotNone(attachments[0]._url)
+
+        self.denied_uids.clear()
+        attachments[1].open()
+        self.assertEqual(self.rest_requests[-1], [denied_uid])
+        self.assertIsNotNone(attachments[1]._url)
+
+    def test_prefetch_error_does_not_abort(self):
+        attachments = self._attachments(2)
+        self.rest_mock.side_effect = Exception('throttled')
+        imp_exp.KeeperV3Attachment.prefetch_urls(attachments)
+        self.assertTrue(all(a._url is None for a in attachments))
+
+    def test_expired_url_closes_response_and_refreshes(self):
+        atta = self._attachments(1)[0]
+        imp_exp.KeeperV3Attachment.prefetch_urls([atta])
+        expired = self._http_response(403)
+        fresh = self._http_response(200)
+        self.get_mock.side_effect = [expired, fresh]
+
+        atta.open()
+
+        expired.close.assert_called_once()
+        self.assertEqual(self.get_mock.call_count, 2)
+        self.assertEqual(len(self.rest_requests), 2)
