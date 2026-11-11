@@ -1267,8 +1267,8 @@ class PAMProjectExtendCommand(Command):
                 folders_out["users_folder_uid"] = usr_uid
 
         if need_res and need_usr and res_uid and res_uid == usr_uid:
-            print(f'Warning: Using the same folder "{shf_names[res_uid]}" for both resources and users '
-                  "(best practice: separate).")
+            logging.info('Note: Using the same folder "%s" for both resources and users '
+                         '(best practice: separate).', shf_names[res_uid])
 
         if step3_errors:
             project["error_count"] = project.get("error_count", 0) + len(step3_errors)

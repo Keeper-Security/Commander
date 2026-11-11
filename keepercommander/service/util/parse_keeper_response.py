@@ -888,9 +888,7 @@ class KeeperResponseParser:
                     result["data"]["documentation_url"] = line.split("https://docs.keeper.io")[1].strip()
                     result["data"]["documentation_url"] = "https://docs.keeper.io" + result["data"]["documentation_url"]
                     break
-        
         return result
-    
     @staticmethod
     def _is_pam_project_export(command: str) -> bool:
         """Whether command is 'pam project export' (alias-aware)."""
