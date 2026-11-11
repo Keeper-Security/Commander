@@ -1,3 +1,4 @@
+import logging
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -398,12 +399,21 @@ def test_autodetect_nested_new_users_need_users_folder():
     assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'b'}
 
 
-def test_autodetect_warns_when_both_roles_share_one_folder(capsys):
-    project = _new_project([_shf('a', 'Alpha'), _shf('b', 'Beta')])
+def test_autodetect_logs_advisory_when_both_roles_share_one_folder(caplog, capsys):
+    project = _new_project([_shf('a', 'Prod - Errors Team'), _shf('b', 'Beta')])
 
-    assert _autodetect(project, {'a': ['pamMachine', 'pamUser']}) == []
+    with caplog.at_level(logging.INFO):
+        assert _autodetect(project, {'a': ['pamMachine', 'pamUser']}) == []
     assert project['folders'] == {'resources_folder_uid': 'a', 'users_folder_uid': 'a'}
-    assert 'same folder "Alpha"' in capsys.readouterr().out
+    assert any(
+        record.levelno == logging.INFO
+        and record.getMessage() == (
+            'Note: Using the same folder "Prod - Errors Team" for both resources and users '
+            '(best practice: separate).'
+        )
+        for record in caplog.records
+    )
+    assert 'same folder' not in capsys.readouterr().out
 
 
 # --- --resources-folder / --users-folder (KC-1491) ---
