@@ -51,6 +51,52 @@ class RequestValidator:
         escaped_command = escape(command)
         logger.debug(f"Command validated and escaped: {sanitize_command_fields(escaped_command)}")
         return escaped_command, None
+
+    @staticmethod
+    def validate_pam_filedata_paths(request_data: Dict[str, Any], command: str) -> Optional[str]:
+        """Reject host file references embedded in Service Mode PAM FILEDATA imports."""
+        if (
+                not isinstance(request_data, dict)
+                or "FILEDATA" not in command
+                or "filedata" not in request_data):
+            return None
+
+        try:
+            from .verified_command import Verifycommand
+            command_tokens = Verifycommand.tokenize_service_command(command)
+        except ValueError:
+            # Command syntax validation will report malformed commands later.
+            return None
+
+        if not Verifycommand._is_pam_project_filename_cmd(command_tokens):
+            return None
+
+        def contains_file_path(data: Any) -> bool:
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    if str(key).lower() in ("attachments", "scripts"):
+                        entries = value if isinstance(value, list) else [value]
+                        for entry in entries:
+                            if isinstance(entry, str) and entry.strip():
+                                return True
+                            if isinstance(entry, dict):
+                                file_path = entry.get("file")
+                                if isinstance(file_path, str) and file_path.strip():
+                                    return True
+                                if contains_file_path(entry):
+                                    return True
+                    elif contains_file_path(value):
+                        return True
+            elif isinstance(data, list):
+                return any(contains_file_path(item) for item in data)
+            return False
+
+        if contains_file_path(request_data.get("filedata")):
+            return (
+                'Local attachment and script paths are not permitted in '
+                'Service Mode PAM FILEDATA imports'
+            )
+        return None
     
     @staticmethod
     def process_file_data(request_data: Dict[str, Any], command: str) -> Tuple[str, list]:

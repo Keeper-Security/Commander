@@ -965,9 +965,8 @@ class KeeperResponseParser:
         except Exception as e:
             result["status"] = "error"
             result["error"] = str(e)
-            
-        finally:
-            return result
+
+        return result
 
     @staticmethod
     def _parse_generate_command(command: str, response_str: str) -> Dict[str, Any]:
