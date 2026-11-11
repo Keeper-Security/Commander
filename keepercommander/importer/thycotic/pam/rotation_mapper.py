@@ -157,7 +157,7 @@ class RotationMapper:
         """
         if not isinstance(schedule, dict):
             return None
-        change_type = str(schedule.get('changeType') or '').strip().casefold()
+        change_type = str(schedule.get('scheduleType') or schedule.get('changeType') or '').strip().casefold()
         minute, hour = _clock(schedule)
         if change_type == 'days':
             days = _int_id(schedule.get('days'))
