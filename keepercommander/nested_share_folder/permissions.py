@@ -126,11 +126,11 @@ ROLE_NAME_MAP: Dict[str, int] = {
 }
 
 
-def classic_perms_to_nsf_role(manage_users=False, manage_records=False,
-                              can_edit=False, can_share=False):
-    """Map Classic folder permission flags to the closest non-owner NSF role."""
+def classic_record_permissions_to_nsf_role(manage_users=False, can_edit=False,
+                                           can_share=False):
+    """Map Classic share and record permissions to the closest non-owner NSF role."""
     can_manage_shares = bool(manage_users or can_share)
-    can_manage_content = bool(manage_records or can_edit)
+    can_manage_content = bool(can_edit)
     if can_manage_shares and can_manage_content:
         return 'content-share-manager'
     if can_manage_content:

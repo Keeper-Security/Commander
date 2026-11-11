@@ -18,10 +18,7 @@ from .common import (
     get_record_revision, patch_record_revision,
     get_user_public_key, encrypt_for_recipient, handle_share_invite,
     parse_sharing_status,
-)
-from ..commands.nested_share_folder.helpers import (
-    NSF_RECORD_BATCH_SIZE,
-    NSF_RECORD_PAGE_SIZE,
+    NSF_RECORD_BATCH_SIZE, NSF_RECORD_PAGE_SIZE,
 )
 
 logger = logging.getLogger(__name__)

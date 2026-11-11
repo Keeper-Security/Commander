@@ -14,14 +14,17 @@ from ...subfolder import (
     BaseFolderNode, SharedFolderFolderNode, SharedFolderNode, try_resolve_path,
 )
 from ...utils import current_milli_time
-from ...nested_share_folder.permissions import classic_perms_to_nsf_role
-from .helpers import (
+from ...nested_share_folder.permissions import classic_record_permissions_to_nsf_role
+from ...nested_share_folder.common import (
     MAX_NESTED_SHARE_FOLDER_DEPTH,
     NSF_APP_INFO_BATCH_SIZE,
+    NSF_FOLDER_ACCESS_PAGE_SIZE,
     NSF_FOLDER_BATCH_SIZE,
     NSF_FOLDER_RECORD_BATCH_SIZE,
     PAM_RECORD_TYPE_PREFIX,
     ROOT_FOLDER_UID,
+)
+from .helpers import (
     _folder_depth,
     command_error_handler,
     resolve_record_uid,
@@ -223,6 +226,10 @@ class NestedShareConvertCommand(Command):
         return nested_share_convert_parser
 
     def execute(self, params, **kwargs):
+        if (kwargs.get('command') or '').casefold() == 'nsf-convert':
+            print(
+                f'{bcolors.WARNING}Warning: nsf-convert is deprecated; '
+                f'use nsf-convert-record instead.{bcolors.ENDC}')
         identifiers = kwargs.get('records') or []
         if isinstance(identifiers, str):
             identifiers = [identifiers]
@@ -517,7 +524,50 @@ def _current_user_account_uid(params):
     return utils.base64_url_encode(account_uid)
 
 
-def _scope_accessors(params, scope_uid):
+def _scope_record_permissions(params, scope_uid):
+    """Return the least-privileged record permissions for a Classic share scope."""
+    shared_folder = (getattr(params, 'shared_folder_cache', {}) or {}).get(scope_uid)
+    if shared_folder is None:
+        raise CommandError(
+            'nsf-convert-folder',
+            f'Access details for Classic Shared Folder {scope_uid} are not cached; '
+            'run sync-down and retry.')
+
+    records = shared_folder.get('records') or []
+    if not records:
+        can_edit = bool(shared_folder.get('default_can_edit'))
+        can_share = bool(shared_folder.get('default_can_share'))
+    else:
+        can_edit = all(bool(record.get('can_edit')) for record in records)
+        can_share = all(bool(record.get('can_share')) for record in records)
+
+    restricted_records = sorted({
+        record.get('record_uid')
+        for record in records
+        if record.get('record_uid') and (
+            'can_edit' not in record or 'can_share' not in record or
+            bool(record.get('can_edit')) != can_edit or
+            bool(record.get('can_share')) != can_share)
+    })
+    unmapped_manage_records = []
+    if not can_edit:
+        unmapped_manage_records.extend(
+            user.get('username') or user.get('account_uid')
+            for user in shared_folder.get('users') or []
+            if user.get('manage_records'))
+        unmapped_manage_records.extend(
+            team.get('name') or team.get('team_uid')
+            for team in shared_folder.get('teams') or []
+            if team.get('manage_records'))
+    return {
+        'can_edit': can_edit,
+        'can_share': can_share,
+        'restricted_records': restricted_records,
+        'unmapped_manage_records': sorted(set(unmapped_manage_records)),
+    }
+
+
+def _scope_accessors(params, scope_uid, record_permissions=None):
     """Build user/team grants from the Classic Shared Folder cache."""
     shared_folder = (getattr(params, 'shared_folder_cache', {}) or {}).get(scope_uid)
     if shared_folder is None:
@@ -525,6 +575,7 @@ def _scope_accessors(params, scope_uid):
             'nsf-convert-folder',
             f'Access details for Classic Shared Folder {scope_uid} are not cached; '
             'run sync-down and retry.')
+    record_permissions = record_permissions or _scope_record_permissions(params, scope_uid)
 
     accessors = []
     seen = set()
@@ -540,8 +591,10 @@ def _scope_accessors(params, scope_uid):
             'identifier': identifier,
             '_account_uid': user.get('account_uid'),
             'as_team': False,
-            'role': classic_perms_to_nsf_role(
-                user.get('manage_users'), user.get('manage_records')),
+            'role': classic_record_permissions_to_nsf_role(
+                manage_users=user.get('manage_users'),
+                can_edit=record_permissions['can_edit'],
+                can_share=record_permissions['can_share']),
             'expiration': user.get('expiration'),
         })
 
@@ -556,8 +609,10 @@ def _scope_accessors(params, scope_uid):
         accessors.append({
             'identifier': identifier,
             'as_team': True,
-            'role': classic_perms_to_nsf_role(
-                team.get('manage_users'), team.get('manage_records')),
+            'role': classic_record_permissions_to_nsf_role(
+                manage_users=team.get('manage_users'),
+                can_edit=record_permissions['can_edit'],
+                can_share=record_permissions['can_share']),
             'expiration': team.get('expiration'),
         })
 
@@ -727,7 +782,7 @@ class NestedShareFolderConvertCommand(Command):
             raise CommandError(
                 'nsf-convert-folder',
                 'Some records also appear outside the selected Classic subtree, and '
-                'nsf-convert-record cannot preserve those placements. Convert the enclosing '
+                'nsf-convert-folder cannot preserve those placements. Convert the enclosing '
                 f'tree or resolve those placements first. {details}')
 
         scope_by_folder = {
@@ -735,12 +790,18 @@ class NestedShareFolderConvertCommand(Command):
         }
         scope_grants = self._scope_grant_targets(
             nodes, target_parent_sources, scope_by_folder)
+        scope_record_permissions = {
+            scope_uid: _scope_record_permissions(params, scope_uid)
+            for scope_uid, _ in scope_grants
+        }
         scope_accessors = {
-            scope_uid: _scope_accessors(params, scope_uid)
-            for scope_uid in {scope for scope, _ in scope_grants}
+            scope_uid: _scope_accessors(
+                params, scope_uid, scope_record_permissions[scope_uid])
+            for scope_uid in scope_record_permissions
         }
 
         self._validate_folder_keys(params, destination_uid)
+        destination_accessors = self._destination_accessors(params, destination_uid)
         existing_target_uids = {}
         if retry:
             existing_target_uids = self._select_retry_folders(
@@ -749,7 +810,13 @@ class NestedShareFolderConvertCommand(Command):
         self._print_preview(
             params, nodes, records_to_convert_by_folder, source_node, destination_uid,
             available_depth, records_to_convert, depths, target_levels,
-            skipped_pam_records)
+            skipped_pam_records,
+            destination_accessors=destination_accessors,
+            permission_warnings={
+                scope_uid: details
+                for scope_uid, details in scope_record_permissions.items()
+                if details['restricted_records'] or details['unmapped_manage_records']
+            })
 
         if kwargs.get('dry_run'):
             return
@@ -798,8 +865,10 @@ class NestedShareFolderConvertCommand(Command):
             params.sync_data = True
             raise CommandError(
                 'nsf-convert-folder',
-                f'NSF folders were created, but permission migration failed; '
-                f'the Classic tree was left intact. {exc}')
+                f'NSF folders were created, but permission migration failed; some folder '
+                f'permissions may already have been applied. The Classic tree was left '
+                f'intact, and no NSF rollback was attempted. Review the target folders '
+                f'and rerun with --retry to reconcile. {exc}')
 
         _print_conversion_step(
             3, 6,
@@ -807,7 +876,11 @@ class NestedShareFolderConvertCommand(Command):
         converted_uids = preconverted_uids | self._convert_records(
             params, records_to_convert, placements, target_uids)
         if converted_uids:
-            sync_down.sync_down(params)
+            try:
+                sync_down.sync_down(params)
+            except Exception as exc:
+                logging.warning(
+                    'Could not refresh the vault after record conversion: %s', exc)
 
         _print_conversion_step(
             4, 6, 'Preserving additional record placements and app shares...')
@@ -824,31 +897,48 @@ class NestedShareFolderConvertCommand(Command):
             logging.warning('Could not preserve application record share: %s', failure)
 
         _print_conversion_step(5, 6, 'Verifying conversion results...')
-        sync_down.sync_down(params)
+        verification_sync_error = None
+        try:
+            sync_down.sync_down(params)
+        except Exception as exc:
+            verification_sync_error = exc
+            logging.warning('Could not refresh the vault to verify conversion: %s', exc)
 
         conversion_complete = (
             len(converted_uids) == len(source_record_uids) and
-            not link_failures and not app_share_failures)
+            not link_failures and not app_share_failures and
+            verification_sync_error is None)
+        verification_issues = []
+        if verification_sync_error is not None:
+            verification_issues.append(
+                f'Final sync-down failed, so the last cached record locations may be stale: '
+                f'{verification_sync_error}')
         missing_folders = [
             uid for uid in target_uids.values()
             if uid not in (getattr(params, 'nested_share_folders', {}) or {})
-        ]
+        ] if verification_sync_error is None else []
         if missing_folders:
             conversion_complete = False
+            verification_issues.append(
+                f'{len(missing_folders)} NSF folder(s) were not confirmed by sync-down')
             logging.warning(
                 'Sync-down did not confirm %d created NSF folder(s).',
                 len(missing_folders))
-        if source_record_uids and conversion_complete:
+        missing_records = []
+        if source_record_uids and verification_sync_error is None:
             missing_records = [
                 uid for uid in source_record_uids
                 if uid not in (getattr(params, 'nested_share_records', {}) or {})
             ]
             if missing_records:
                 conversion_complete = False
+                verification_issues.append(
+                    f'{len(missing_records)} converted record(s) were not confirmed by sync-down')
                 logging.warning(
                     'Sync-down did not confirm %d converted record(s).',
                     len(missing_records))
-        if retry and conversion_complete:
+        missing_placements = []
+        if retry and verification_sync_error is None:
             folder_records = getattr(params, 'nested_share_folder_records', {}) or {}
             missing_placements = [
                 (record_uid, target_uids[source_uid])
@@ -859,15 +949,22 @@ class NestedShareFolderConvertCommand(Command):
             ]
             if missing_placements:
                 conversion_complete = False
+                verification_issues.append(
+                    f'{len(missing_placements)} record placement(s) were not confirmed')
                 logging.warning(
                     'Sync-down did not confirm %d record placement(s) in retry targets.',
                     len(missing_placements))
 
+        verification_issues.extend(
+            f'Additional placement failure: {failure}' for failure in link_failures[:5])
+        verification_issues.extend(
+            f'Application-share failure: {failure}' for failure in app_share_failures[:5])
         params.sync_data = True
         if not conversion_complete:
-            print(
-                f'\n{bcolors.WARNING}Conversion incomplete. '
-                f'The Classic source tree was retained.{bcolors.ENDC}')
+            self._print_incomplete_conversion(
+                params, source_uid, destination_uid, source_record_uids,
+                converted_uids, target_uids, existing_target_uids,
+                diagnostics=verification_issues)
             return
         print(f'\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Conversion complete{bcolors.ENDC}')
         print(f'  NSF folders created: {len(target_uids) - len(existing_target_uids)}')
@@ -893,7 +990,15 @@ class NestedShareFolderConvertCommand(Command):
                 return
 
         _print_conversion_step(6, 6, 'Deleting the Classic source tree...')
-        self._delete_classic_source(params, source_uid)
+        delete_result = self._delete_classic_source(params, source_uid)
+        if delete_result is False:
+            print(
+                f'  {bcolors.WARNING}Classic source tree retained because it could '
+                f'not be verified empty.{bcolors.ENDC}')
+        elif delete_result is None:
+            print(
+                f'  {bcolors.WARNING}Classic source tree deletion status is unknown; '
+                f'run sync-down and inspect the source tree.{bcolors.ENDC}')
 
     @staticmethod
     def _resolve_destination(params, folder_arg, force=False):
@@ -925,6 +1030,137 @@ class NestedShareFolderConvertCommand(Command):
                 raise CommandError(
                     'nsf-convert-folder',
                     f'Destination folder key is unavailable; run sync-down and retry. {exc}')
+
+    @staticmethod
+    def _destination_accessors(params, destination_uid):
+        """Read all effective user/team access that new destination children inherit."""
+        if not destination_uid:
+            return []
+
+        from ...nested_share_folder.folder_api import get_folder_access_v3
+
+        accessors_by_key = {}
+        continuation_token = None
+        seen_tokens = set()
+        while True:
+            try:
+                result = get_folder_access_v3(
+                    params, [destination_uid],
+                    continuation_token=continuation_token,
+                    page_size=NSF_FOLDER_ACCESS_PAGE_SIZE,
+                    resolve_usernames=True)
+            except Exception as exc:
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Could not determine who will inherit access from destination '
+                    f'{destination_uid}; conversion was not started. '
+                    f'{_escape_non_printable(exc)}') from exc
+
+            folder_result = next(
+                (item for item in result.get('results', [])
+                 if item.get('folder_uid') == destination_uid),
+                None)
+            if not folder_result or not folder_result.get('success'):
+                error = (folder_result or {}).get('error') or {}
+                message = error.get('message') or error.get('status')
+                message = _escape_non_printable(
+                    message or 'No access details returned.')
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Could not determine who will inherit access from destination '
+                    f'{destination_uid}; conversion was not started. '
+                    f'{message}')
+
+            for accessor in folder_result.get('accessors') or []:
+                access_type = accessor.get('access_type')
+                if (access_type not in ('AT_USER', 'AT_TEAM', 'AT_OWNER') or
+                        accessor.get('denied_access')):
+                    continue
+                accessor_uid = accessor.get('accessor_uid') or ''
+                key = (access_type, accessor_uid)
+                if not accessor_uid or key in accessors_by_key:
+                    continue
+                accessors_by_key[key] = accessor
+
+            if not result.get('has_more'):
+                break
+            continuation_token = result.get('continuation_token')
+            if continuation_token is None or continuation_token in seen_tokens:
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Could not read the full access list for destination '
+                    f'{destination_uid}; conversion was not started.')
+            seen_tokens.add(continuation_token)
+
+        return sorted(
+            accessors_by_key.values(),
+            key=lambda accessor: (
+                accessor.get('access_type', ''),
+                (accessor.get('username') or accessor.get('accessor_uid') or '').casefold(),
+                accessor.get('accessor_uid', ''),
+            ))
+
+    @staticmethod
+    def _print_incomplete_conversion(params, source_uid, destination_uid,
+                                     source_record_uids, converted_uids, target_uids,
+                                     existing_target_uids, diagnostics=None):
+        classic_placements = getattr(params, 'subfolder_record_cache', {}) or {}
+        scan_failed = False
+        try:
+            source_folder_uids = set(_collect_classic_subtree(params, source_uid)[0])
+        except CommandError:
+            source_folder_uids = {source_uid}
+            scan_failed = True
+        remaining_records = sorted({
+            record_uid
+            for folder_uid in source_folder_uids
+            for record_uid in (classic_placements.get(folder_uid) or set())
+            if record_uid in source_record_uids
+        })
+        nested_records = getattr(params, 'nested_share_records', {}) or {}
+        confirmed_records = sorted(
+            record_uid for record_uid in source_record_uids
+            if record_uid in nested_records)
+        confirmed_set = set(confirmed_records)
+        remaining_set = set(remaining_records)
+        uncertain_records = sorted(
+            (set(converted_uids) - confirmed_set) |
+            (set(source_record_uids) - confirmed_set - remaining_set))
+        print(
+            f'\n{bcolors.WARNING}Conversion incomplete. '
+            f'The Classic source tree was retained.{bcolors.ENDC}')
+        print(f'  Records confirmed in NSF: {len(confirmed_records)}')
+        for record_uid in confirmed_records:
+            print(f'    - {record_uid}')
+        print(f'  Records still placed in Classic: {len(remaining_records)}')
+        for record_uid in remaining_records:
+            print(f'    - {record_uid}')
+        if scan_failed:
+            print(
+                '  The full Classic subtree could not be enumerated; remaining-record '
+                'status may be incomplete.')
+        if uncertain_records:
+            print(
+                f'  Records with an unconfirmed conversion result: '
+                f'{len(uncertain_records)}')
+            for record_uid in uncertain_records:
+                print(f'    - {record_uid}')
+        print(
+            f'  NSF folders created: {len(target_uids) - len(existing_target_uids)}; '
+            f'reused: {len(existing_target_uids)}.')
+        print(
+            '  Existing NSF folders and any permissions already applied were left in '
+            'place; no automatic rollback was attempted.')
+        for diagnostic in diagnostics or []:
+            print(f'  - {_escape_non_printable(diagnostic)}')
+        destination = (
+            f' --folder "{destination_uid}"' if destination_uid else '')
+        print(
+            f'  To reconcile, review the existing folder mapping and rerun: '
+            f'nsf-convert-folder "{source_uid}" --retry{destination}')
+        print(
+            '  Retry can process records still placed in the Classic source; '
+            'manually verify records no longer listed there.')
 
     @staticmethod
     def _collect_records(params, nodes, records_by_folder, allow_converted=False):
@@ -1015,7 +1251,8 @@ class NestedShareFolderConvertCommand(Command):
     @staticmethod
     def _print_preview(params, nodes, records_by_folder, source_node, destination_uid,
                        available_depth, record_uids, source_depths, target_levels,
-                       skipped_pam_records):
+                       skipped_pam_records, destination_accessors=None,
+                       permission_warnings=None):
         destination = _nested_share_folder_label(params, destination_uid)
         print(
             f'\n{"=" * 72}\n'
@@ -1027,6 +1264,50 @@ class NestedShareFolderConvertCommand(Command):
             f'{bcolors.ENDC}')
         print(f'Source: {_classic_folder_label(source_node)}')
         print(f'Destination: {destination}')
+        if destination_uid:
+            print('\nAccess inherited by new folders from the destination:')
+            if not destination_accessors:
+                print('  No user, team, or owner grants found.')
+            else:
+                for accessor in destination_accessors:
+                    access_type = accessor.get('access_type')
+                    kind = (
+                        'Team' if access_type == 'AT_TEAM' else
+                        'Owner' if access_type == 'AT_OWNER' else 'User')
+                    identifier = (
+                        accessor.get('username') or accessor.get('accessor_uid') or 'Unknown')
+                    if accessor.get('hidden'):
+                        identifier = f'Hidden {kind.lower()} ({accessor.get("accessor_uid")})'
+                    role = (accessor.get('role') or 'unknown').replace('_', ' ').lower()
+                    location = (
+                        'already inherited by destination'
+                        if accessor.get('inherited') else 'granted directly on destination')
+                    print(
+                        f'  - {kind}: {_escape_non_printable(identifier)} '
+                        f'— {role}; {location}')
+        for scope_uid, warning in (permission_warnings or {}).items():
+            record_uids = warning['restricted_records']
+            manage_records_accessors = warning['unmapped_manage_records']
+            if record_uids:
+                details = ', '.join(record_uids[:10])
+                if len(record_uids) > 10:
+                    details += f', ... ({len(record_uids)} records)'
+                print(
+                    f'\n{bcolors.WARNING}Classic Shared Folder {scope_uid} has mixed or '
+                    f'unavailable record edit/share permissions; the most restrictive '
+                    f'permissions will be applied to its NSF scope to avoid widening access. '
+                    f'Restricted record(s): {details}.{bcolors.ENDC}')
+            if manage_records_accessors:
+                identifiers = ', '.join(
+                    _escape_non_printable(value)
+                    for value in manage_records_accessors[:10])
+                if len(manage_records_accessors) > 10:
+                    identifiers += f', ... ({len(manage_records_accessors)} members)'
+                print(
+                    f'\n{bcolors.WARNING}Classic manage_records permissions cannot be '
+                    f'mapped without granting record edit access. The affected '
+                    f'accessors will not receive that permission in NSF: {identifiers}.'
+                    f'{bcolors.ENDC}')
         _print_skipped_pam_records(skipped_pam_records)
         if skipped_pam_records:
             print(
@@ -1291,8 +1572,10 @@ class NestedShareFolderConvertCommand(Command):
                     params.sync_data = True
                     raise CommandError(
                         'nsf-convert-folder',
-                        'Could not create the full NSF folder tree; the Classic source '
-                        'tree was left intact. ' + '; '.join(failures[:5]))
+                        'Could not create the full NSF folder tree; any folders already '
+                        'created were left in place and the Classic source tree was left '
+                        'intact. Review the partial NSF structure and rerun with --retry '
+                        'to reconcile. ' + '; '.join(failures[:5]))
 
                 if show_progress:
                     print(
@@ -1570,9 +1853,29 @@ class NestedShareFolderConvertCommand(Command):
 
     @staticmethod
     def _delete_classic_source(params, source_uid):
+        """Delete only a freshly verified empty subtree; return None if outcome is unknown."""
         from ..folder import FolderRemoveCommand
 
         try:
+            sync_down.sync_down(params)
+            folder_cache = getattr(params, 'folder_cache', {}) or {}
+            if source_uid not in folder_cache:
+                return True
+            _, _, _, records_by_folder = _collect_classic_subtree(params, source_uid)
+            remaining = {
+                folder_uid: record_uids
+                for folder_uid, record_uids in records_by_folder.items()
+                if record_uids
+            }
+            if remaining:
+                details = '; '.join(
+                    f'{folder_uid}: {", ".join(record_uids[:5])}'
+                    for folder_uid, record_uids in remaining.items())
+                logging.warning(
+                    'Classic source tree %s still contains record placements; '
+                    'skipping recursive deletion. %s', source_uid, details)
+                return False
+
             FolderRemoveCommand().execute(
                 params, pattern=[source_uid], force=True, quiet=True)
             sync_down.sync_down(params)
@@ -1580,9 +1883,11 @@ class NestedShareFolderConvertCommand(Command):
                 logging.warning(
                     'The conversion succeeded, but Classic source folder %s '
                     'still appears after deletion.', source_uid)
-            else:
-                logging.info('Classic source folder tree deleted.')
+                return False
+            logging.info('Classic source folder tree deleted.')
+            return True
         except Exception as exc:
             logging.warning(
-                'Conversion succeeded, but the Classic source tree could not be '
-                'deleted: %s', exc)
+                'Conversion succeeded, but the Classic source tree deletion status '
+                'could not be confirmed: %s', exc)
+            return None

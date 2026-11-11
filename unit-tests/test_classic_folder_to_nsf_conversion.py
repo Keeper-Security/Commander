@@ -14,15 +14,19 @@ from keepercommander.commands.nested_share_folder.conversion_commands import (
     _pam_record_details,
     _read_applications,
     _resolve_destination_folder,
+    _scope_record_permissions,
     _scope_accessors,
 )
+from keepercommander.commands.nested_share_folder import register_commands
 from keepercommander.commands.nested_share_folder.parsers import (
     nested_share_convert_parser,
     nested_share_folder_convert_parser,
 )
 from keepercommander.commands.ksm import KSMCommand
 from keepercommander.error import CommandError
-from keepercommander.nested_share_folder.permissions import classic_perms_to_nsf_role
+from keepercommander.nested_share_folder.permissions import (
+    classic_record_permissions_to_nsf_role,
+)
 from keepercommander.subfolder import (
     SharedFolderFolderNode, SharedFolderNode, UserFolderNode,
 )
@@ -109,11 +113,75 @@ class TestClassicFolderConversionPlanning(TestCase):
         self.assertEqual(nodes[left_uid].name, nodes[right_uid].name)
         self.assertNotEqual(left_uid, right_uid)
 
-    def test_shared_folder_acl_roles_follow_requested_mapping(self):
-        self.assertEqual(classic_perms_to_nsf_role(False, False), 'viewer')
-        self.assertEqual(classic_perms_to_nsf_role(True, False), 'share-manager')
-        self.assertEqual(classic_perms_to_nsf_role(False, True), 'content-manager')
-        self.assertEqual(classic_perms_to_nsf_role(True, True), 'content-share-manager')
+    def test_shared_folder_acl_roles_do_not_treat_manage_records_as_record_edit(self):
+        self.assertEqual(classic_record_permissions_to_nsf_role(), 'viewer')
+        self.assertEqual(
+            classic_record_permissions_to_nsf_role(manage_users=True), 'share-manager')
+        self.assertEqual(
+            classic_record_permissions_to_nsf_role(can_edit=True), 'content-manager')
+        self.assertEqual(
+            classic_record_permissions_to_nsf_role(can_share=True), 'share-manager')
+        self.assertEqual(
+            classic_record_permissions_to_nsf_role(can_edit=True, can_share=True),
+            'content-share-manager')
+
+    def test_shared_folder_record_permissions_use_the_most_restrictive_flags(self):
+        scope_uid = _uid()
+        first_uid, second_uid = _uid(), _uid()
+        params = SimpleNamespace(shared_folder_cache={
+            scope_uid: {
+                'records': [
+                    {'record_uid': first_uid, 'can_edit': True, 'can_share': True},
+                    {'record_uid': second_uid, 'can_edit': False, 'can_share': True},
+                ]
+            }
+        })
+
+        permissions = _scope_record_permissions(params, scope_uid)
+        self.assertFalse(permissions['can_edit'])
+        self.assertTrue(permissions['can_share'])
+        self.assertEqual(permissions['restricted_records'], [first_uid])
+        accessors = _scope_accessors(
+            SimpleNamespace(
+                shared_folder_cache={
+                    scope_uid: {
+                        'users': [{
+                            'username': 'records-manager@example.com',
+                            'manage_users': False,
+                            'manage_records': True,
+                        }]
+                    }
+                },
+                account_uid_bytes=None,
+            ),
+            scope_uid,
+            permissions,
+        )
+        self.assertEqual(accessors[0]['role'], 'share-manager')
+
+    def test_manage_records_does_not_grant_edit_when_classic_record_is_read_only(self):
+        scope_uid = _uid()
+        params = SimpleNamespace(
+            shared_folder_cache={
+                scope_uid: {
+                    'users': [{
+                        'username': 'records-manager@example.com',
+                        'manage_users': False,
+                        'manage_records': True,
+                    }],
+                    'records': [{
+                        'record_uid': _uid(),
+                        'can_edit': False,
+                        'can_share': False,
+                    }],
+                }
+            },
+            account_uid_bytes=None,
+        )
+
+        accessors = _scope_accessors(params, scope_uid)
+
+        self.assertEqual(accessors[0]['role'], 'viewer')
 
 
     def test_classic_shared_folder_descendant_carries_its_shared_scope(self):
@@ -240,6 +308,125 @@ class TestNsfConversionDestinationSelection(TestCase):
                     params, 'Destination', 'nsf-convert-record', force=True)
 
         prompt.assert_not_called()
+
+    def test_destination_access_is_fully_paginated_and_deduplicated(self):
+        destination_uid, user_uid, team_uid = _uid(), _uid(), _uid()
+        pages = [
+            {
+                'results': [{
+                    'folder_uid': destination_uid,
+                    'success': True,
+                    'accessors': [{
+                        'accessor_uid': user_uid,
+                        'access_type': 'AT_USER',
+                        'username': 'person@example.com',
+                        'role': 'VIEWER',
+                        'inherited': False,
+                    }],
+                }],
+                'has_more': True,
+                'continuation_token': 17,
+            },
+            {
+                'results': [{
+                    'folder_uid': destination_uid,
+                    'success': True,
+                    'accessors': [
+                        {
+                            'accessor_uid': user_uid,
+                            'access_type': 'AT_USER',
+                            'username': 'person@example.com',
+                            'role': 'VIEWER',
+                            'inherited': False,
+                        },
+                        {
+                            'accessor_uid': team_uid,
+                            'access_type': 'AT_TEAM',
+                            'username': 'Operations',
+                            'role': 'CONTENT_MANAGER',
+                            'inherited': True,
+                        },
+                        {
+                            'accessor_uid': _uid(),
+                            'access_type': 'AT_USER',
+                            'denied_access': True,
+                        },
+                    ],
+                }],
+                'has_more': False,
+            },
+        ]
+
+        with patch(
+                'keepercommander.nested_share_folder.folder_api.get_folder_access_v3',
+                side_effect=pages) as get_access:
+            accessors = NestedShareFolderConvertCommand._destination_accessors(
+                SimpleNamespace(), destination_uid)
+
+        self.assertEqual(len(accessors), 2)
+        self.assertEqual(
+            [page.kwargs['continuation_token'] for page in get_access.call_args_list],
+            [None, 17])
+
+    def test_destination_access_preview_discloses_users_and_teams(self):
+        folder_uid, destination_uid = _uid(), _uid()
+        folder = UserFolderNode()
+        folder.uid, folder.name = folder_uid, 'Private'
+        params = SimpleNamespace(
+            nested_share_folders={destination_uid: {'name': 'Destination'}})
+        accessors = [
+            {
+                'accessor_uid': _uid(),
+                'access_type': 'AT_USER',
+                'username': 'person@example.com',
+                'role': 'VIEWER',
+                'inherited': False,
+            },
+            {
+                'accessor_uid': _uid(),
+                'access_type': 'AT_TEAM',
+                'username': 'Operations',
+                'role': 'SHARE_MANAGER',
+                'inherited': True,
+            },
+        ]
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            NestedShareFolderConvertCommand._print_preview(
+                params, {folder_uid: folder}, {folder_uid: []}, folder,
+                destination_uid, 5, [], {folder_uid: 1}, {folder_uid: 1}, [],
+                destination_accessors=accessors)
+
+        rendered = output.getvalue()
+        self.assertIn('Access inherited by new folders from the destination', rendered)
+        self.assertIn('person@example.com', rendered)
+        self.assertIn('Operations', rendered)
+
+    def test_folder_preview_explains_restricted_classic_permissions(self):
+        folder_uid, scope_uid = _uid(), _uid()
+        folder = UserFolderNode()
+        folder.uid, folder.name = folder_uid, 'Shared'
+        params = SimpleNamespace(nested_share_folders={})
+        restricted_record_uid = _uid()
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            NestedShareFolderConvertCommand._print_preview(
+                params, {folder_uid: folder}, {folder_uid: []}, folder,
+                None, 5, [], {folder_uid: 1}, {folder_uid: 1}, [],
+                permission_warnings={
+                    scope_uid: {
+                        'restricted_records': [restricted_record_uid],
+                        'unmapped_manage_records': ['member@example.com'],
+                    }
+                })
+
+        rendered = output.getvalue()
+        self.assertIn(restricted_record_uid, rendered)
+        self.assertIn('most restrictive permissions', rendered)
+        self.assertIn('member@example.com', rendered)
+        self.assertIn('manage_records permissions cannot be mapped', rendered)
 
 
 class TestClassicFolderConversionApplicationReads(TestCase):
@@ -829,6 +1016,18 @@ class TestPamRecordConversionRestrictions(TestCase):
         self.assertIn('PAM', nested_share_folder_convert_parser.format_help())
         self.assertIn('--retry', nested_share_folder_convert_parser.format_help())
 
+    def test_legacy_nsf_convert_alias_warns_before_running(self):
+        commands = {}
+        register_commands(commands)
+        self.assertIn('nsf-convert', commands)
+
+        output = io.StringIO()
+        with redirect_stdout(output), self.assertRaises(CommandError):
+            NestedShareConvertCommand().execute(
+                SimpleNamespace(), command='nsf-convert', records=[])
+        self.assertIn('nsf-convert is deprecated', output.getvalue())
+        self.assertIn('nsf-convert-record', output.getvalue())
+
 
 class TestClassicFolderConversionExecution(TestCase):
 
@@ -939,6 +1138,93 @@ class TestClassicFolderConversionExecution(TestCase):
         user_choice.assert_not_called()
         delete_source.assert_not_called()
         self.assertNotIn(record_uid, params.nested_share_records)
+
+    def test_incomplete_conversion_reports_moved_remaining_and_retry(self):
+        folder_uid, moved_uid, remaining_uid, uncertain_uid = (
+            _uid(), _uid(), _uid(), _uid())
+        target_uid, destination_uid = _uid(), _uid()
+        folder = UserFolderNode()
+        folder.uid, folder.name, folder.subfolders = folder_uid, 'Private', []
+        params = SimpleNamespace(
+            folder_cache={folder_uid: folder},
+            subfolder_record_cache={folder_uid: {remaining_uid}},
+            nested_share_records={moved_uid: {}},
+        )
+        output = io.StringIO()
+
+        with redirect_stdout(output):
+            NestedShareFolderConvertCommand._print_incomplete_conversion(
+                params,
+                folder_uid,
+                destination_uid,
+                [moved_uid, remaining_uid, uncertain_uid],
+                {moved_uid},
+                {folder_uid: target_uid},
+                {},
+            )
+
+        rendered = output.getvalue()
+        self.assertIn(f'Records confirmed in NSF: 1\n    - {moved_uid}', rendered)
+        self.assertIn(f'Records still placed in Classic: 1\n    - {remaining_uid}', rendered)
+        self.assertIn(
+            f'Records with an unconfirmed conversion result: 1\n    - {uncertain_uid}',
+            rendered)
+        self.assertIn('no automatic rollback was attempted', rendered)
+        self.assertIn(
+            f'nsf-convert-folder "{folder_uid}" --retry --folder "{destination_uid}"',
+            rendered)
+
+    def test_delete_refuses_to_remove_nonempty_source_tree(self):
+        params, folder_uid, record_uid, _ = self._params()
+        remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'sync_down.sync_down'), patch(remove_path) as remove:
+            deleted = NestedShareFolderConvertCommand._delete_classic_source(
+                params, folder_uid)
+
+        self.assertFalse(deleted)
+        remove.assert_not_called()
+
+    def test_delete_refreshes_and_removes_only_an_empty_source_tree(self):
+        params, folder_uid, _, _ = self._params()
+        params.subfolder_record_cache[folder_uid] = set()
+        sync_calls = []
+
+        def refresh(_params):
+            sync_calls.append(True)
+            if len(sync_calls) == 2:
+                params.folder_cache.pop(folder_uid, None)
+
+        remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'sync_down.sync_down', side_effect=refresh), \
+             patch(remove_path) as remove:
+            deleted = NestedShareFolderConvertCommand._delete_classic_source(
+                params, folder_uid)
+
+        self.assertTrue(deleted)
+        self.assertEqual(len(sync_calls), 2)
+        remove.assert_called_once()
+        self.assertEqual(remove.call_args.kwargs, {
+            'pattern': [folder_uid], 'force': True, 'quiet': True,
+        })
+
+    def test_delete_does_not_continue_when_fresh_sync_fails(self):
+        params, folder_uid, _, _ = self._params()
+        remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'sync_down.sync_down', side_effect=RuntimeError('sync failed')), \
+             patch(remove_path) as remove:
+            result = NestedShareFolderConvertCommand._delete_classic_source(
+                params, folder_uid)
+
+        self.assertIsNone(result)
+        remove.assert_not_called()
 
     def test_missing_additional_placement_result_is_a_conversion_failure(self):
         source_uids = [_uid(), _uid()]

@@ -9,11 +9,8 @@ from typing import Optional, List, Dict, Any
 
 from .. import utils, api
 from ..proto import remove_pb2
-from ..commands.nested_share_folder.helpers import (
-    NSF_FOLDER_REMOVE_BATCH_SIZE,
-    NSF_RECORD_REMOVE_BATCH_SIZE,
-)
 from ..subfolder import ambiguous_identifier_message
+from .common import NSF_FOLDER_REMOVE_BATCH_SIZE, NSF_RECORD_REMOVE_BATCH_SIZE
 
 logger = logging.getLogger(__name__)
 

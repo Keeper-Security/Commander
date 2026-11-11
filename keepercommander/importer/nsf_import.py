@@ -27,7 +27,7 @@ from .importer import (
 )
 from .. import utils
 from ..error import CommandError, KeeperApiError
-from ..commands.nested_share_folder.helpers import (
+from ..nested_share_folder.common import (
     MAX_NESTED_SHARE_FOLDER_DEPTH,
     NSF_FOLDER_BATCH_SIZE,
     NSF_FOLDER_RECORD_BATCH_SIZE,
@@ -35,10 +35,24 @@ from ..commands.nested_share_folder.helpers import (
     NSF_IMPORT_THROTTLE_BASE_WAIT,
     NSF_IMPORT_THROTTLE_MAX_RETRIES,
     NSF_RECORD_BATCH_SIZE,
+    normalize_parent_uid,
 )
-from ..nested_share_folder.permissions import classic_perms_to_nsf_role
 from ..params import KeeperParams
 from ..subfolder import BaseFolderNode
+
+
+def classic_perms_to_nsf_role(manage_users=False, manage_records=False,
+                              can_edit=False, can_share=False):
+    """Preserve the legacy NSF import role mapping."""
+    if manage_users and manage_records:
+        return 'full-manager'
+    if manage_records and can_share:
+        return 'content-share-manager'
+    if manage_records or can_edit:
+        return 'content-manager'
+    if can_share:
+        return 'share-manager'
+    return 'viewer'
 
 
 def is_nsf_folder(params, folder_uid):  # type: (KeeperParams, Optional[str]) -> bool
@@ -115,8 +129,6 @@ def ensure_nsf_record_folders(records, folders, default_name=None):
 def find_nsf_child(params, folder_name, parent_uid):
     # type: (KeeperParams, str, Optional[str]) -> Optional[str]
     """Find an NSF child named *folder_name* under *parent_uid* (or vault root)."""
-    from ..commands.nested_share_folder.helpers import normalize_parent_uid
-
     nsf_folders = getattr(params, 'nested_share_folders', None) or {}
     name_lower = (folder_name or '').lower()
     looking_for_root = not parent_uid

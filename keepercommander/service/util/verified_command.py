@@ -139,7 +139,7 @@ class Verifycommand:
     def validate_nsf_convert_command(command_tokens, request_temp_dir=None):
         """Block permanent NSF conversions in Service Mode."""
         if not command_tokens or command_tokens[0].lower() not in (
-                'nsf-convert-record', 'nsf-convert-folder'):
+                'nsf-convert', 'nsf-convert-record', 'nsf-convert-folder'):
             return None
 
         command_name = command_tokens[0].lower()

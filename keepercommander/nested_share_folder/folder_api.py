@@ -25,12 +25,8 @@ from .common import (
     parse_folder_access_result,
     resolve_team_identifier, get_team_keys, encrypt_for_team,
     handle_share_invite,
-)
-from ..commands.nested_share_folder.helpers import (
-    NSF_FOLDER_ACCESS_BATCH_SIZE,
-    NSF_FOLDER_ACCESS_PAGE_SIZE,
-    NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE,
-    NSF_FOLDER_BATCH_SIZE,
+    NSF_FOLDER_ACCESS_BATCH_SIZE, NSF_FOLDER_ACCESS_PAGE_SIZE,
+    NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE, NSF_FOLDER_BATCH_SIZE,
 )
 from .permissions import (
     FolderUsageType, SetBooleanValue, resolve_role_name, ROLE_NAME_MAP,
