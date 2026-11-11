@@ -19,7 +19,12 @@ from typing import Optional, List, Dict
 
 from . import imp_exp
 from .. import api, record_types
-from .importer import SharedFolder, Team, Permission, Record, PathDelimiter, normalize_folder_path, replace_email_domain, BaseDownloadMembership, BaseDownloadRecordType, RecordType
+from .importer import (SharedFolder, Team, Permission, Record, PathDelimiter, normalize_folder_path,
+                       path_components, replace_email_domain, BaseDownloadMembership,
+                       BaseDownloadRecordType, RecordType)
+from .pam_membership import (membership_safe_name, apply_pam_project_prefix,
+                             filter_shared_folders_by_safes, apply_pam_project_to_folders,
+                             PAM_ROOT_FOLDER_NAME)
 from .json.json import KeeperJsonImporter, KeeperJsonExporter
 from ..commands.base import dump_report_data, raise_parse_exception, suppress_exit, user_choice, Command
 from ..commands.enterprise_common import EnterpriseCommand
@@ -206,6 +211,13 @@ download_membership_parser.exit = suppress_exit
 apply_membership_parser = argparse.ArgumentParser(prog='apply-membership', description='Loads shared folder membership from JSON file')
 apply_membership_parser.add_argument('--full-sync', dest='full_sync', action='store_true', help='Update and remove membership also.')
 apply_membership_parser.add_argument('--unsafe', dest='unsafe', action='store_true', help='Combined with --full-sync. Will remove yourself from folders where you have no permission.')
+apply_membership_parser.add_argument('--pam-project', dest='pam_project', action='store',
+                                    help='Map bare CyberArk safe paths under PAM Environments/{project}/ '
+                                         '(for membership after pam project cyberark-import --folder-mode safe).')
+apply_membership_parser.add_argument('--safes', dest='safes', action='store',
+                                    help='Apply membership only to matching safes (comma-separated, supports globs).')
+apply_membership_parser.add_argument('--list-safes', dest='list_safes', action='store_true',
+                                    help='List membership safe names (and PAM paths when --pam-project is set), then exit.')
 apply_membership_parser.add_argument('name', type=str, nargs='?', help='Input file name. "shared_folder_membership.json" if omitted.')
 apply_membership_parser.error = raise_parse_exception
 apply_membership_parser.exit = suppress_exit
@@ -673,6 +685,28 @@ class ApplyMembershipCommand(Command):
                 teams.append(obj)
             if isinstance(obj, Record) and obj.shares:
                 secret_records.append(obj)
+
+        safes_pattern = kwargs.get('safes') or ""
+        if safes_pattern:
+            before = len(shared_folders)
+            shared_folders = filter_shared_folders_by_safes(shared_folders, safes_pattern)
+            logging.info('Safe filter matched %d of %d shared folder(s).', len(shared_folders), before)
+
+        pam_project = (kwargs.get('pam_project') or "").strip()
+        if pam_project:
+            shared_folders = apply_pam_project_to_folders(shared_folders, pam_project)
+
+        if kwargs.get('list_safes') is True:
+            if not shared_folders:
+                logging.info('No shared folders to list.')
+                return
+            for folder in shared_folders:
+                name = membership_safe_name(folder.path)
+                if pam_project:
+                    print(f'{name}\t{folder.path}')
+                else:
+                    print(name)
+            return
 
         full_sync = kwargs.get('full_sync') is True
         unsafe = kwargs.get('unsafe') is True
