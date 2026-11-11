@@ -6,8 +6,9 @@
 #
 # Keeper Commander — Delinea PAM import
 
+import datetime
 from collections import Counter
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ...cyberark.pam.master_policy_mapper import MasterPolicyMapper
 from .client import DelineaPamClient
@@ -69,14 +70,148 @@ class RotationMapper:
     def schedule_to_cron(schedule: Optional[dict]) -> Optional[str]:
         """Quartz cron (six fields, as ``MasterPolicyMapper.days_to_cron``) for an AutoChangeScheduleModel.
 
-        ``startingOn`` supplies minute / hour. Cases by ``changeType``:
+        ``startingOn`` supplies minute / hour. Cases by ``scheduleType`` (older payloads: ``changeType``):
           * Days     every ``days`` days: ``0 M H */days * ?`` (``days`` 1 = daily)
           * Weekly   weekday booleans: ``0 M H ? * MON,WED``
           * Monthly  ``monthScheduleType`` day-of-month: ``0 M H D */changeEveryMonths ?``;
                      nth weekday: ``0 M H ? */changeEveryMonths DOW#N``
         Returns ``None`` for unknown types so the caller can record a Finding.
+
+        Times are converted to UTC and the day moves with them (day 0 is ``L``, day 32 is 1);
+        nth-weekday schedules shift only the weekday.
         """
-        raise NotImplementedError
+        if not isinstance(schedule, dict):
+            return None
+        minute, hour, shift = RotationMapper._clock(schedule.get('startingOn'))
+        change = str(schedule.get('scheduleType') or schedule.get('changeType') or '').strip().casefold()
+        if change in ('days', 'daily'):
+            days = RotationMapper._positive_int(schedule.get('days'), 1)
+            if not days:
+                return None
+            dom = '*' if days == 1 else f'*/{days}'
+            return f'0 {minute} {hour} {dom} * ?'
+        if change == 'weekly':
+            weekdays = RotationMapper._weekdays(schedule)
+            if not weekdays:
+                return None
+            weekdays = RotationMapper._sorted_days(RotationMapper._shift_dow(day, shift) for day in weekdays)
+            return f'0 {minute} {hour} ? * {",".join(weekdays)}'
+        if change == 'monthly':
+            return RotationMapper._monthly_cron(schedule, minute, hour, shift)
+        return None
+
+    @staticmethod
+    def _clock(starting_on) -> Tuple[int, int, int]:
+        """UTC (minute, hour, day shift) for *starting_on*; shift is -1, 0 or +1."""
+        if not starting_on:
+            return 0, 0, 0
+        text = str(starting_on).strip()
+        if text.endswith(('Z', 'z')):
+            text = text[:-1] + '+00:00'
+        try:
+            parsed = datetime.datetime.fromisoformat(text)
+        except ValueError:
+            return 0, 0, 0
+        # Naive timestamps are taken as UTC.
+        if parsed.tzinfo is None:
+            return parsed.minute, parsed.hour, 0
+        utc = parsed.astimezone(datetime.timezone.utc)
+        shift = (utc.date() - parsed.date()).days
+        return utc.minute, utc.hour, shift
+
+    _QUARTZ_DAYS = ('SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT')
+
+    @staticmethod
+    def _shift_dow(day: str, shift: int) -> str:
+        days = RotationMapper._QUARTZ_DAYS
+        return days[(days.index(day) + shift) % 7]
+
+    @staticmethod
+    def _sorted_days(days) -> List[str]:
+        return sorted(set(days), key=RotationMapper._QUARTZ_DAYS.index)
+
+    @staticmethod
+    def _positive_int(value, default: int) -> Optional[int]:
+        if value in (None, ''):
+            return default
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return None
+        return number if number > 0 else None
+
+    @staticmethod
+    def _weekdays(schedule: dict) -> List[str]:
+        names = ('sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday')
+        quartz = ('SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT')
+        selected = []
+        listed = schedule.get('weeklyDays') or schedule.get('daysOfWeek') or []
+        listed_names = {str(day).strip().casefold()[:3] for day in listed} if isinstance(listed, list) else set()
+        for name, short in zip(names, quartz):
+            if RotationMapper._flag(schedule, name) or name[:3] in listed_names or short.casefold() in listed_names:
+                selected.append(short)
+        return selected
+
+    @staticmethod
+    def _flag(schedule: dict, name: str) -> bool:
+        for key, value in schedule.items():
+            if str(key).casefold() != name:
+                continue
+            if isinstance(value, str):
+                return value.strip().casefold() == 'true'
+            return bool(value)
+        return False
+
+    @staticmethod
+    def _monthly_cron(schedule: dict, minute: int, hour: int, shift: int = 0) -> Optional[str]:
+        months = RotationMapper._positive_int(schedule.get('changeEveryMonths'), 1)
+        if not months:
+            return None
+        month_field = '*' if months == 1 else f'*/{months}'
+        kind = str(schedule.get('monthScheduleType') or 'day').strip().casefold().replace('_', '').replace('-', '')
+        if kind in ('day', 'dayofmonth'):
+            day = RotationMapper._positive_int(
+                schedule.get('changeEveryMonthsDayNumber', schedule.get('dayOfMonth', schedule.get('day'))),
+                1,
+            )
+            if not day or day > 31:
+                return None
+            day += shift
+            dom = 'L' if day < 1 else str(1 if day > 31 else day)
+            return f'0 {minute} {hour} {dom} {month_field} ?'
+        if kind in ('weekday', 'nthweekday', 'week', 'weekofmonth'):
+            dow = RotationMapper._dow(
+                schedule.get('changeEveryMonthsInstanceTarget')
+                or schedule.get('weekDay') or schedule.get('dayOfWeek')
+            )
+            nth = RotationMapper._week_number(
+                schedule.get('changeEveryMonthsInstance')
+                or schedule.get('weekNumber') or schedule.get('weekOfMonth')
+            )
+            if not dow or not nth:
+                return None
+            dow = RotationMapper._shift_dow(dow, shift)
+            occurrence = f'{dow}L' if nth == 'L' else f'{dow}#{nth}'
+            return f'0 {minute} {hour} ? {month_field} {occurrence}'
+        return None
+
+    @staticmethod
+    def _dow(value) -> Optional[str]:
+        text = str(value or '').strip().casefold()
+        names = {
+            'sun': 'SUN', 'sunday': 'SUN', 'mon': 'MON', 'monday': 'MON',
+            'tue': 'TUE', 'tuesday': 'TUE', 'wed': 'WED', 'wednesday': 'WED',
+            'thu': 'THU', 'thursday': 'THU', 'fri': 'FRI', 'friday': 'FRI',
+            'sat': 'SAT', 'saturday': 'SAT',
+        }
+        return names.get(text)
+
+    @staticmethod
+    def _week_number(value) -> Optional[str]:
+        text = str(value or '').strip().casefold()
+        names = {'first': '1', 'second': '2', 'third': '3', 'fourth': '4', 'last': 'L',
+                 '1': '1', '2': '2', '3': '3', '4': '4', 'l': 'L'}
+        return names.get(text)
 
     @staticmethod
     def complexity_from_requirement(requirement: Optional[dict]) -> Optional[PasswordComplexity]:

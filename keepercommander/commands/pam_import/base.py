@@ -36,6 +36,27 @@ PAM_ROTATION_TYPES = ("pamDatabase", "pamDirectory", "pamMachine", "pamUser")
 PAM_CONFIG_TYPES = ("pamNetworkConfiguration", "pamAwsConfiguration", "pamAzureConfiguration", "pamDomainConfiguration", "pamGcpConfiguration", "pamOciConfiguration")
 PAM_ENVIRONMENT_TYPES = ("local", "aws", "azure", "domain", "gcp", "oci")
 
+# Cron field symbols
+CRON_ANY_VALUE = '*'
+CRON_NO_SPECIFIC_VALUE = '?'
+CRON_STEP_PREFIX = '*/'
+
+# Cron weekday mapping
+CRON_WEEKDAYS = {
+    'SUN': 'SUNDAY', 'MON': 'MONDAY', 'TUE': 'TUESDAY', 'WED': 'WEDNESDAY',
+    'THU': 'THURSDAY', 'FRI': 'FRIDAY', 'SAT': 'SATURDAY',
+}
+
+# Rotation schedule types
+SCHEDULE_TYPES = ("on-demand", "cron")
+
+# Rotation configuration types
+ROTATION_TYPES = ("general", "iam_user", "scripts_only")
+ENABLED_TYPES = ("on", "off", "default")
+
+# PAM settings configuration choices
+SETTINGS_CHOICES = ("on", "off", "default")
+
 PROJECT_IMPORT_MIN_JSON_TEMPLATE = """{ "project": "Project 1" }"""
 PROJECT_IMPORT_JSON_TEMPLATE = """
 {
@@ -202,23 +223,22 @@ class PamConfigEnvironment():
 
         # gateway_name, ksm_app_name used externally during gw creation, use controllerUid here
 
-        choices = ("on", "off", "default")
         val = settings.get("connections", None)
-        if isinstance(val, str) and val in choices: self.connections = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.connections = val
         val = settings.get("rotation", None)
-        if isinstance(val, str) and val in choices: self.rotation = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.rotation = val
         val = settings.get("tunneling", None)
-        if isinstance(val, str) and val in choices: self.tunneling = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.tunneling = val
         val = settings.get("remote_browser_isolation", None)
-        if isinstance(val, str) and val in choices: self.remote_browser_isolation = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.remote_browser_isolation = val
         val = settings.get("graphical_session_recording", None)
-        if isinstance(val, str) and val in choices: self.graphical_session_recording = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.graphical_session_recording = val
         val = settings.get("text_session_recording", None)
-        if isinstance(val, str) and val in choices: self.text_session_recording = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.text_session_recording = val
         val = settings.get("ai_threat_detection", None)
-        if isinstance(val, str) and val in choices: self.ai_threat_detection = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.ai_threat_detection = val
         val = settings.get("ai_terminate_session_on_detection", None)
-        if isinstance(val, str) and val in choices: self.ai_terminate_session_on_detection = val
+        if isinstance(val, str) and val in SETTINGS_CHOICES: self.ai_terminate_session_on_detection = val
 
         val = settings.get("port_mapping", None) # multiline
         if isinstance(val, str): val = [val]
@@ -461,6 +481,46 @@ class PamAttachmentObject():
     # def to_json(self): pass  # File upload will create the JSON format
 
 
+def quartz_cron_to_keeper_schedule(cron):
+    """Six-field Quartz cron to a Keeper ``DAILY`` / ``WEEKLY`` / ``MONTHLY_BY_DAY`` schedule, else ``None``."""
+    parts = str(cron or '').split()
+    if len(parts) != 6:
+        return None
+    _second, minute, hour, dom, month, dow = parts
+    if not minute.isdigit() or not hour.isdigit():
+        return None
+    if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+        return None
+    utc_time = f'{int(hour):02d}:{int(minute):02d}'
+
+    def _step(field):
+        if field == CRON_ANY_VALUE:
+            return 1
+        if not field.startswith(CRON_STEP_PREFIX) or len(field) < 3 or not field[2:].isdigit():
+            return None
+        interval = int(field[2:])
+        return interval if interval > 0 else None
+
+    if month == CRON_ANY_VALUE and dow in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE):
+        interval = _step(dom)
+        if interval:
+            return {'type': 'DAILY', 'utcTime': utc_time, 'intervalCount': interval, 'tz': 'Etc/UTC'}
+    if dom in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and month == CRON_ANY_VALUE and dow in CRON_WEEKDAYS:
+        return {
+            'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': CRON_WEEKDAYS[dow],
+            'intervalCount': 1, 'tz': 'Etc/UTC',
+        }
+    if dow in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and dom.isdigit():
+        interval = _step(month)
+        day = int(dom)
+        if interval and 1 <= day <= 31:
+            return {
+                'type': 'MONTHLY_BY_DAY', 'utcTime': utc_time, 'monthDay': day,
+                'intervalCount': interval, 'tz': 'Etc/UTC',
+            }
+    return None
+
+
 class PamRotationScheduleObject():
     def __init__(self):
         self.type: str = ""  # on-demand|CRON
@@ -471,7 +531,6 @@ class PamRotationScheduleObject():
 
     @classmethod
     def load(cls, data: Union[str, dict]) -> PamRotationScheduleObject:
-        schedule_types = ("on-demand", "cron")
         obj = cls()
         try: data = json.loads(data) if isinstance(data, str) else data
         except: logging.error(f"Failed to load rotation schedule from: {str(data)[:80]}")
@@ -479,10 +538,10 @@ class PamRotationScheduleObject():
 
         type = data.get("type", None)
         type_norm = type.strip().lower().replace("_", "-") if isinstance(type, str) else ""
-        if type_norm in schedule_types:
+        if type_norm in SCHEDULE_TYPES:
             obj.type = type_norm
         elif type:
-            logging.error(f"""Schedule type "{str(type)[:80]}" is unknown - must be one of {schedule_types}""")
+            logging.error(f"""Schedule type "{str(type)[:80]}" is unknown - must be one of {SCHEDULE_TYPES}""")
 
         if obj.type.lower().replace("_", "-") == "cron":
             cron = data.get("cron", None)
@@ -517,8 +576,6 @@ class PamRotationSettingsObject():
 
     @classmethod
     def load(cls, data: Optional[Union[str, dict]], rotation_params: Optional[PamRotationParams] = None) -> PamRotationSettingsObject:
-        rotation_types = ("general", "iam_user", "scripts_only")
-        enabled_types = ("on", "off", "default")
         rx_complexity = r"^(\d+,\d+,\d+,\d+,\d+)$"
         obj = cls()
 
@@ -533,10 +590,10 @@ class PamRotationSettingsObject():
         if not isinstance(data, dict): return obj
 
         rotation = data.get("rotation", None)
-        if rotation and isinstance(rotation, str) and rotation.strip().lower() in rotation_types:
+        if rotation and isinstance(rotation, str) and rotation.strip().lower() in ROTATION_TYPES:
             obj.rotation = rotation.strip().lower()
         elif rotation:
-            logging.error(f"""Rotation type "{str(rotation)[:80]}" is unknown - must be one of {rotation_types}""")
+            logging.error(f"""Rotation type "{str(rotation)[:80]}" is unknown - must be one of {ROTATION_TYPES}""")
 
         # type: iam_user|scripts_only=NOOP - automatically pick up current PAM Config
         # type: general - automatically picks owner record (uid by title)
@@ -555,10 +612,10 @@ class PamRotationSettingsObject():
                 obj.resource = rotation_params.configUid
 
         enabled = data.get("enabled", None)
-        if enabled and isinstance(enabled, str) and enabled.strip().lower() in enabled_types:
+        if enabled and isinstance(enabled, str) and enabled.strip().lower() in ENABLED_TYPES:
             obj.enabled = enabled.strip().lower()
         elif enabled:
-            logging.error(f"""Unknown rotation enablement type "{str(enabled)[:80]}" - must be one of {enabled_types}""")
+            logging.error(f"""Unknown rotation enablement type "{str(enabled)[:80]}" - must be one of {ENABLED_TYPES}""")
 
         obj.schedule = PamRotationScheduleObject.load(data.get("schedule", None) or "")
         complexity = data.get("password_complexity", None)

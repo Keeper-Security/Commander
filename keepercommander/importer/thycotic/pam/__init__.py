@@ -1,3 +1,4 @@
+
 #  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
@@ -8,6 +9,7 @@
 
 from .client import DelineaPamClient
 from .crosswalk import DEFAULT_CROSSWALK, Crosswalk
+from .import_mapper import build_pam_import
 from .launcher_mapper import LauncherMapper
 from .models import (AccessGrant, ChangerMapping, CrosswalkCheck, CrosswalkRow, Finding, FindingLog,
                      PasswordComplexity, PolicySource, Principal, PrincipalKind, RotationPolicy,
@@ -20,6 +22,7 @@ from .secret_mapper import MappedSecret, SecretMapper
 __all__ = [
     'AccessGrant', 'ChangerMapping', 'Crosswalk', 'CrosswalkCheck', 'CrosswalkRow', 'DEFAULT_CROSSWALK',
     'DelineaPamClient', 'Finding', 'FindingLog', 'LauncherMapper', 'MappedSecret', 'PasswordComplexity',
+    'build_pam_import',
     'PermissionMapper', 'PolicySource', 'Principal', 'PrincipalKind', 'RotationMapper', 'RotationPolicy',
     'RotationState', 'SecretGrantTarget', 'SecretMapper', 'SecretPolicyResolver', 'permission_boundaries',
 ]
