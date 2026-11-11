@@ -1,8 +1,9 @@
+import json
 from unittest import TestCase, mock
 
 from data_vault import VaultEnvironment, get_synced_params
 from keepercommander.api import sync_down, crypto, utils
-from keepercommander.proto import SyncDown_pb2
+from keepercommander.proto import SyncDown_pb2, record_pb2
 
 vault_env = VaultEnvironment()
 
@@ -166,3 +167,170 @@ class TestSyncDown(TestCase):
             self.assertTrue('shared_folder_key_unencrypted' in sf)
         for t in params.team_cache.values():
             self.assertTrue('team_key_unencrypted' in t)
+
+
+class TestSyncDownKsmAppMembership(TestCase):
+    """KSM App Sharing v2: ksm_app_users / ksm_app_teams caches built from the sync-down response."""
+
+    def setUp(self):
+        self.app_uid_bytes = crypto.get_random_bytes(16)
+        self.app_uid = utils.base64_url_encode(self.app_uid_bytes)
+        self.team_uid_bytes = crypto.get_random_bytes(16)
+        self.team_uid = utils.base64_url_encode(self.team_uid_bytes)
+
+    def _sync(self, params, fill):
+        rs = SyncDown_pb2.SyncDownResponse()
+        rs.continuationToken = crypto.get_random_bytes(64)
+        fill(rs)
+
+        def respond(p, request, endpoint, **kwargs):
+            # a full sync also asks for the record types
+            if endpoint == 'vault/get_record_types':
+                return record_pb2.RecordTypesResponse()
+            return rs
+
+        with mock.patch('keepercommander.api.communicate_rest', side_effect=respond):
+            sync_down(params)
+
+    def _add_user(self, rs, username='member@example.com', manage_users=True, manage_shares=False,
+                  manage_devices=False, removed=False, record_key=None, key_type=None):
+        change = rs.ksmAppUsers.add()
+        change.appRecordUid = self.app_uid_bytes
+        change.username = username
+        change.canManageUsers = manage_users
+        change.canManageShares = manage_shares
+        change.canManageDevices = manage_devices
+        change.removed = removed
+        if record_key is not None:
+            change.recordKey = record_key
+            change.recordKeyType = key_type
+
+    def _add_team(self, rs, manage_users=True, manage_shares=False, manage_devices=False, removed=False):
+        change = rs.ksmAppTeams.add()
+        change.appRecordUid = self.app_uid_bytes
+        change.teamUid = self.team_uid_bytes
+        change.canManageUsers = manage_users
+        change.canManageShares = manage_shares
+        change.canManageDevices = manage_devices
+        change.removed = removed
+
+    def test_app_user_is_cached_with_permission_bits(self):
+        params = get_synced_params()
+        self._sync(params, lambda rs: self._add_user(rs, manage_users=True, manage_shares=False, manage_devices=True))
+
+        entry = params.ksm_app_users[self.app_uid]['member@example.com']
+        self.assertTrue(entry['can_manage_users'])
+        self.assertFalse(entry['can_manage_shares'])
+        self.assertTrue(entry['can_manage_devices'])
+        self.assertNotIn('record_key', entry, 'no key was sent, so none is cached')
+
+    def test_app_user_update_replaces_the_bits(self):
+        params = get_synced_params()
+        self._sync(params, lambda rs: self._add_user(rs, manage_users=True, manage_shares=False))
+        self._sync(params, lambda rs: self._add_user(rs, manage_users=False, manage_shares=True))
+
+        entry = params.ksm_app_users[self.app_uid]['member@example.com']
+        self.assertFalse(entry['can_manage_users'])
+        self.assertTrue(entry['can_manage_shares'])
+
+    def test_removed_app_user_is_dropped_and_others_stay(self):
+        params = get_synced_params()
+
+        def add_two(rs):
+            self._add_user(rs, username='a@example.com')
+            self._add_user(rs, username='b@example.com')
+
+        self._sync(params, add_two)
+        self._sync(params, lambda rs: self._add_user(rs, username='a@example.com', removed=True))
+
+        self.assertNotIn('a@example.com', params.ksm_app_users[self.app_uid])
+        self.assertIn('b@example.com', params.ksm_app_users[self.app_uid])
+
+    def test_app_user_record_key_is_decrypted(self):
+        params = get_synced_params()
+        record_key = crypto.get_random_bytes(32)
+        encrypted = crypto.encrypt_aes_v1(record_key, params.data_key)
+        self._sync(params, lambda rs: self._add_user(
+            rs, record_key=encrypted, key_type=record_pb2.ENCRYPTED_BY_DATA_KEY))
+
+        entry = params.ksm_app_users[self.app_uid]['member@example.com']
+        self.assertEqual(record_key, entry['record_key_unencrypted'])
+
+    def test_app_user_with_undecryptable_key_is_cached_without_the_key(self):
+        params = get_synced_params()
+        self._sync(params, lambda rs: self._add_user(
+            rs, record_key=crypto.get_random_bytes(48), key_type=record_pb2.ENCRYPTED_BY_DATA_KEY))
+
+        entry = params.ksm_app_users[self.app_uid]['member@example.com']
+        self.assertIn('record_key', entry)
+        self.assertNotIn('record_key_unencrypted', entry, 'a bad key must not break the sync')
+
+    def test_app_team_is_cached_then_removed(self):
+        params = get_synced_params()
+        self._sync(params, lambda rs: self._add_team(rs, manage_users=False, manage_devices=True))
+
+        entry = params.ksm_app_teams[self.app_uid][self.team_uid]
+        self.assertFalse(entry['can_manage_users'])
+        self.assertTrue(entry['can_manage_devices'])
+
+        self._sync(params, lambda rs: self._add_team(rs, removed=True))
+        self.assertNotIn(self.team_uid, params.ksm_app_teams[self.app_uid])
+
+    def test_removed_app_record_drops_its_membership_caches(self):
+        params = get_synced_params()
+
+        def add_both(rs):
+            self._add_user(rs)
+            self._add_team(rs)
+
+        self._sync(params, add_both)
+        self._sync(params, lambda rs: rs.removedRecords.append(self.app_uid_bytes))
+
+        self.assertNotIn(self.app_uid, params.ksm_app_users)
+        self.assertNotIn(self.app_uid, params.ksm_app_teams)
+
+    def test_removed_team_is_pruned_from_every_app(self):
+        params = get_synced_params()
+        self._sync(params, lambda rs: self._add_team(rs))
+        self._sync(params, lambda rs: rs.removedTeams.append(self.team_uid_bytes))
+
+        self.assertNotIn(self.team_uid, params.ksm_app_teams[self.app_uid])
+
+    def test_full_resync_clears_the_membership_caches(self):
+        params = get_synced_params()
+
+        def add_both(rs):
+            self._add_user(rs)
+            self._add_team(rs)
+
+        self._sync(params, add_both)
+        self.assertTrue(params.ksm_app_users)
+
+        def full_sync(rs):
+            rs.cacheStatus = SyncDown_pb2.CLEAR
+
+        self._sync(params, full_sync)
+
+        self.assertEqual({}, params.ksm_app_users)
+        self.assertEqual({}, params.ksm_app_teams)
+
+    def test_member_gets_the_app_record_key_from_their_membership(self):
+        """A member who does not own the app has no record key of their own; it comes from the membership row."""
+        params = get_synced_params()
+        record_key = crypto.get_random_bytes(32)
+
+        def fill(rs):
+            record = rs.records.add()
+            record.recordUid = self.app_uid_bytes
+            record.revision = 1
+            record.version = 3
+            record.shared = True
+            record.clientModifiedTime = utils.current_milli_time()
+            record.data = crypto.encrypt_aes_v2(json.dumps({'title': 'Shared App'}).encode('utf-8'), record_key)
+            self._add_user(rs, username=params.user, record_key=crypto.encrypt_aes_v1(record_key, params.data_key),
+                           key_type=record_pb2.ENCRYPTED_BY_DATA_KEY)
+
+        self._sync(params, fill)
+
+        self.assertIn(self.app_uid, params.record_cache, 'the app record must survive the sync')
+        self.assertEqual(record_key, params.record_cache[self.app_uid]['record_key_unencrypted'])
