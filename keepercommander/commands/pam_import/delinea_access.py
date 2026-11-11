@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Callable, List, Optional, Set
 
 from ... import api
+from ...constants import EMAIL_PATTERN
 from ...error import CommandError
 from ...importer.thycotic.pam.models import FindingLog, Principal, SecretGrantTarget
 from ...importer.thycotic.pam.permission_mapper import CLASSIC_RECORD_FLAGS
+from ...nested_share_folder.permissions import resolve_role_name
+from ...nested_share_folder.record_api import share_record_v3
 from .nsf_helpers import get_folder_record_uids
 
 COMMAND = 'pam project delinea-import'
@@ -108,7 +112,7 @@ def apply_secret_grants(params, targets: List[SecretGrantTarget], use_nsf: bool,
         for grant in target.grants:
             email = (resolve_email(grant.principal) or '').strip()
             label = f'{target.record_title}/{grant.principal.name or email or grant.role}'
-            if '@' not in email:
+            if not re.match(EMAIL_PATTERN, email):
                 findings.add('Secret permission', label, 'No Keeper user for this principal')
                 continue
             if owner and email.casefold() == owner:
@@ -203,7 +207,5 @@ def _grant_classic(params, record_uid: str, email: str, role: str, findings: Fin
 
 
 def _grant_nsf(params, record_uid: str, email: str, role: str) -> bool:
-    from ...nested_share_folder.permissions import resolve_role_name
-    from ...nested_share_folder.record_api import share_record_v3
     result = share_record_v3(params, record_uid, email, resolve_role_name(role))
     return bool(result and result.get('success'))

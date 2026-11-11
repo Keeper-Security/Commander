@@ -109,7 +109,7 @@ class DelineaSecretGrantTest(unittest.TestCase):
         params = _params()
         findings = FindingLog()
         with mock.patch('keepercommander.commands.pam_import.delinea_access.api.sync_down'), \
-                mock.patch('keepercommander.nested_share_folder.record_api.share_record_v3',
+                mock.patch('keepercommander.commands.pam_import.delinea_access.share_record_v3',
                            return_value={'success': True}) as share:
             applied = apply_secret_grants(
                 params, [_target(email='owner@example.com'), _target()],

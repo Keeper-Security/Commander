@@ -925,3 +925,21 @@ AUDIT_EVENT_STATE_MAPPING = {
         "pam_tunnel_stopped": "Stopped Tunnel",
         "pam_tunnel_terminated": "Terminated Tunnel",
 }
+
+# Delinea/Thycotic Secret Server API Endpoints
+DELINEA_PAM_ENDPOINTS = {
+    'folder': '/v1/folders/{id}',
+    'folder_permissions': '/v1/folder-permissions?filter.folderId={id}',
+    'secrets_lookup': '/v1/secrets/lookup?filter.folderId={id}',
+    'secret': '/v1/secrets/{id}',
+    'secret_settings': '/v1/secrets/{id}/settings',
+    'secret_rpc': '/v1/secrets/secret-detail/{id}/rpc',
+    'secret_permissions': '/v1/secret-permissions?filter.secretId={id}',
+    'secret_policy': '/v2/secret-policy/{id}',
+    'secret_templates': '/v1/secret-templates?filter.includeSecretCount=true',
+    'secret_template': '/v1/secret-templates/{id}',
+    'password_types': '/v1/remote-password-changing/password-types',
+    'password_type': '/v1/remote-password-changing/password-types/{id}',
+    'password_requirement': '/v1/password-requirements/{id}',
+    'sites': '/v1/distributed-engine/sites',
+}
