@@ -152,8 +152,16 @@ class PAMProjectImportCommand(Command):
                 return
 
             if project["options"]["file_name"] != "" and os.path.isfile(project["options"]["file_name"]):
-                with open(project["options"]["file_name"], encoding="utf-8") as f:
-                    project["data"] = json.load(f)
+                try:
+                    with open(project["options"]["file_name"], encoding="utf-8") as f:
+                        project["data"] = json.load(f)
+                except json.JSONDecodeError as e:
+                    logging.error(f"Invalid JSON in file '{project['options']['file_name']}': {e}")
+                    return
+
+                if not isinstance(project["data"], dict):
+                    logging.error(f"Invalid JSON structure: root must be an object/dictionary, got {type(project['data']).__name__}")
+                    return
 
         # Verify min required entries - project name, etc.
         # Project name from command line overrides project name from JSON file
@@ -1069,10 +1077,10 @@ class PAMProjectImportCommand(Command):
             changes = any(map(lambda x: x is not None, perm.values()))
             if changes:
                 fperm = {
-                    "manage_users": True if str(perm["manage_users"]).upper() == "TRUE" else False,
-                    "manage_records": True if str(perm["manage_records"]).upper() == "TRUE" else False,
-                    "can_edit": True if str(perm["can_edit"]).upper() == "TRUE" else False,
-                    "can_share": True if str(perm["can_share"]).upper() == "TRUE" else False
+                    "manage_users": True if str(perm.get("manage_users", "")).upper() == "TRUE" else False,
+                    "manage_records": True if str(perm.get("manage_records", "")).upper() == "TRUE" else False,
+                    "can_edit": True if str(perm.get("can_edit", "")).upper() == "TRUE" else False,
+                    "can_share": True if str(perm.get("can_share", "")).upper() == "TRUE" else False
                 }
 
             perms = sfu.get("permissions", [])
@@ -1438,18 +1446,17 @@ class PAMProjectImportCommand(Command):
                         usr.uid = utils.generate_uid()
 
         # Detect and reject duplicate UIDs to prevent graph ambiguity
-        _all_assigned_uids: list[str] = []
+        _seen_uids: set[str] = set()
+        _duplicate_uids: set[str] = set()
         for _obj in chain(resources, users):
-            _all_assigned_uids.append(_obj.uid)
+            if _obj.uid in _seen_uids:
+                _duplicate_uids.add(_obj.uid)
+            _seen_uids.add(_obj.uid)
             if hasattr(_obj, 'users') and isinstance(_obj.users, list):
                 for _usr in _obj.users:
-                    _all_assigned_uids.append(_usr.uid)
-        _seen_uids: set[str] = set()
-        _duplicate_uids: list[str] = []
-        for _uid in _all_assigned_uids:
-            if _uid in _seen_uids:
-                _duplicate_uids.append(_uid)
-            _seen_uids.add(_uid)
+                    if _usr.uid in _seen_uids:
+                        _duplicate_uids.add(_usr.uid)
+                    _seen_uids.add(_usr.uid)
         if _duplicate_uids:
             print(
                 f"{bcolors.FAIL}pam project import: duplicate uid values detected in import JSON: "
