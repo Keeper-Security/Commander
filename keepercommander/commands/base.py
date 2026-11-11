@@ -773,9 +773,12 @@ class Command(CliCommand):
             envvars = params.environment_variables
             args = '' if args is None else args
             if parser:
-                # Update prog to match alias name (e.g., 'find-password' instead of 'clipboard-copy')
+                # Update prog to match alias name (e.g., 'find-password' instead of 'clipboard-copy').
+                # `command` is the first word the user typed, also for sub-commands of a command group
+                # ('pam' for 'pam project import'): never replace the full name of a group sub-command
+                # ('pam project import') with that first word, or its usage shows only 'usage: pam ...'.
                 alias_cmd = d.get('command')
-                if alias_cmd and alias_cmd != parser.prog:
+                if alias_cmd and alias_cmd != parser.prog and alias_cmd != parser.prog.split()[0]:
                     parser.prog = alias_cmd
                 command_tokens = tokenize_command_args(args, envvars)
                 if self.support_extra_parameters():
