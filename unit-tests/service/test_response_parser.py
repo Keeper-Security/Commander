@@ -289,3 +289,34 @@ URL: https://example.com"""
     def test_parse_pam_project_export_non_json(self):
         result = KeeperResponseParser.parse_response('pam project export -p UID', 'not json')
         self.assertEqual(result['status'], 'error')
+
+    def test_pam_project_extend_folder_names_in_log_output_do_not_affect_status(self):
+        output = (
+            '0 existing folders, 0 new folders created\n'
+            '0 existing records, 2 new records to be created\n'
+            'Started importing data...\n'
+            '0/1\n'
+            '1/1\n'
+            '0/1\n'
+            '1/1'
+        )
+
+        for folder_name in (
+            'Reserved Hosts',
+            'Prod - Errors Team',
+            'Empty Bucket',
+            'DB Duplicates',
+        ):
+            with self.subTest(folder_name=folder_name):
+                log_output = (
+                    f'Note: Using the same folder "{folder_name}" for both resources and users '
+                    '(best practice: separate).'
+                )
+                result = KeeperResponseParser.parse_response(
+                    'pam project extend --config=CONFIG --filename=FILEDATA',
+                    output,
+                    log_output=log_output,
+                )
+
+                self.assertEqual(result['status'], 'success')
+                self.assertNotIn('status_code', result)
