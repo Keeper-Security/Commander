@@ -326,6 +326,14 @@ def _selected_weekdays(schedule: dict) -> List[str]:
         for name, quartz in _WEEKDAYS:
             if source.get(name) is True and quartz not in selected:
                 selected.append(quartz)
+    # Also check array fields: weeklyDays, daysOfWeek
+    for array_key in ('weeklyDays', 'daysOfWeek'):
+        days = schedule.get(array_key)
+        if isinstance(days, list):
+            for day in days:
+                quartz = _quartz_weekday(day)
+                if quartz and quartz not in selected:
+                    selected.append(quartz)
     return selected
 
 
