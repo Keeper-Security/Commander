@@ -22,7 +22,7 @@ This module provides reusable components for Docker-based integrations:
 from .models import (
     DockerSetupConstants, SetupResult, ServiceConfig,
     SlackConfig, TeamsConfig, SailPointConfig, GChatConfig, GChatConstants,
-    SetupStep, ApproverTeam, ApprovalsConfig,
+    SetupStep, ApproverTeam, ApprovalsConfig, WorkflowApprovalConstants,
 )
 from .printer import DockerSetupPrinter
 from .setup_base import DockerSetupBase
@@ -39,6 +39,7 @@ __all__ = [
     'GChatConstants',
     'ApproverTeam',
     'ApprovalsConfig',
+    'WorkflowApprovalConstants',
     'SetupStep',
     'DockerSetupPrinter',
     'DockerSetupBase',

@@ -60,6 +60,36 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         self.assertNotIn('malicious-command', args.commands.split(','))
         self.assertNotIn('rm', args.commands.split(','))
 
+    def test_slack_pam_command_requires_workflow_approval_setting(self):
+        from types import SimpleNamespace
+        from keepercommander.service.commands.integrations import runtime_policy
+
+        field = mock.Mock()
+        field.label = 'workflow_approval_enabled'
+        field.get_default_value.return_value = 'true'
+        record = SimpleNamespace(custom=[field])
+        args = _Args(commands='search')
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'integration-record'}, clear=True), \
+                mock.patch.object(runtime_policy.vault.KeeperRecord, 'load', return_value=record):
+            apply_runtime_command_policy(args, params=object())
+
+        self.assertIn('pam', args.commands.split(','))
+
+    def test_slack_pam_command_is_removed_when_workflow_approval_disabled(self):
+        from types import SimpleNamespace
+        from keepercommander.service.commands.integrations import runtime_policy
+
+        field = mock.Mock()
+        field.label = 'workflow_approval_enabled'
+        field.get_default_value.return_value = 'false'
+        record = SimpleNamespace(custom=[field])
+        args = _Args(commands='search,pam')
+        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'integration-record'}, clear=True), \
+                mock.patch.object(runtime_policy.vault.KeeperRecord, 'load', return_value=record):
+            apply_runtime_command_policy(args, params=object())
+
+        self.assertNotIn('pam', args.commands.split(','))
+
     def test_gchat_record_env_confines_to_gchat_allowlist(self):
         allowed = set(GChatAppSetupCommand().get_service_commands().split(','))
         with mock.patch.dict(os.environ, {'GCHAT_RECORD': 'uid-456'}, clear=True):

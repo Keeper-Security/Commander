@@ -19,7 +19,7 @@ from ..pam.router_helper import _post_request_to_router
 from ...display import bcolors
 from ...error import CommandError
 from ...params import KeeperParams
-from ...proto import workflow_pb2
+from ...proto import workflow_pb2, enterprise_pb2
 from ... import api, crypto, utils
 
 from .helpers import RecordResolver, WorkflowFormatter, sanitize_router_error, DashUidArgsMixin
@@ -32,11 +32,18 @@ class WorkflowGetApprovalRequestsCommand(Command):
     )
     parser.add_argument('--format', dest='format', action='store',
                         choices=['table', 'json'], default='table', help='Output format')
+    parser.add_argument(
+        '--include-approvers',
+        action='store_true',
+        help='Include configured approvers and team member emails in JSON output (use with --format json)',
+    )
 
     def get_parser(self):
         return WorkflowGetApprovalRequestsCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        if kwargs.get('include_approvers') and kwargs.get('format') != 'json':
+            raise CommandError('', '--include-approvers requires --format json')
         try:
             response = _post_request_to_router(
                 params, 'get_approval_requests',
@@ -58,8 +65,13 @@ class WorkflowGetApprovalRequestsCommand(Command):
                     seen_flows.add(fuid)
                     unique.append(wf)
 
-            pending = [wf for wf in unique
-                       if not self._already_approved_by_me(params, wf)]
+            pending = []
+            workflow_states = {}
+            for wf in unique:
+                state = self._get_workflow_state(params, wf)
+                workflow_states[bytes(wf.flowUid)] = state
+                if not self._already_approved_by_me(params, state):
+                    pending.append(wf)
 
             if not pending:
                 if kwargs.get('format') == 'json':
@@ -69,7 +81,12 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 return
 
             if kwargs.get('format') == 'json':
-                self._print_json(params, pending)
+                self._print_json(
+                    params,
+                    pending,
+                    workflow_states=workflow_states,
+                    include_approvers=kwargs.get('include_approvers', False),
+                )
             else:
                 self._print_table(params, pending)
 
@@ -77,21 +94,23 @@ class WorkflowGetApprovalRequestsCommand(Command):
             raise CommandError('', f'Failed to get approval requests: {sanitize_router_error(e)}')
 
     @staticmethod
-    def _already_approved_by_me(params, wf):
+    def _get_workflow_state(params, wf):
         try:
             st = workflow_pb2.WorkflowState()
             st.flowUid = wf.flowUid
-            ws = _post_request_to_router(
+            return _post_request_to_router(
                 params, 'get_workflow_state',
                 rq_proto=st, rs_type=workflow_pb2.WorkflowState,
             )
-            if ws and ws.status and ws.status.approvedBy:
-                current_user = params.user
-                for a in ws.status.approvedBy:
-                    if a.user == current_user:
-                        return True
         except Exception:
             logging.debug('Failed to check approval status for flow', exc_info=True)
+            return None
+
+    @staticmethod
+    def _already_approved_by_me(params, state):
+        if state and state.status and state.status.approvedBy:
+            current_user = params.user
+            return any(a.user == current_user for a in state.status.approvedBy)
         return False
 
     @staticmethod
@@ -116,18 +135,48 @@ class WorkflowGetApprovalRequestsCommand(Command):
             return 'Unable to decrypt'
 
     @staticmethod
-    def _print_json(params, workflows):
+    def _print_json(params, workflows, workflow_states=None, include_approvers=False):
         decrypt = WorkflowGetApprovalRequestsCommand._decrypt_param
         extract = WorkflowGetApprovalRequestsCommand._extract_param
+        workflow_states = workflow_states or {}
+        workflow_configs = {}
+        team_members = {}
         requests = []
         for wf in workflows:
             rec_uid = utils.base64_url_encode(wf.resource.value)
             requested_by = wf.user or RecordResolver.resolve_user(params, wf.userId)
-            requests.append({
+            state = workflow_states.get(bytes(wf.flowUid))
+            workflow_config = workflow_configs.get(rec_uid)
+            if rec_uid not in workflow_configs:
+                try:
+                    workflow_config = _post_request_to_router(
+                        params,
+                        'read_workflow_config',
+                        rq_proto=wf.resource,
+                        rs_type=workflow_pb2.WorkflowConfig,
+                    )
+                except Exception:
+                    logging.debug(
+                        'Failed to read workflow config for pending request on %s',
+                        rec_uid,
+                        exc_info=True,
+                    )
+                    workflow_config = None
+                workflow_configs[rec_uid] = workflow_config
+
+            request = {
                 'flow_uid': utils.base64_url_encode(wf.flowUid),
                 'requested_by': requested_by,
                 'record_uid': rec_uid,
                 'record_name': RecordResolver.resolve_name(params, wf.resource),
+                'approvals_needed': (
+                    workflow_config.parameters.approvalsNeeded
+                    if workflow_config and workflow_config.HasField('parameters') else None
+                ),
+                'approvals_received': (
+                    len(state.status.approvedBy)
+                    if state and state.HasField('status') else None
+                ),
                 'started_on': wf.startedOn or None,
                 'expires_on': wf.expiresOn or None,
                 'escalated': wf.escalated,
@@ -137,8 +186,76 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 ),
                 'reason': decrypt(params, rec_uid, extract(wf, 'reason')),
                 'ticket': decrypt(params, rec_uid, extract(wf, 'ticket')),
-            })
+            }
+            if include_approvers:
+                request['approvers'] = (
+                    WorkflowGetApprovalRequestsCommand._serialize_approvers(
+                        params,
+                        workflow_config,
+                        team_members,
+                    )
+                    if workflow_config else []
+                )
+            requests.append(request)
         print(json.dumps({'requests': requests}, indent=2))
+
+    @staticmethod
+    def _serialize_approvers(params, workflow_config, team_members):
+        approvers = []
+        if not workflow_config:
+            return approvers
+        for approver in workflow_config.approvers:
+            approver_info = {'escalation': approver.escalation}
+            if approver.escalationAfterMs:
+                approver_info['escalation_after'] = WorkflowFormatter.format_duration(
+                    approver.escalationAfterMs
+                )
+            if approver.HasField('user'):
+                approver_info['type'] = 'user'
+                approver_info['email'] = approver.user
+            elif approver.HasField('userId'):
+                approver_info['type'] = 'user_id'
+                approver_info['user_id'] = approver.userId
+            elif approver.HasField('teamUid'):
+                team_uid = utils.base64_url_encode(approver.teamUid)
+                approver_info['type'] = 'team'
+                approver_info['team_uid'] = team_uid
+                approver_info['members'] = (
+                    WorkflowGetApprovalRequestsCommand._get_team_member_emails(
+                        params,
+                        approver.teamUid,
+                        team_members,
+                    )
+                )
+            approvers.append(approver_info)
+        return approvers
+
+    @staticmethod
+    def _get_team_member_emails(params, team_uid_bytes, cache):
+        team_uid = utils.base64_url_encode(team_uid_bytes)
+        if team_uid in cache:
+            return cache[team_uid]
+        emails = []
+        try:
+            request = enterprise_pb2.GetTeamMemberRequest()
+            request.teamUid = team_uid_bytes
+            response = api.communicate_rest(
+                params,
+                request,
+                'vault/get_team_members',
+                rs_type=enterprise_pb2.GetTeamMemberResponse,
+            )
+            emails = list(dict.fromkeys(
+                user.email for user in response.enterpriseUser if user.email
+            ))
+        except Exception:
+            logging.debug(
+                'Failed to retrieve members for workflow approver team %s',
+                team_uid,
+                exc_info=True,
+            )
+        cache[team_uid] = emails
+        return emails
 
     @staticmethod
     def _print_table(params, workflows):
