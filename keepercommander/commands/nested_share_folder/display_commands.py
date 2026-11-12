@@ -31,6 +31,7 @@ from .helpers import (
     format_timestamp, load_record_metadata, command_error_handler,
     ensure_nested_share_record, collect_records_in_folder, resolve_record_uid,
     ROOT_FOLDER_UID,
+    is_nested_share_folder_decrypted, is_nested_share_record_decrypted,
 )
 from .parsers import (
     nested_share_record_get_details_parser,
@@ -147,12 +148,21 @@ class NestedShareGetCommand(Command):
     def _resolve_as_folder(params, uid):
         resolved = _nsf.resolve_folder_identifier(
             params, uid, raise_on_ambiguous=True)
-        return resolved if resolved in getattr(params, 'nested_share_folders', {}) else None
+        # Folders whose key never decrypted/validated have no usable name/data
+        # to show - treat them as not found instead of surfacing a blank entry.
+        if resolved in getattr(params, 'nested_share_folders', {}) \
+                and is_nested_share_folder_decrypted(params, resolved):
+            return resolved
+        return None
 
     @staticmethod
     def _resolve_as_record(params, uid):
         resolved = resolve_record_uid(params, uid, 'nsf-get')
-        return resolved if resolved in getattr(params, 'nested_share_records', {}) else None
+        # Records whose key or data never decrypted have no usable content.
+        if resolved in getattr(params, 'nested_share_records', {}) \
+                and is_nested_share_record_decrypted(params, resolved):
+            return resolved
+        return None
 
     # ── Record display ────────────────────────────────────────────────
 

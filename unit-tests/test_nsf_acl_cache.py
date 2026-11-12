@@ -153,7 +153,8 @@ class TestTreeShareFormatting(TestCase):
         self.params = KeeperParams()
         self.params.user = 'me@example.com'
         self.params.nested_share_folders = {
-            'F1': {'name': 'NSF One', 'owner_username': 'owner@x.com', 'parent_uid': None},
+            'F1': {'name': 'NSF One', 'owner_username': 'owner@x.com', 'parent_uid': None,
+                   'folder_key_unencrypted': b'k' * 32},
         }
         self.params.nested_share_folder_share_cache = {
             'F1': [
