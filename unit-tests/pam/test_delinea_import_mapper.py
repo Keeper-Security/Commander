@@ -5,6 +5,8 @@ import sys
 import unittest
 
 from keepercommander.importer.thycotic.pam import build_pam_import
+from keepercommander.importer.thycotic.pam.models import FindingLog, PrincipalKind
+from keepercommander.importer.thycotic.pam.permission_mapper import PermissionMapper
 
 sys.path.insert(0, os.path.dirname(__file__))
 from _delinea_fixtures import build, by_title, connection, items, resources, secret, user_titles  # noqa: E402
@@ -115,11 +117,14 @@ class TestMapping(unittest.TestCase):
                                         resource.get('directory_type')))
 
     def test_types_without_connection_protocol(self):
-        for resource in (_one(1, 'corp ldap', items=items(domain='dc=corp')),
-                         _one(1, 'acct', items=items(server='db', port='1521'))):
-            with self.subTest(resource=resource['title']):
-                self.assertEqual(resource['pam_settings']['options']['connections'], 'off')
-                self.assertNotIn('protocol', connection(resource))
+        resource = _one(1, 'corp ldap', items=items(domain='dc=corp'))
+        self.assertEqual(resource['pam_settings']['options']['connections'], 'off')
+        self.assertNotIn('protocol', connection(resource))
+
+    def test_oracle_uses_oracle_connection(self):
+        resource = _one(1, 'acct', items=items(server='db', port='1521'))
+        self.assertEqual(resource['pam_settings']['options']['connections'], 'on')
+        self.assertEqual(connection(resource)['protocol'], 'oracle')
 
     def test_login_and_unknown_secrets_are_not_imported(self):
         self.assertEqual(resources(build(
@@ -307,6 +312,15 @@ class TestSafeFolders(unittest.TestCase):
         self.assertEqual(h1['folder_path'], 'A/A - Resources')
         self.assertEqual({u['folder_path'] for u in h1['users']}, {'A/A - Users'})
         self.assertEqual(by_title(document, 'h2')['users'][0]['folder_path'], 'B/B - Users')
+
+
+class TestPermissionMapperPrincipals(unittest.TestCase):
+    def test_none_user_and_group_maps_fall_back_to_ids(self):
+        mapper = PermissionMapper(None, None, FindingLog())
+        user = mapper.principal({'userId': 7})
+        team = mapper.principal({'groupId': 9})
+        self.assertEqual((user.kind, user.name), (PrincipalKind.USER, '7'))
+        self.assertEqual((team.kind, team.name), (PrincipalKind.TEAM, '9'))
 
 
 if __name__ == '__main__':
