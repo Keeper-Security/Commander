@@ -10,6 +10,15 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
+def _positive(value) -> Optional[int]:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return value if value > 0 else None
+    if isinstance(value, str) and value.strip().isdigit():
+        number = int(value.strip())
+        return number if number > 0 else None
+    return None
 
 class PrincipalKind(str, Enum):
     USER = 'user'
@@ -124,6 +133,7 @@ class SecretGrantTarget:
     record_title: str
     folder_name: str
     grants: List[AccessGrant] = field(default_factory=list)
+    resource_title: str = ''
 
 
 @dataclass(frozen=True)

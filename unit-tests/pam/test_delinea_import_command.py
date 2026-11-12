@@ -10,6 +10,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+from keepercommander.error import CommandError
+from keepercommander.importer.thycotic.pam import Crosswalk
 from keepercommander.commands.pam_import.delinea_import import (
     DEFAULT_IMPORT_JSON,
     DelineaImportOptions,
@@ -23,13 +25,54 @@ from _delinea_fixtures import by_title, items, resources, secret  # noqa: E402
 
 DELINEA_IMPORT = 'keepercommander.commands.pam_import.delinea_import'
 
-SAMPLE_FOLDERS = [
-    {'folderName': 'Servers', 'folderPath': '\\Servers', 'secrets': [
-        secret(1, 'root', 6007, items=items(machine='web01', username='root', password='secret-pw',
-                                            private_key='PEM'))]},
-    {'folderName': 'Other', 'folderPath': '\\Other', 'secrets': [
-        secret(2, 'svc', 6007, items=items(machine='web02', username='svc', password='pw2'))]},
-]
+SSH = {'passwordTypeId': 9, 'passwordTypeName': 'Unix Account (SSH)'}
+
+
+class FakeClient:
+    """``DelineaPamClient`` double: two top-level folders, one SSH secret in each."""
+
+    def __init__(self):
+        self.folders_by_id = {
+            5: {'id': 5, 'folderName': 'Servers', 'folderPath': '\\Servers'},
+            6: {'id': 6, 'folderName': 'Other', 'folderPath': '\\Other'},
+        }
+        self.secrets = {
+            1: secret(1, 'root', 6007, folderId=5, autoChangeEnabled=False,
+                      items=items(machine='web01', username='root', password='secret-pw', private_key='PEM')),
+            2: secret(2, 'svc', 6007, folderId=6, autoChangeEnabled=False,
+                      items=items(machine='web02', username='svc', password='pw2')),
+        }
+        self.folder_permission_rows = {}
+        self.secret_permission_rows = {}
+        self.folder_permissions = mock.Mock(side_effect=lambda fid: self.folder_permission_rows.get(fid, []))
+
+    def folders(self):
+        return self.folders_by_id
+
+    def users(self):
+        return {10: {'userName': 'alice', 'emailAddress': 'alice@example.com'}}
+
+    def groups(self):
+        return {}
+
+    def secret_ids(self, folder_ids):
+        return [sid for sid, row in self.secrets.items() if row['folderId'] in folder_ids]
+
+    def secret(self, secret_id):
+        return self.secrets.get(secret_id)
+
+    def secret_permissions(self, secret_id):
+        return self.secret_permission_rows.get(secret_id, [])
+
+    def secret_rpc(self, _secret_id):
+        return dict(SSH)
+
+    def sites(self):
+        return {}
+
+    def __getattr__(self, _name):
+        # secret_settings, secret_policy, folder, secret_template, password_type, password_requirement
+        return lambda *_args: None
 
 
 class TestSelectFolders(unittest.TestCase):
@@ -63,6 +106,10 @@ class TestSelectFolders(unittest.TestCase):
             with self.subTest(prefixes=prefixes):
                 self.assertEqual([f['folderName'] for f in select_folders(self.FOLDERS, prefixes)], expected)
 
+    def test_malformed_folder_entries_are_skipped(self):
+        folders = [None, 'Servers', self.FOLDERS[0]]
+        self.assertEqual(select_folders(folders, ['Servers']), [self.FOLDERS[0]])
+
 
 class TestDelineaImportOrchestrator(unittest.TestCase):
     def setUp(self):
@@ -70,11 +117,11 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(tmp.name)
-        self.client = mock.Mock()
-        self.client.folder_secret_details.side_effect = lambda: [dict(f) for f in SAMPLE_FOLDERS]
+        self.client = FakeClient()
+        self.params = mock.Mock(enterprise={'users': [{'username': 'alice@example.com'}]}, available_team_cache=[])
 
     def orchestrator(self, **options):
-        return DelineaImportOrchestrator(mock.Mock(), self.client, DelineaImportOptions(server='ss', **options))
+        return DelineaImportOrchestrator(self.params, self.client, DelineaImportOptions(server='ss', **options))
 
     @staticmethod
     def run_quiet(orchestrator):
@@ -90,28 +137,50 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
 
     def test_map(self):
         orchestrator = self.orchestrator(project_name='Proj', gateway='GW1', folders=['Servers'])
-        mapped = orchestrator.map(mock.Mock(mappings={}))
-        self.assertEqual(orchestrator.import_document['project'], 'Proj')
-        self.assertEqual(orchestrator.import_document['pam_configuration']['gateway_name'], 'GW1')
-        self.assertIs(mapped.resources, resources(orchestrator.import_document))
+        mapped = orchestrator.map(Crosswalk())
         self.assertEqual([r['title'] for r in mapped.resources], ['web01'])
+        self.assertEqual(list(mapped.folder_grants), ['Servers'])
+        self.assertEqual(mapped.resources[0]['type'], 'pamMachine')
+        document = orchestrator.build_import_json(mapped, False)
+        self.assertEqual(document['project'], 'Proj')
+        self.assertEqual(document['pam_configuration']['gateway_name'], 'GW1')
+        # Same content, but a copy: build_import_json() is called once per import attempt.
+        self.assertEqual(document['pam_data']['resources'], mapped.resources)
+        self.assertIsNot(document['pam_data']['resources'], mapped.resources)
+        document['pam_data']['resources'][0]['users'][0]['password'] = 'changed'
+        self.assertEqual(mapped.resources[0]['users'][0]['password'], 'secret-pw')
 
         orchestrator = self.orchestrator()
-        orchestrator.map(mock.Mock(mappings={}))
-        self.assertNotIn('gateway_name', orchestrator.import_document['pam_configuration'])
+        document = orchestrator.build_import_json(orchestrator.map(Crosswalk()), False)
+        self.assertNotIn('gateway_name', document['pam_configuration'])
+        self.assertEqual(len(resources(document)), 2)
 
     def test_map_warns_when_no_folder_matches(self):
         orchestrator = self.orchestrator(folders=['Nope', 'Nada'])
         with self.assertLogs(level='WARNING') as logs:
-            self.assertEqual(orchestrator.map(mock.Mock(mappings={})).resources, [])
+            self.assertEqual(orchestrator.map(Crosswalk()).resources, [])
         self.assertIn('Nope, Nada', logs.output[0])
 
+    def test_folder_permissions_read_once_per_boundary(self):
+        self.client.secrets[3] = secret(3, 'root2', 6007, folderId=5, autoChangeEnabled=False,
+                                        items=items(machine='web03', username='r', password='p'))
+        row = {'userId': 10, 'folderAccessRoleName': 'View', 'secretAccessRoleName': 'View'}
+        self.client.folder_permission_rows = {5: [row]}
+        self.client.secret_permission_rows = {1: [dict(row, secretAccessRoleName='Owner')], 3: [row]}
+        mapped = self.orchestrator().map(Crosswalk())
+        self.assertEqual(sorted(c.args[0] for c in self.client.folder_permissions.call_args_list), [5, 6])
+        self.assertEqual([t.secret_id for t in mapped.secret_grants], [1])
+        self.assertEqual(len(mapped.folder_grants['Servers']), 1)
+
+    def test_skip_permissions_reads_no_permissions(self):
+        mapped = self.orchestrator(skip_permissions=True).map(Crosswalk())
+        self.client.folder_permissions.assert_not_called()
+        self.assertEqual(mapped.folder_grants, {'Servers': [], 'Other': []})
+
     def test_dry_run_writes_redacted_file_prints_and_never_imports(self):
-        with mock.patch(f'{DELINEA_IMPORT}.run_with_classic_fallback') as fallback, \
-                mock.patch(f'{DELINEA_IMPORT}.choose_nsf') as choose:
+        with mock.patch(f'{DELINEA_IMPORT}.run_with_classic_fallback') as fallback:
             output = self.run_quiet(self.orchestrator(dry_run=True, yes=True))
         fallback.assert_not_called()
-        choose.assert_not_called()
         self.assertIn('[DRY RUN COMPLETE] 2 resources, 2 users would be imported.', output)
         self.assertNotIn('secret-pw', output)
         self.assertNotIn('PEM', output)
@@ -143,10 +212,10 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
 
     def test_redacted_document(self):
         orchestrator = self.orchestrator()
-        orchestrator.map(mock.Mock(mappings={}))
-        redacted = orchestrator.redacted_document(orchestrator.import_document)
+        document = orchestrator.build_import_json(orchestrator.map(Crosswalk()), False)
+        redacted = orchestrator.redacted_document(document)
         self.assertEqual(by_title(redacted, 'web01')['users'][0]['password'], '***')
-        self.assertEqual(by_title(orchestrator.import_document, 'web01')['users'][0]['password'], 'secret-pw')
+        self.assertEqual(by_title(document, 'web01')['users'][0]['password'], 'secret-pw')
         self.assertEqual(orchestrator.redacted_document({}), {})
         sparse = {'pam_data': {'users': [{'private_pem_key': 'k', 'password': 'p'}], 'resources': [{}]}}
         self.assertEqual(orchestrator.redacted_document(sparse)['pam_data']['users'][0],
@@ -168,24 +237,40 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
                 mock.patch.object(orchestrator, 'import_project') as import_project:
             output = self.run_quiet(orchestrator)
         document, nsf = import_project.call_args[0]
-        self.assertIs(document, orchestrator.import_document)
         self.assertTrue(nsf)
         self.assertEqual(by_title(document, 'web01')['users'][0]['password'], 'secret-pw')
         self.assertIn('Delinea import (Nested Share Folders): 2 resources, 2 users', output)
-        self.assertIn('Rotation: enabled 0, disabled 2', output)
+        self.assertIn('Rotation: disabled 2, inherited 0', output)
+
+    def test_failed_import_raises_and_skips_secret_grants(self):
+        row = {'userId': 10, 'folderAccessRoleName': 'View', 'secretAccessRoleName': 'Owner'}
+        self.client.secret_permission_rows = {1: [row]}
+        with mock.patch(f'{DELINEA_IMPORT}.run_with_classic_fallback', side_effect=RuntimeError('boom')), \
+                mock.patch(f'{DELINEA_IMPORT}.apply_secret_grants') as grants:
+            with self.assertRaises(RuntimeError):
+                self.run_quiet(self.orchestrator(yes=True))
+        grants.assert_not_called()
 
     def test_crosswalk_options(self):
-        with self.assertLogs(level='WARNING') as logs:
-            self.run_quiet(self.orchestrator(dry_run=True, crosswalk_file='cw.csv'))
-        self.assertTrue(any('crosswalk file is not applied' in line for line in logs.output))
+        with open('cw.csv', 'w', encoding='utf-8') as fh:
+            fh.write('changer_name,record_type,protocol,port\nUnix Account (SSH),login,,\n')
+        mapped = []
+        orchestrator = self.orchestrator(dry_run=True, crosswalk_file='cw.csv')
+        with mock.patch.object(orchestrator, 'map', side_effect=lambda cw: mapped.append(cw) or
+                               DelineaMappedImport()):
+            self.run_quiet(orchestrator)
+        self.assertEqual(mapped[0].resolve('unix account (ssh)').record_type, 'login')
+
+        with self.assertRaises(CommandError):
+            self.orchestrator(crosswalk_file='missing.csv').run()
 
         os.remove(DEFAULT_IMPORT_JSON)
-        self.client.folder_secret_details.reset_mock()
         orchestrator = self.orchestrator(crosswalk_out='cw.csv')
-        with mock.patch.object(orchestrator, 'run_crosswalk') as run_crosswalk:
+        with mock.patch.object(orchestrator, 'run_crosswalk') as run_crosswalk, \
+                mock.patch.object(orchestrator, 'map') as map_:
             orchestrator.run()
         run_crosswalk.assert_called_once()
-        self.client.folder_secret_details.assert_not_called()
+        map_.assert_not_called()
         self.assertFalse(os.path.exists(DEFAULT_IMPORT_JSON))
 
     def test_report_counts_rotation_from_users(self):

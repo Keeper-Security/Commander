@@ -16,6 +16,7 @@ from .models import (AccessGrant, ChangerMapping, CrosswalkCheck, CrosswalkRow, 
                      RotationState, SecretGrantTarget)
 from .permission_mapper import PermissionMapper, permission_boundaries
 from .policy import SecretPolicyResolver
+from .role_mapper import RoleResolver
 from .rotation_mapper import RotationMapper
 from .secret_mapper import MappedSecret, SecretMapper
 
@@ -23,6 +24,7 @@ __all__ = [
     'AccessGrant', 'ChangerMapping', 'Crosswalk', 'CrosswalkCheck', 'CrosswalkRow', 'DEFAULT_CROSSWALK',
     'DelineaPamClient', 'Finding', 'FindingLog', 'LauncherMapper', 'MappedSecret', 'PasswordComplexity',
     'build_pam_import',
-    'PermissionMapper', 'PolicySource', 'Principal', 'PrincipalKind', 'RotationMapper', 'RotationPolicy',
-    'RotationState', 'SecretGrantTarget', 'SecretMapper', 'SecretPolicyResolver', 'permission_boundaries',
+    'PermissionMapper', 'PolicySource', 'Principal', 'PrincipalKind', 'RoleResolver', 'RotationMapper',
+    'RotationPolicy', 'RotationState', 'SecretGrantTarget', 'SecretMapper', 'SecretPolicyResolver',
+    'permission_boundaries',
 ]

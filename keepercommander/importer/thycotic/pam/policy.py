@@ -33,11 +33,38 @@ class SecretPolicyResolver:
         true; then walks ``parentFolderId`` while each folder's
         ``inheritSecretPolicy`` is true and takes the first ``secretPolicyId``.
         """
-        raise NotImplementedError
+        if not isinstance(secret, dict):
+            return None
+        if secret.get('enableInheritSecretPolicy'):
+            folder_id = secret.get('folderId')
+            policy_id = self.folder_policy_id(folder_id) if isinstance(folder_id, int) else None
+        else:
+            policy_id = secret.get('secretPolicyId')
+        if not isinstance(policy_id, int) or policy_id <= 0:
+            return None
+        return self.client.secret_policy(policy_id)
 
     def folder_policy_id(self, folder_id: int) -> Optional[int]:
         """Effective policy id of a folder (memoised in ``_folder_policy``)."""
-        raise NotImplementedError
+        if folder_id in self._folder_policy:
+            return self._folder_policy[folder_id]
+        seen = set()
+        current: Optional[int] = folder_id
+        result: Optional[int] = None
+        while isinstance(current, int) and current > 0 and current not in seen:
+            seen.add(current)
+            folder = self.client.folder(current)
+            if not isinstance(folder, dict):
+                break
+            if folder.get('inheritSecretPolicy'):
+                parent = folder.get('parentFolderId')
+                current = parent if isinstance(parent, int) else None
+                continue
+            policy_id = folder.get('secretPolicyId')
+            result = policy_id if isinstance(policy_id, int) and policy_id > 0 else None
+            break
+        self._folder_policy[folder_id] = result
+        return result
 
     @staticmethod
     def effective(secret_value: Any, policy_item: Optional[dict],
