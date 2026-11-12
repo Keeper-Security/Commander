@@ -17,7 +17,7 @@ from ... import api, vault
 from ...constants import EMAIL_PATTERN
 from ...error import CommandError
 from ...importer.thycotic.pam.models import FindingLog, Principal, SecretGrantTarget
-from ...importer.thycotic.pam.permission_mapper import CLASSIC_RECORD_FLAGS
+from ...importer.thycotic.pam.role_mapper import RoleResolver
 from ...nested_share_folder.permissions import resolve_role_name
 from ...nested_share_folder.record_api import share_record_v3
 from .cyberark_import import is_matching_title
@@ -197,7 +197,7 @@ def _record_title(params, record_uid: str) -> str:
 
 
 def _grant_classic(params, record_uid: str, email: str, role: str, findings: FindingLog, label: str) -> bool:
-    flags = CLASSIC_RECORD_FLAGS.get(role)
+    flags = RoleResolver.nsf_to_classic_record_flags(role)
     if flags is None:
         findings.add('Secret permission', label, 'No classic record permission for this role')
         return False

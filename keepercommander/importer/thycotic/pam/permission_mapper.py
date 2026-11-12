@@ -10,56 +10,9 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from ....nested_share_folder.permissions import resolve_role_name
 from .models import AccessGrant, FindingLog, Principal, PrincipalKind, _positive
-
-# (folder role is Owner, secret role) -> NSF role. Never grants more than Delinea did:
-# folder Edit / Add Secret / View have no NSF equivalent beyond the secret dimension.
-FOLDER_ROLE_MAP: Dict[Tuple[bool, str], str] = {
-    (True, 'owner'): 'full-manager',
-    (True, 'edit'): 'full-manager',
-    (True, 'view'): 'share-manager',
-    (True, 'list'): 'requestor',
-    (False, 'owner'): 'content-share-manager',
-    (False, 'edit'): 'content-manager',
-    (False, 'view'): 'viewer',
-    (False, 'list'): 'requestor',
-}
-
-SECRET_ROLE_MAP: Dict[str, str] = {
-    'owner': 'content-share-manager',
-    'edit': 'content-manager',
-    'view': 'viewer',
-    'list': 'requestor',
-}
-
-# NSF role -> classic (manage_users, manage_records); None = no classic equivalent.
-CLASSIC_FOLDER_FLAGS: Dict[str, Optional[Tuple[bool, bool]]] = {
-    'full-manager': (True, True),
-    'content-share-manager': (False, True),
-    'content-manager': (False, True),
-    'share-manager': (True, False),
-    'viewer': (False, False),
-    'requestor': None,
-}
-
-# NSF role -> classic record share (can_edit, can_share); None = no classic equivalent.
-CLASSIC_RECORD_FLAGS: Dict[str, Optional[Tuple[bool, bool]]] = {
-    'full-manager': (True, True),
-    'content-share-manager': (True, True),
-    'content-manager': (True, False),
-    'share-manager': (False, True),
-    'viewer': (False, False),
-    'requestor': None,
-}
-
-
-def folder_role(folder_access_role: str, secret_access_role: str) -> Optional[str]:
-    key = ((folder_access_role or '').strip().lower() ==
-           'owner', (secret_access_role or '').strip().lower())
-    return FOLDER_ROLE_MAP.get(key)
-
-
-def secret_role(secret_access_role: str) -> Optional[str]:
-    return SECRET_ROLE_MAP.get((secret_access_role or '').strip().lower())
+from .role_mapper import (
+    CLASSIC_FOLDER_FLAGS, CLASSIC_RECORD_FLAGS, RoleResolver
+)
 
 
 def permission_boundaries(folders: Dict[int, dict]) -> Dict[int, int]:
@@ -114,11 +67,9 @@ class PermissionMapper:
             return Principal(PrincipalKind.TEAM, group_id, name)
         return None
 
-    def folder_grants(self, rows: Iterable[dict]) -> List[AccessGrant]:
-        """One grant per principal, keeping the highest role (``rank``).
-
-        Rows whose role pair is not in ``FOLDER_ROLE_MAP`` produce a Finding.
-        """
+    def _process_permission_rows(self, rows: Iterable[dict], role_extractor,
+                                 expand_principals=False) -> List[AccessGrant]:
+        """Generic permission row processor."""
         best: Dict[Tuple[PrincipalKind, int], AccessGrant] = {}
         for row in rows or []:
             if not isinstance(row, dict):
@@ -126,37 +77,28 @@ class PermissionMapper:
             principal = self.principal(row)
             if principal is None:
                 continue
-            role = folder_role(row.get('folderAccessRoleName'), row.get('secretAccessRoleName'))
+            role = role_extractor(row)
             if not role:
                 self.findings.add(
-                    'Folder permission',
-                    f"{row.get('folderAccessRoleName') or ''}/{row.get('secretAccessRoleName') or ''}",
-                    'No Keeper role for this Delinea folder permission')
+                    'Permission',
+                    f"{principal.name or principal.source_id}",
+                    'No Keeper role for this Delinea permission')
                 continue
-            self._keep_highest(best, AccessGrant(principal, role))
-        return list(best.values())
-
-    def secret_grants(self, rows: Iterable[dict]) -> List[AccessGrant]:
-        """Same as ``folder_grants`` using ``SECRET_ROLE_MAP``; teams are expanded to users
-        (``share_record_v3`` / ``ShareRecordCommand`` accept users only)."""
-        best: Dict[Tuple[PrincipalKind, int], AccessGrant] = {}
-        for row in rows or []:
-            if not isinstance(row, dict):
-                continue
-            principal = self.principal(row)
-            if principal is None:
-                continue
-            role = secret_role(row.get('secretAccessRoleName'))
-            if not role:
-                self.findings.add(
-                    'Secret permission',
-                    f"{principal.name}/{row.get('secretAccessRoleName') or ''}",
-                    'No Keeper role for this Delinea secret permission')
-                continue
-            principals = self._expand(principal)
+            principals = self._expand(principal) if expand_principals else [principal]
             for person in principals:
                 self._keep_highest(best, AccessGrant(person, role))
         return list(best.values())
+
+    def folder_grants(self, rows: Iterable[dict]) -> List[AccessGrant]:
+        def extract_role(row):
+            return RoleResolver.delinea_folder_to_nsf(
+                row.get('folderAccessRoleName'), row.get('secretAccessRoleName'))
+        return self._process_permission_rows(rows, extract_role, expand_principals=False)
+
+    def secret_grants(self, rows: Iterable[dict]) -> List[AccessGrant]:
+        def extract_role(row):
+            return RoleResolver.delinea_secret_to_nsf(row.get('secretAccessRoleName'))
+        return self._process_permission_rows(rows, extract_role, expand_principals=True)
 
     @staticmethod
     def is_override(secret: dict, secret_rows: List[dict], folder_rows: List[dict]) -> bool:
@@ -175,7 +117,7 @@ class PermissionMapper:
 
         Returns ``None`` in classic mode when the role has no classic equivalent.
         """
-        flags = CLASSIC_FOLDER_FLAGS.get(grant.role)
+        flags = RoleResolver.nsf_to_classic_folder_flags(grant.role)
         if flags is None and not use_nsf:
             return None
         manage_users, manage_records = flags or (False, False)
@@ -194,7 +136,7 @@ class PermissionMapper:
         share_votes = []
         downgraded = False
         for grant in grants:
-            flags = CLASSIC_RECORD_FLAGS.get(grant.role)
+            flags = RoleResolver.nsf_to_classic_record_flags(grant.role)
             if flags is None:
                 downgraded = True
                 continue
@@ -243,8 +185,6 @@ class PermissionMapper:
     @staticmethod
     def rank(role: str) -> int:
         return resolve_role_name(role)
-
-
 
 
 def _role_pairs(rows: List[dict]) -> set:
