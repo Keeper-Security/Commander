@@ -1357,6 +1357,8 @@ def get_folder_access_v3(params, folder_uids, continuation_token=None,
                     'date_created': a.dateCreated or None,
                     'last_modified': a.lastModified or None,
                 }
+                if a.HasField('tlaProperties'):
+                    ai['tla_expiration'] = a.tlaProperties.expiration
                 if a.HasField('permissions'):
                     p = a.permissions
                     ai['permissions'] = {
