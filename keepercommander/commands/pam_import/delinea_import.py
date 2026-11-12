@@ -127,7 +127,6 @@ class DelineaImportOrchestrator:
         self.findings = FindingLog()
         self.permissions = PermissionMapper({}, {}, self.findings)
         self.matcher: Optional[UserTeamMatcher] = None
-        self.import_document: dict = {}
 
     def run(self) -> None:
         opts = self.options
@@ -137,10 +136,11 @@ class DelineaImportOrchestrator:
             raise CommandError(COMMAND, str(e)) from e
         if opts.crosswalk_out or opts.crosswalk_check:
             crosswalk = Crosswalk.load(opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
+        except (OSError, ValueError) as e:
+            raise CommandError(COMMAND, str(e)) from e
+        if opts.crosswalk_out or opts.crosswalk_check:
             self.run_crosswalk(crosswalk)
             return
-        if opts.crosswalk_file:
-            logging.warning('Password changer crosswalk file is not applied; using the built-in map')
 
         use_nsf = choose_nsf(self.params, opts.use_nsf, self.findings)
         mapped = self.map(crosswalk)
