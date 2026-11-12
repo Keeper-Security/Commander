@@ -193,7 +193,8 @@ class LoginV3Flow:
                 if should_cancel:
                     break
                 if should_resume:
-                    resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken)
+                    login_type = 'ALTERNATE' if is_alternate_login else login_type
+                    resp = LoginV3API.startLoginMessage(params, encryptedDeviceToken, loginType=login_type)
 
             elif resp.loginState == APIRequest_pb2.REQUIRES_2FA:
                 supported_channels = {APIRequest_pb2.TWO_FA_CODE_TOTP, APIRequest_pb2.TWO_FA_CT_SMS,
