@@ -92,9 +92,11 @@ def permission_boundaries(folders: Dict[int, dict]) -> Dict[int, int]:
 class PermissionMapper:
     """Converts Delinea folder / secret permission rows to ``AccessGrant`` lists."""
 
-    def __init__(self, users: Dict[int, dict], groups: Dict[int, dict], findings: FindingLog):
-        self.users = users
-        self.groups = groups
+    def __init__(self, users: Optional[Dict[int, dict]], groups: Optional[Dict[int, dict]],
+                 findings: FindingLog):
+        # Normalise None so principal() lookups never hit NoneType.get.
+        self.users = users or {}
+        self.groups = groups or {}
         self.findings = findings
 
     def principal(self, row: dict) -> Optional[Principal]:

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from keepercommander import vault
 from keepercommander.commands.pam_import import delinea_access
 from keepercommander.importer.thycotic.pam import (
     Crosswalk, CrosswalkRow, DelineaPamClient, FindingLog, RotationMapper, SecretPolicyResolver,
@@ -113,13 +114,20 @@ class TestSecretsForTemplate(unittest.TestCase):
 
 
 class TestProjectConfigUids(unittest.TestCase):
+    @staticmethod
+    def typed(version, title):
+        record = vault.TypedRecord(version=version)
+        record.title = title
+        return record
+
     def test_matches_title_and_suffix_on_pam_configurations_only(self):
         records = {
-            'a': mock.Mock(version=6, title='Proj Configuration'),
-            'b': mock.Mock(version=6, title='proj configuration #2'),
-            'c': mock.Mock(version=6, title='Proj Configuration Old'),
-            'd': mock.Mock(version=3, title='Proj Configuration'),
+            'a': self.typed(6, 'Proj Configuration'),
+            'b': self.typed(6, 'proj configuration #2'),
+            'c': self.typed(6, 'Proj Configuration Old'),
+            'd': self.typed(3, 'Proj Configuration'),
             'e': None,
+            'f': mock.Mock(version=6, title='Proj Configuration'),  # not a TypedRecord
         }
         with mock.patch.object(delinea_access, 'iter_accessible_record_uids', return_value=iter(records)), \
                 mock.patch.object(delinea_access, 'load_pam_record', side_effect=lambda _p, uid: records[uid]):

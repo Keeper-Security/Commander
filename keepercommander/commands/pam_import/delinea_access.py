@@ -13,7 +13,7 @@ import logging
 import re
 from typing import Callable, List, Optional, Set
 
-from ... import api
+from ... import api, vault
 from ...constants import EMAIL_PATTERN
 from ...error import CommandError
 from ...importer.thycotic.pam.models import FindingLog, Principal, SecretGrantTarget
@@ -47,8 +47,10 @@ def project_config_uids(params, project_name: str) -> Set[str]:
     uids = set()
     for uid in iter_accessible_record_uids(params):
         record = load_pam_record(params, uid)
-        if record and getattr(record, 'version', None) == 6 and \
-                is_matching_title(getattr(record, 'title', '') or '', base):
+        # PAM configurations are v6 TypedRecords. ``version`` is always an int here:
+        # load_pam_record only builds TypedRecord(version=...) after an int check.
+        if isinstance(record, vault.TypedRecord) and record.version == 6 and \
+                is_matching_title(record.title or '', base):
             uids.add(uid)
     return uids
 

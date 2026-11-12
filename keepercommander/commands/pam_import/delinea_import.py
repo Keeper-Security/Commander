@@ -45,8 +45,13 @@ def _normalize_folder_path(path: str) -> str:
 
 
 def _folder_matches(folder: dict, wanted: List[str]) -> bool:
-    """True when *folder* is, or is below, one of the normalized *wanted* paths, or is named one."""
-    path = _normalize_folder_path(folder.get('folderPath') or folder.get('folderName'))
+    """True when *folder* is, or is below, one of the normalized *wanted* paths, or is named one.
+
+    Malformed (non-dict) folder entries never match.
+    """
+    if not isinstance(folder, dict):
+        return False
+    path =_normalize_folder_path(folder.get('folderPath') or folder.get('folderName'))
     name = (folder.get('folderName') or '').casefold()
     return any(path == prefix or path.startswith(prefix + '\\') or name == prefix for prefix in wanted)
 
@@ -152,6 +157,8 @@ class DelineaImportOrchestrator:
                                         f'into "{opts.project_name}"?', 'yn', 'n').lower() != 'y':
             return
 
+        # Rebuilt per attempt: permission entries differ between NSF and classic mode.
+        # build_import_json() never mutates ``mapped``, so reusing it here is safe.
         used_nsf = run_with_classic_fallback(
             self.params, opts.project_name, use_nsf,
             lambda nsf: self.import_project(self.build_import_json(mapped, nsf), nsf),
@@ -350,6 +357,12 @@ class DelineaImportOrchestrator:
         return self.keeper_name(principal) if principal.kind is PrincipalKind.USER else None
 
     def build_import_json(self, mapped: DelineaMappedImport, use_nsf: bool) -> dict:
+        """Build a fresh ``pam project import`` document from *mapped*.
+
+        Read-only on *mapped*: ``run()`` calls this more than once (review file,
+        then once per import attempt incl. the classic-mode retry), so the
+        returned document must not alias ``mapped.resources`` / ``mapped.users``.
+        """
         opts = self.options
         pam_configuration = {
             'environment': 'local',
@@ -380,7 +393,9 @@ class DelineaImportOrchestrator:
         return {
             'project': opts.project_name,
             'pam_configuration': pam_configuration,
-            'pam_data': {'resources': mapped.resources, 'users': mapped.users},
+            # Deep copies so changes to one document can't leak into ``mapped`` or later builds.
+            'pam_data': {'resources': copy.deepcopy(mapped.resources),
+                         'users': copy.deepcopy(mapped.users)},
             'safe_folders': safe_folders,
         }
 

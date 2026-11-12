@@ -106,6 +106,10 @@ class TestSelectFolders(unittest.TestCase):
             with self.subTest(prefixes=prefixes):
                 self.assertEqual([f['folderName'] for f in select_folders(self.FOLDERS, prefixes)], expected)
 
+    def test_malformed_folder_entries_are_skipped(self):
+        folders = [None, 'Servers', self.FOLDERS[0]]
+        self.assertEqual(select_folders(folders, ['Servers']), [self.FOLDERS[0]])
+
 
 class TestDelineaImportOrchestrator(unittest.TestCase):
     def setUp(self):
@@ -140,7 +144,11 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         document = orchestrator.build_import_json(mapped, False)
         self.assertEqual(document['project'], 'Proj')
         self.assertEqual(document['pam_configuration']['gateway_name'], 'GW1')
-        self.assertIs(document['pam_data']['resources'], mapped.resources)
+        # Same content, but a copy: build_import_json() is called once per import attempt.
+        self.assertEqual(document['pam_data']['resources'], mapped.resources)
+        self.assertIsNot(document['pam_data']['resources'], mapped.resources)
+        document['pam_data']['resources'][0]['users'][0]['password'] = 'changed'
+        self.assertEqual(mapped.resources[0]['users'][0]['password'], 'secret-pw')
 
         orchestrator = self.orchestrator()
         document = orchestrator.build_import_json(orchestrator.map(Crosswalk()), False)

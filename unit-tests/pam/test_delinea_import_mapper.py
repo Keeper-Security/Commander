@@ -5,6 +5,8 @@ import sys
 import unittest
 
 from keepercommander.importer.thycotic.pam import build_pam_import
+from keepercommander.importer.thycotic.pam.models import FindingLog, PrincipalKind
+from keepercommander.importer.thycotic.pam.permission_mapper import PermissionMapper
 
 sys.path.insert(0, os.path.dirname(__file__))
 from _delinea_fixtures import build, by_title, connection, items, resources, secret, user_titles  # noqa: E402
@@ -310,6 +312,15 @@ class TestSafeFolders(unittest.TestCase):
         self.assertEqual(h1['folder_path'], 'A/A - Resources')
         self.assertEqual({u['folder_path'] for u in h1['users']}, {'A/A - Users'})
         self.assertEqual(by_title(document, 'h2')['users'][0]['folder_path'], 'B/B - Users')
+
+
+class TestPermissionMapperPrincipals(unittest.TestCase):
+    def test_none_user_and_group_maps_fall_back_to_ids(self):
+        mapper = PermissionMapper(None, None, FindingLog())
+        user = mapper.principal({'userId': 7})
+        team = mapper.principal({'groupId': 9})
+        self.assertEqual((user.kind, user.name), (PrincipalKind.USER, '7'))
+        self.assertEqual((team.kind, team.name), (PrincipalKind.TEAM, '9'))
 
 
 if __name__ == '__main__':
