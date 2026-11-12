@@ -17,9 +17,11 @@ from .common import (
     get_folder_key, get_record_key, get_record_from_cache,
     get_record_revision, patch_record_revision,
     get_user_public_key, encrypt_for_recipient, handle_share_invite,
+    resolve_uid_email, resolve_team_identifier, get_team_keys, encrypt_for_team,
     parse_sharing_status,
     NSF_RECORD_BATCH_SIZE, NSF_RECORD_PAGE_SIZE,
 )
+from .permissions import resolve_role_name
 
 logger = logging.getLogger(__name__)
 
@@ -947,6 +949,133 @@ def batch_create_record_shares_v3(params, creates, expiration_timestamp=None, ch
             for c in built:
                 outcomes.append((c, {'success': False, 'message': str(exc)}))
 
+    return outcomes
+
+
+def _build_record_access_share_permission(params, grant):
+    """Build a direct user/team record permission that overrides inherited access."""
+    record_uid = grant['record_uid']
+    recipient_uid = grant['accessor_uid']
+    access_type = grant['access_type']
+    if isinstance(access_type, str):
+        access_type = folder_pb2.AccessType.Value(access_type)
+    role_type = grant['access_role_type']
+    if isinstance(role_type, str):
+        role_type = resolve_role_name(role_type)
+    folder_pb2.AccessRoleType.Name(role_type)
+    expiration = grant.get('expiration_timestamp')
+
+    if access_type == folder_pb2.AT_USER:
+        identifier = grant.get('email') or recipient_uid
+        resolved_uid, email = resolve_uid_email(params, identifier)
+        if not resolved_uid or utils.base64_url_encode(resolved_uid) != recipient_uid:
+            raise ValueError(f"User '{identifier}' could not be resolved to {recipient_uid}")
+        permission = _build_share_permissions(
+            params, record_uid, email, role_type, expiration,
+            include_role=True, skip_sync=True)
+        if permission.recipientUid != resolved_uid:
+            raise ValueError(f"User '{email}' resolved to an unexpected UID")
+        return permission
+
+    if access_type != folder_pb2.AT_TEAM:
+        raise ValueError(f'Unsupported record accessor type: {access_type}')
+
+    resolved_team = resolve_team_identifier(params, recipient_uid)
+    if not resolved_team or resolved_team[0] != recipient_uid:
+        raise ValueError(f"Team '{recipient_uid}' could not be resolved")
+
+    record = get_record_from_cache(params, record_uid)
+    if not record:
+        raise ValueError(f'Record {record_uid} not found in cache')
+    record_key = record.get('record_key_unencrypted')
+    if not record_key:
+        record_key = get_record_key(params, record_uid, raise_on_missing=False)
+    if not record_key:
+        raise ValueError(f'Record {record_uid} has no decrypted key')
+
+    team_uid_b64, team_uid_bytes = resolved_team
+    team_keys = get_team_keys(params, team_uid_b64)
+    encrypted_key, key_type = encrypt_for_team(
+        record_key, team_keys, forbid_rsa=getattr(params, 'forbid_rsa', False))
+    permission = record_sharing_pb2.Permissions()
+    permission.recipientUid = team_uid_bytes
+    permission.recordUid = utils.base64_url_decode(record_uid)
+    permission.recordKey = encrypted_key
+    permission.useEccKey = key_type == folder_pb2.encrypted_by_public_key_ecc
+    permission.rules.accessTypeUid = team_uid_bytes
+    permission.rules.accessType = folder_pb2.AT_TEAM
+    permission.rules.recordUid = permission.recordUid
+    permission.rules.owner = False
+    permission.rules.accessRoleType = role_type
+    _apply_share_expiration_tla(permission.rules.tlaProperties, expiration)
+    return permission
+
+
+def batch_upsert_record_accesses_v3(params, grants, chunk_size=_SHARE_BATCH_SIZE):
+    """Create or update direct record roles for users and teams in batches.
+
+    Each grant has ``record_uid``, ``accessor_uid``, ``access_type``,
+    ``access_role_type``, ``action`` (``create`` or ``update``), and optional
+    ``email`` / ``expiration_timestamp`` fields.
+    """
+    if chunk_size < 1 or chunk_size > _SHARE_BATCH_SIZE:
+        raise ValueError(f'Chunk size must be in the range 1..{_SHARE_BATCH_SIZE}')
+
+    outcomes = []
+    for action, request_field, response_field in (
+            ('create', 'createSharingPermissions', 'createdSharingStatus'),
+            ('update', 'updateSharingPermissions', 'updatedSharingStatus')):
+        action_grants = [grant for grant in grants if grant.get('action') == action]
+        for start in range(0, len(action_grants), chunk_size):
+            chunk = action_grants[start:start + chunk_size]
+            request = record_sharing_pb2.Request()
+            built = []
+            for grant in chunk:
+                try:
+                    permission = _build_record_access_share_permission(params, grant)
+                    getattr(request, request_field).append(permission)
+                    built.append(grant)
+                except Exception as exc:
+                    outcomes.append((grant, {
+                        'success': False, 'skipped': True, 'message': str(exc)}))
+
+            if not built:
+                continue
+
+            try:
+                response = api.communicate_rest(
+                    params, request, 'vault/records/v3/share',
+                    rs_type=record_sharing_pb2.Response)
+                statuses = [
+                    parse_sharing_status(status)
+                    for status in getattr(response, response_field)
+                ]
+                status_by_key = {}
+                duplicate_keys = set()
+                for status in statuses:
+                    key = (status['record_uid'], status['recipient_uid'])
+                    if key in status_by_key:
+                        duplicate_keys.add(key)
+                    status_by_key[key] = status
+
+                for grant in built:
+                    key = (grant['record_uid'], grant['accessor_uid'])
+                    if key in duplicate_keys:
+                        result = {'success': False, 'message': 'Ambiguous share result'}
+                    else:
+                        result = status_by_key.get(
+                            key, {'success': False, 'message': 'No share result returned'})
+                    outcomes.append((grant, result))
+            except Exception as exc:
+                for grant in built:
+                    outcomes.append((grant, {'success': False, 'message': str(exc)}))
+
+    invalid = [grant for grant in grants
+               if grant.get('action') not in ('create', 'update')]
+    outcomes.extend(
+        (grant, {'success': False, 'skipped': True,
+                 'message': "Action must be 'create' or 'update'"})
+        for grant in invalid)
     return outcomes
 
 

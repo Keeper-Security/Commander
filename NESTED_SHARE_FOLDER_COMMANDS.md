@@ -301,6 +301,8 @@ nsf-record-update -r rec123 -r rec456 -t "Shared Title"
 
 **Detail:** Permanently convert up to 100 Classic records per request to Nested Share Records. Results are reported per record. Records already known to be Nested Share Records are skipped. PAM record types cannot be converted; selected PAM records are listed and skipped while other selected records continue.
 
+Both conversion commands are blocked in Service Mode because they perform permanent migrations.
+
 **Parameters:**
 
 One or more Classic record UIDs, titles, or paths
@@ -341,18 +343,27 @@ nsf-convert-record abc123recorduid --folder "Projects/Archive" --force
 
 PAM record types (record types beginning with `pam`, including PAM machine, user, database, directory, and remote-browser records) cannot be converted. Each PAM record is listed and skipped while supported records continue. Skipped PAM records remain in the Classic source tree, so that tree is retained even with `--force`.
 
-When converting under an existing NSF destination (`--folder`), the converted root inherits the destination's permissions. The preview lists the destination's effective users and teams because they will gain access to the converted folders and records. For a Classic Shared Folder root, its mapped Classic grants are added alongside that inherited access. Conversion at the vault root does not add destination permissions. Separate Classic Shared Folder boundaries within a selected tree retain their own mapped access rather than inheriting permissions across the Classic boundary.
+When converting under an existing NSF destination (`--folder`), the converted root inherits the destination's permissions. The preview lists the destination's effective users, teams, applications, and owner access because they will gain access to the converted folders and records. For a Classic Shared Folder root, its mapped Classic grants are added alongside that inherited access. Conversion at the vault root does not add destination permissions. Separate Classic Shared Folder boundaries within a selected tree retain their own mapped access rather than inheriting permissions across the Classic boundary.
 
-Classic `manage_users` maps to NSF `share-manager`. NSF record-edit access is based on the Classic shared-folder records' individual `can_edit` flags, not the member's `manage_records` flag (`manage_records` controls adding/removing records in Classic). NSF has no role that preserves that add/remove capability without also granting record-edit access, so the preview identifies affected members when this permission cannot be mapped. `can_share` also contributes to the mapped share role. When records in one Classic Shared Folder have different edit/share flags, the converter uses the most restrictive values for that NSF permission scope and lists affected record UIDs in the preview; this avoids widening access but may reduce access for records with more permissive flags.
+Classic folder permissions map to the NSF folder role: `manage_users` grants Share Manager and `manage_records` grants Content Manager; both grant Content & Share Manager. Each converted record also gets a direct NSF record role derived from its Classic `can_edit` and `can_share` flags, using the Classic folder defaults when there is no record-specific entry. This keeps record-specific Classic restrictions (for example, Viewer access on a record under a Content & Share Manager folder) while adding permissions inherited from the NSF destination. Newly added records follow the normal NSF behavior and inherit their folder role.
 
-| Scoped `can_edit` | `manage_users` or scoped `can_share` | NSF role |
-| ----------------- | ------------------------------------ | -------- |
-| Off               | Off                                  | `viewer` |
-| Off               | On                                   | `share-manager` |
-| On                | Off                                  | `content-manager` |
-| On                | On                                   | `content-share-manager` |
+| Classic folder `manage_users` | Classic folder `manage_records` | NSF folder role |
+| ----------------------------- | ------------------------------- | --------------- |
+| Off                           | Off                             | `viewer` |
+| On                            | Off                             | `share-manager` |
+| Off                           | On                              | `content-manager` |
+| On                            | On                              | `content-share-manager` |
+
+| Classic record `can_edit` | Classic record `can_share` | NSF record role |
+| ------------------------- | ------------------------- | --------------- |
+| Off                       | Off                       | `viewer` |
+| On                        | Off                       | `content-manager` |
+| Off                       | On                        | `share-manager` |
+| On                        | On                        | `content-share-manager` |
 
 Existing user/team access expirations retain their absolute expiry time; already-expired grants are not recreated.
+
+If a record-level override would need to change as overlapping Classic or destination permissions expire, conversion stops during preflight rather than creating a grant that could outlive or widen access. Align the relevant expirations or convert at the vault root, then retry.
 
 **Parameters:**
 

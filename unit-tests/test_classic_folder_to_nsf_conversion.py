@@ -14,7 +14,7 @@ from keepercommander.commands.nested_share_folder.conversion_commands import (
     _pam_record_details,
     _read_applications,
     _resolve_destination_folder,
-    _scope_record_permissions,
+    _record_access_plan,
     _scope_accessors,
 )
 from keepercommander.commands.nested_share_folder import register_commands
@@ -26,7 +26,10 @@ from keepercommander.commands.ksm import KSMCommand
 from keepercommander.error import CommandError
 from keepercommander.nested_share_folder.permissions import (
     classic_record_permissions_to_nsf_role,
+    classic_shared_folder_permissions_to_nsf_role,
 )
+from keepercommander.nested_share_folder import record_api
+from keepercommander.proto import folder_pb2, record_sharing_pb2
 from keepercommander.subfolder import (
     SharedFolderFolderNode, SharedFolderNode, UserFolderNode,
 )
@@ -113,64 +116,286 @@ class TestClassicFolderConversionPlanning(TestCase):
         self.assertEqual(nodes[left_uid].name, nodes[right_uid].name)
         self.assertNotEqual(left_uid, right_uid)
 
-    def test_shared_folder_acl_roles_do_not_treat_manage_records_as_record_edit(self):
+    def test_classic_folder_and_record_permissions_map_independently(self):
+        self.assertEqual(classic_shared_folder_permissions_to_nsf_role(), 'viewer')
+        self.assertEqual(
+            classic_shared_folder_permissions_to_nsf_role(manage_users=True),
+            'share-manager')
+        self.assertEqual(
+            classic_shared_folder_permissions_to_nsf_role(manage_records=True),
+            'content-manager')
+        self.assertEqual(
+            classic_shared_folder_permissions_to_nsf_role(
+                manage_users=True, manage_records=True),
+            'content-share-manager')
         self.assertEqual(classic_record_permissions_to_nsf_role(), 'viewer')
-        self.assertEqual(
-            classic_record_permissions_to_nsf_role(manage_users=True), 'share-manager')
-        self.assertEqual(
-            classic_record_permissions_to_nsf_role(can_edit=True), 'content-manager')
-        self.assertEqual(
-            classic_record_permissions_to_nsf_role(can_share=True), 'share-manager')
+        self.assertEqual(classic_record_permissions_to_nsf_role(can_edit=True),
+                         'content-manager')
+        self.assertEqual(classic_record_permissions_to_nsf_role(can_share=True),
+                         'share-manager')
         self.assertEqual(
             classic_record_permissions_to_nsf_role(can_edit=True, can_share=True),
             'content-share-manager')
 
-    def test_shared_folder_record_permissions_use_the_most_restrictive_flags(self):
+    def test_shared_folder_record_permissions_are_applied_per_record(self):
         scope_uid = _uid()
-        first_uid, second_uid = _uid(), _uid()
+        member_uid = _uid()
+        shared_folder_uid, first_uid, second_uid = _uid(), _uid(), _uid()
         params = SimpleNamespace(shared_folder_cache={
             scope_uid: {
+                'users': [{
+                    'username': 'records-manager@example.com',
+                    'account_uid': member_uid,
+                    'manage_users': True,
+                    'manage_records': True,
+                }],
                 'records': [
-                    {'record_uid': first_uid, 'can_edit': True, 'can_share': True},
-                    {'record_uid': second_uid, 'can_edit': False, 'can_share': True},
+                    {'record_uid': first_uid, 'can_edit': True, 'can_share': False},
+                    {'record_uid': second_uid, 'can_edit': False, 'can_share': False},
                 ]
             }
-        })
-
-        permissions = _scope_record_permissions(params, scope_uid)
-        self.assertFalse(permissions['can_edit'])
-        self.assertTrue(permissions['can_share'])
-        self.assertEqual(permissions['restricted_records'], [first_uid])
-        accessors = _scope_accessors(
-            SimpleNamespace(
-                shared_folder_cache={
-                    scope_uid: {
-                        'users': [{
-                            'username': 'records-manager@example.com',
-                            'manage_users': False,
-                            'manage_records': True,
-                        }]
-                    }
-                },
-                account_uid_bytes=None,
-            ),
-            scope_uid,
-            permissions,
+        }, account_uid_bytes=None)
+        record_roles = _record_access_plan(
+            params,
+            {first_uid: [shared_folder_uid], second_uid: [shared_folder_uid]},
+            {shared_folder_uid: scope_uid},
+            destination_accessors=[],
         )
-        self.assertEqual(accessors[0]['role'], 'share-manager')
+        roles = {grant['record_uid']: grant['access_role_type'] for grant in record_roles}
+        self.assertEqual(roles[first_uid], 'content-manager')
+        self.assertEqual(roles[second_uid], 'viewer')
+        self.assertEqual(len(record_roles), 2)
 
-    def test_manage_records_does_not_grant_edit_when_classic_record_is_read_only(self):
+        accessors = _scope_accessors(
+            params, scope_uid,
+        )
+        self.assertEqual(accessors[0]['role'], 'content-share-manager')
+
+    def test_record_role_combines_classic_and_destination_access(self):
         scope_uid = _uid()
+        shared_folder_uid, record_uid, member_uid = _uid(), _uid(), _uid()
         params = SimpleNamespace(
             shared_folder_cache={
                 scope_uid: {
                     'users': [{
                         'username': 'records-manager@example.com',
+                        'account_uid': member_uid,
                         'manage_users': False,
                         'manage_records': True,
                     }],
                     'records': [{
-                        'record_uid': _uid(),
+                        'record_uid': record_uid,
+                        'can_edit': False,
+                        'can_share': False,
+                    }],
+                }
+            },
+            account_uid_bytes=None,
+        )
+        plan = _record_access_plan(
+            params, {record_uid: [shared_folder_uid]},
+            {shared_folder_uid: scope_uid},
+            destination_accessors=[{
+                'access_type': 'AT_USER',
+                'accessor_uid': member_uid,
+                'role': 'share-manager',
+            }],
+        )
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]['access_role_type'], 'share-manager')
+
+        expiring_destination = [{
+            'access_type': 'AT_USER',
+            'accessor_uid': member_uid,
+            'role': 'share-manager',
+            'tla_expiration': 5_000,
+        }]
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'current_milli_time',
+                return_value=1_000):
+            with self.assertRaisesRegex(CommandError, 'Cannot safely preserve expiring'):
+                _record_access_plan(
+                    params, {record_uid: [shared_folder_uid]},
+                    {shared_folder_uid: scope_uid}, expiring_destination)
+
+    def test_record_access_plan_uses_classic_defaults_and_expiration(self):
+        scope_uid, folder_uid, member_uid, expired_member_uid = (
+            _uid(), _uid(), _uid(), _uid())
+        explicit_uid, default_uid = _uid(), _uid()
+        params = SimpleNamespace(
+            shared_folder_cache={
+                scope_uid: {
+                    'default_can_edit': True,
+                    'default_can_share': False,
+                    'users': [{
+                        'username': 'member@example.com',
+                        'account_uid': member_uid,
+                        'manage_users': True,
+                        'manage_records': True,
+                        'expiration': 5_000,
+                    }, {
+                        'username': 'expired@example.com',
+                        'account_uid': expired_member_uid,
+                        'manage_users': True,
+                        'manage_records': True,
+                        'expiration': 999,
+                    }],
+                    'records': [{
+                        'record_uid': explicit_uid,
+                        'can_edit': False,
+                    }],
+                }
+            },
+            account_uid_bytes=None,
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'current_milli_time',
+                return_value=1_000):
+            plan = _record_access_plan(
+                params,
+                {explicit_uid: [folder_uid], default_uid: [folder_uid]},
+                {folder_uid: scope_uid},
+                [])
+
+        roles = {entry['record_uid']: entry for entry in plan}
+        self.assertEqual(roles[explicit_uid]['access_role_type'], 'viewer')
+        self.assertEqual(roles[default_uid]['access_role_type'], 'content-manager')
+        self.assertEqual(roles[explicit_uid]['expiration_timestamp'], 5_000)
+        self.assertEqual(roles[default_uid]['expiration_timestamp'], 5_000)
+        self.assertEqual(
+            {entry['accessor_uid'] for entry in plan}, {member_uid})
+
+    def test_record_access_plan_rejects_role_changes_during_overlapping_expirations(self):
+        scope_uids, folder_uids, member_uid, record_uid = (
+            [_uid(), _uid()], [_uid(), _uid()], _uid(), _uid())
+        params = SimpleNamespace(
+            shared_folder_cache={
+                scope_uids[0]: {
+                    'users': [{
+                        'username': 'member@example.com',
+                        'account_uid': member_uid,
+                        'manage_users': True,
+                        'manage_records': True,
+                        'expiration': 3_000,
+                    }],
+                    'records': [{
+                        'record_uid': record_uid,
+                        'can_edit': True,
+                        'can_share': False,
+                    }],
+                },
+                scope_uids[1]: {
+                    'users': [{
+                        'username': 'member@example.com',
+                        'account_uid': member_uid,
+                        'manage_users': True,
+                        'manage_records': True,
+                        'expiration': 5_000,
+                    }],
+                    'records': [{
+                        'record_uid': record_uid,
+                        'can_edit': False,
+                        'can_share': False,
+                    }],
+                },
+            },
+            account_uid_bytes=None,
+        )
+        placements = {record_uid: folder_uids}
+        scope_by_folder = dict(zip(folder_uids, scope_uids))
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'current_milli_time',
+                return_value=1_000):
+            with self.assertRaisesRegex(CommandError, 'change role before all access expires'):
+                _record_access_plan(params, placements, scope_by_folder, [])
+
+    def test_record_permission_reconciliation_preserves_stronger_direct_access(self):
+        record_uids = [_uid(), _uid(), _uid(), _uid()]
+        user_uid, team_uid, owner_uid = _uid(), _uid(), _uid()
+        grants = [
+            {
+                'record_uid': record_uids[0], 'accessor_uid': user_uid,
+                'access_type': 'AT_USER', 'access_role_type': 'viewer',
+            },
+            {
+                'record_uid': record_uids[1], 'accessor_uid': team_uid,
+                'access_type': 'AT_TEAM', 'access_role_type': 'content-manager',
+            },
+            {
+                'record_uid': record_uids[2], 'accessor_uid': user_uid,
+                'access_type': 'AT_USER', 'access_role_type': 'viewer',
+            },
+            {
+                'record_uid': record_uids[3], 'accessor_uid': owner_uid,
+                'access_type': 'AT_USER', 'access_role_type': 'viewer',
+            },
+        ]
+        accesses = [
+            {
+                'record_uid': record_uids[0], 'access_type_uid': user_uid,
+                'access_type': 'AT_USER', 'inherited': True,
+                'access_role_type': folder_pb2.CONTENT_SHARE_MANAGER,
+            },
+            {
+                'record_uid': record_uids[1], 'access_type_uid': team_uid,
+                'access_type': 'AT_TEAM', 'inherited': False,
+                'access_role_type': folder_pb2.VIEWER,
+            },
+            {
+                'record_uid': record_uids[2], 'access_type_uid': user_uid,
+                'access_type': 'AT_USER', 'inherited': False,
+                'access_role_type': folder_pb2.CONTENT_MANAGER,
+            },
+            {
+                'record_uid': record_uids[3], 'access_type_uid': owner_uid,
+                'access_type': 'AT_USER', 'inherited': False, 'owner': True,
+                'access_role_type': folder_pb2.MANAGER,
+            },
+        ]
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_nsf.get_record_accesses_v3',
+                return_value={'record_accesses': accesses, 'forbidden_records': []}), \
+                patch(
+                    'keepercommander.commands.nested_share_folder.conversion_commands.'
+                    '_nsf.batch_upsert_record_accesses_v3',
+                    return_value=[]) as apply_grants:
+            failures = NestedShareFolderConvertCommand._grant_record_accesses(
+                SimpleNamespace(), grants, set(record_uids))
+
+        self.assertEqual(failures, [])
+        applied = apply_grants.call_args.args[1]
+        self.assertEqual(
+            {(grant['record_uid'], grant['accessor_uid'], grant['action'])
+             for grant in applied},
+            {
+                (record_uids[0], user_uid, 'create'),
+                (record_uids[1], team_uid, 'update'),
+            })
+        team_update = next(grant for grant in applied if grant['record_uid'] == record_uids[1])
+        self.assertEqual(team_update['access_role_type'], 'content-manager')
+
+    def test_record_access_plan_does_not_override_classic_owner(self):
+        scope_uid, folder_uid, record_uid, owner_uid = (
+            _uid(), _uid(), _uid(), _uid())
+        params = SimpleNamespace(
+            shared_folder_cache={
+                scope_uid: {
+                    'owner_account_uid': owner_uid,
+                    'users': [{
+                        'username': 'owner@example.com',
+                        'account_uid': owner_uid,
+                        'manage_users': False,
+                        'manage_records': False,
+                    }],
+                    'records': [{
+                        'record_uid': record_uid,
                         'can_edit': False,
                         'can_share': False,
                     }],
@@ -179,9 +404,131 @@ class TestClassicFolderConversionPlanning(TestCase):
             account_uid_bytes=None,
         )
 
-        accessors = _scope_accessors(params, scope_uid)
+        plan = _record_access_plan(
+            params, {record_uid: [folder_uid]}, {folder_uid: scope_uid}, [])
 
-        self.assertEqual(accessors[0]['role'], 'viewer')
+        self.assertEqual(plan, [])
+
+    def test_record_permission_reconciliation_does_not_override_denied_access(self):
+        record_uid, user_uid = _uid(), _uid()
+        grant = {
+            'record_uid': record_uid, 'accessor_uid': user_uid,
+            'access_type': 'AT_USER', 'access_role_type': 'viewer',
+        }
+        accesses = [{
+            'record_uid': record_uid, 'access_type_uid': user_uid,
+            'access_type': 'AT_USER', 'inherited': False,
+            'denied_access': True,
+        }]
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_nsf.get_record_accesses_v3',
+                return_value={'record_accesses': accesses, 'forbidden_records': []}), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 '_nsf.batch_upsert_record_accesses_v3') as apply_grants:
+            failures = NestedShareFolderConvertCommand._grant_record_accesses(
+                SimpleNamespace(), [grant], {record_uid})
+
+        self.assertEqual(len(failures), 1)
+        self.assertIn('explicitly denied', failures[0])
+        apply_grants.assert_not_called()
+
+
+class TestRecordAccessShareApi(TestCase):
+
+    def test_user_and_team_roles_are_encoded_as_nsf_enums(self):
+        record_uid = _uid()
+        user_uid, team_uid = _uid(), _uid()
+        user_uid_bytes = utils.base64_url_decode(user_uid)
+        team_uid_bytes = utils.base64_url_decode(team_uid)
+        params = SimpleNamespace(
+            record_cache={record_uid: {'record_key_unencrypted': b'record-key'}},
+            forbid_rsa=False,
+        )
+
+        def build_user_permission(_params, _record_uid, _email, role, *_args, **_kwargs):
+            return record_sharing_pb2.Permissions(
+                recipientUid=user_uid_bytes,
+                rules={'accessRoleType': role})
+
+        with patch.object(
+                record_api, 'resolve_uid_email',
+                return_value=(user_uid_bytes, 'user@example.com')), \
+             patch.object(record_api, '_build_share_permissions') as build_user:
+            build_user.side_effect = build_user_permission
+            user_permission = record_api._build_record_access_share_permission(
+                params, {
+                    'record_uid': record_uid,
+                    'accessor_uid': user_uid,
+                    'access_type': 'AT_USER',
+                    'access_role_type': 'viewer',
+                })
+
+        self.assertEqual(build_user.call_args.args[3], folder_pb2.VIEWER)
+        self.assertEqual(user_permission.rules.accessRoleType, folder_pb2.VIEWER)
+
+        with patch.object(
+                record_api, 'resolve_team_identifier',
+                return_value=(team_uid, team_uid_bytes)), \
+             patch.object(record_api, 'get_team_keys', return_value={}), \
+             patch.object(
+                 record_api, 'encrypt_for_team',
+                 return_value=(b'encrypted-key', folder_pb2.encrypted_by_public_key_ecc)):
+            team_permission = record_api._build_record_access_share_permission(
+                params, {
+                    'record_uid': record_uid,
+                    'accessor_uid': team_uid,
+                    'access_type': 'AT_TEAM',
+                    'access_role_type': 'content-manager',
+                })
+
+        self.assertEqual(
+            team_permission.rules.accessRoleType, folder_pb2.CONTENT_MANAGER)
+        self.assertEqual(team_permission.recipientUid, team_uid_bytes)
+        self.assertEqual(team_permission.recordKey, b'encrypted-key')
+
+    def test_batch_matches_statuses_by_record_and_recipient_uid(self):
+        record_uid = _uid()
+        first_uid, second_uid = _uid(), _uid()
+        grants = [
+            {
+                'record_uid': record_uid, 'accessor_uid': first_uid,
+                'access_type': 'AT_USER', 'access_role_type': 'viewer',
+                'action': 'create',
+            },
+            {
+                'record_uid': record_uid, 'accessor_uid': second_uid,
+                'access_type': 'AT_USER', 'access_role_type': 'viewer',
+                'action': 'create',
+            },
+        ]
+
+        def build_permission(_params, grant):
+            return record_sharing_pb2.Permissions(
+                recordUid=utils.base64_url_decode(grant['record_uid']),
+                recipientUid=utils.base64_url_decode(grant['accessor_uid']))
+
+        response = record_sharing_pb2.Response()
+        for accessor_uid in (second_uid, first_uid):
+            status = response.createdSharingStatus.add()
+            status.recordUid = utils.base64_url_decode(record_uid)
+            status.recipientUid = utils.base64_url_decode(accessor_uid)
+            status.status = record_sharing_pb2.SUCCESS
+
+        with patch.object(
+                record_api, '_build_record_access_share_permission',
+                side_effect=build_permission), \
+             patch.object(record_api.api, 'communicate_rest', return_value=response) as send:
+            outcomes = record_api.batch_upsert_record_accesses_v3(
+                SimpleNamespace(), grants)
+
+        self.assertEqual(
+            {(grant['accessor_uid'], result['success']) for grant, result in outcomes},
+            {(first_uid, True), (second_uid, True)})
+        self.assertEqual(
+            len(send.call_args.args[1].createSharingPermissions), 2)
 
 
     def test_classic_shared_folder_descendant_carries_its_shared_scope(self):
@@ -309,8 +656,24 @@ class TestNsfConversionDestinationSelection(TestCase):
 
         prompt.assert_not_called()
 
+    def test_destination_resolution_escapes_terminal_controls_in_input(self):
+        input_name = 'missing\x1b[2J'
+        params = SimpleNamespace(nested_share_folders={})
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                '_nsf.resolve_folder_identifier',
+                return_value=None):
+            with self.assertRaises(CommandError) as raised:
+                _resolve_destination_folder(
+                    params, input_name, 'nsf-convert-folder')
+
+        self.assertIn(r'missing\u001b[2J', raised.exception.message)
+        self.assertNotIn('\x1b', raised.exception.message)
+
     def test_destination_access_is_fully_paginated_and_deduplicated(self):
-        destination_uid, user_uid, team_uid = _uid(), _uid(), _uid()
+        destination_uid, user_uid, team_uid, app_uid = (
+            _uid(), _uid(), _uid(), _uid())
         pages = [
             {
                 'results': [{
@@ -347,6 +710,12 @@ class TestNsfConversionDestinationSelection(TestCase):
                             'inherited': True,
                         },
                         {
+                            'accessor_uid': app_uid,
+                            'access_type': 'AT_APPLICATION',
+                            'role': 'CONTENT_MANAGER',
+                            'inherited': True,
+                        },
+                        {
                             'accessor_uid': _uid(),
                             'access_type': 'AT_USER',
                             'denied_access': True,
@@ -363,13 +732,15 @@ class TestNsfConversionDestinationSelection(TestCase):
             accessors = NestedShareFolderConvertCommand._destination_accessors(
                 SimpleNamespace(), destination_uid)
 
-        self.assertEqual(len(accessors), 2)
+        self.assertEqual(len(accessors), 3)
+        self.assertIn(app_uid, {accessor['accessor_uid'] for accessor in accessors})
         self.assertEqual(
             [page.kwargs['continuation_token'] for page in get_access.call_args_list],
             [None, 17])
 
-    def test_destination_access_preview_discloses_users_and_teams(self):
+    def test_destination_access_preview_discloses_users_teams_and_applications(self):
         folder_uid, destination_uid = _uid(), _uid()
+        app_uid = _uid()
         folder = UserFolderNode()
         folder.uid, folder.name = folder_uid, 'Private'
         params = SimpleNamespace(
@@ -389,6 +760,12 @@ class TestNsfConversionDestinationSelection(TestCase):
                 'role': 'SHARE_MANAGER',
                 'inherited': True,
             },
+            {
+                'accessor_uid': app_uid,
+                'access_type': 'AT_APPLICATION',
+                'role': 'CONTENT_MANAGER',
+                'inherited': True,
+            },
         ]
 
         output = io.StringIO()
@@ -402,32 +779,7 @@ class TestNsfConversionDestinationSelection(TestCase):
         self.assertIn('Access inherited by new folders from the destination', rendered)
         self.assertIn('person@example.com', rendered)
         self.assertIn('Operations', rendered)
-
-    def test_folder_preview_explains_restricted_classic_permissions(self):
-        folder_uid, scope_uid = _uid(), _uid()
-        folder = UserFolderNode()
-        folder.uid, folder.name = folder_uid, 'Shared'
-        params = SimpleNamespace(nested_share_folders={})
-        restricted_record_uid = _uid()
-        output = io.StringIO()
-
-        with redirect_stdout(output):
-            NestedShareFolderConvertCommand._print_preview(
-                params, {folder_uid: folder}, {folder_uid: []}, folder,
-                None, 5, [], {folder_uid: 1}, {folder_uid: 1}, [],
-                permission_warnings={
-                    scope_uid: {
-                        'restricted_records': [restricted_record_uid],
-                        'unmapped_manage_records': ['member@example.com'],
-                    }
-                })
-
-        rendered = output.getvalue()
-        self.assertIn(restricted_record_uid, rendered)
-        self.assertIn('most restrictive permissions', rendered)
-        self.assertIn('member@example.com', rendered)
-        self.assertIn('manage_records permissions cannot be mapped', rendered)
-
+        self.assertIn(f'Application: {app_uid}', rendered)
 
 class TestClassicFolderConversionApplicationReads(TestCase):
 
@@ -1127,6 +1479,23 @@ class TestClassicFolderConversionExecution(TestCase):
         with self.assertRaisesRegex(CommandError, 'cannot be combined with --force'):
             NestedShareFolderConvertCommand().execute(
                 SimpleNamespace(), source='source', retry=True, force=True)
+
+    def test_initial_refresh_failure_aborts_before_conversion(self):
+        params, folder_uid, _, _ = self._params()
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'sync_down.sync_down',
+                side_effect=RuntimeError('offline')), \
+             patch(
+                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 '_read_applications') as read_applications:
+            with self.assertRaisesRegex(CommandError, 'no changes were made'):
+                NestedShareFolderConvertCommand().execute(
+                    params, source=folder_uid, force=True)
+
+        read_applications.assert_not_called()
+        self.assertNotIn(folder_uid, params.nested_share_folders)
 
     def test_force_retains_classic_source_when_pam_records_are_skipped(self):
         params, folder_uid, record_uid, target_uid = self._params()

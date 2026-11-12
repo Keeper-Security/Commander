@@ -222,21 +222,16 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn('Destination: Vault (root)', output.getvalue())
         self.assertNotIn('server support', output.getvalue())
 
-    @patch('keepercommander.commands.pam_import.nsf_helpers.sync_down_preserving_nsf_keys')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    def test_service_mode_syncs_after_success(self, mock_convert, mock_sync):
-        mock_convert.return_value = [{
-            'record_uid': self.record_uid, 'status': 'OK', 'success': True,
-        }]
-        self.params.service_mode = True
-        output = StringIO()
-
-        with redirect_stdout(output):
+    @patch(
+        'keepercommander.commands.nested_share_folder.conversion_commands.'
+        '_nsf.convert_records_v3',
+        side_effect=RuntimeError('request timed out'))
+    def test_unknown_conversion_outcome_marks_cache_for_refresh(self, _mock_convert):
+        with self.assertRaises(CommandError):
             NestedShareConvertCommand().execute(
-                self.params, records=[self.record_uid], folder_uid=None, force=True)
+                self.params, records=[self.record_uid], force=True)
 
-        mock_sync.assert_called_once_with(self.params)
-        self.assertFalse(self.params.sync_data)
+        self.assertTrue(self.params.sync_data)
 
     @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
     def test_classic_folder_is_not_accepted_as_drive_destination(self, mock_convert):
@@ -458,4 +453,4 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn(
             'was not converted: The record is already a Nested Share Record.',
             '\n'.join(captured.output))
-        self.assertFalse(self.params.sync_data)
+        self.assertTrue(self.params.sync_data)

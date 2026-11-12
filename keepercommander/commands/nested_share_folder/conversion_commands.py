@@ -14,15 +14,21 @@ from ...subfolder import (
     BaseFolderNode, SharedFolderFolderNode, SharedFolderNode, try_resolve_path,
 )
 from ...utils import current_milli_time
-from ...nested_share_folder.permissions import classic_record_permissions_to_nsf_role
+from ...nested_share_folder.permissions import (
+    classic_record_permissions_to_nsf_role,
+    classic_shared_folder_permissions_to_nsf_role,
+    merge_record_access_roles,
+)
 from ...nested_share_folder.common import (
     MAX_NESTED_SHARE_FOLDER_DEPTH,
     NSF_APP_INFO_BATCH_SIZE,
     NSF_FOLDER_ACCESS_PAGE_SIZE,
     NSF_FOLDER_BATCH_SIZE,
     NSF_FOLDER_RECORD_BATCH_SIZE,
+    NSF_RECORD_BATCH_SIZE,
     PAM_RECORD_TYPE_PREFIX,
     ROOT_FOLDER_UID,
+    resolve_user_uid_bytes,
 )
 from .helpers import (
     _folder_depth,
@@ -175,6 +181,7 @@ def _resolve_destination_folder(params, folder_input, command, force=False):
     if not folder_input or folder_input.casefold() in ('root', ROOT_FOLDER_UID.casefold()):
         return None
 
+    display_input = _escape_non_printable(folder_input)
     nested_folders = getattr(params, 'nested_share_folders', {}) or {}
     if folder_input in nested_folders:
         return folder_input
@@ -188,9 +195,9 @@ def _resolve_destination_folder(params, folder_input, command, force=False):
             if force:
                 raise CommandError(
                     command,
-                    f"Destination '{folder_input}' matches multiple NSF folders. "
+                    f"Destination '{display_input}' matches multiple NSF folders. "
                     'Use a folder UID or an unambiguous full path when --force is specified.')
-            print(f"Destination '{folder_input}' matches multiple NSF folders:")
+            print(f"Destination '{display_input}' matches multiple NSF folders:")
             for index, folder_uid in enumerate(matching_uids, 1):
                 path = _folder_path(params, folder_uid)
                 print(f'  {index}. {_escape_non_printable(path)} ({folder_uid})')
@@ -203,13 +210,13 @@ def _resolve_destination_folder(params, folder_input, command, force=False):
         folder_uid = _nsf.resolve_folder_identifier(
             params, folder_input, raise_on_ambiguous=True)
     except FolderIdentifierAmbiguousError as e:
-        raise CommandError(command, str(e)) from e
+        raise CommandError(command, _escape_non_printable(e)) from e
     if not folder_uid:
-        raise CommandError(command, f"Folder '{folder_input}' was not found")
+        raise CommandError(command, f"Folder '{display_input}' was not found")
     if folder_uid not in nested_folders:
         raise CommandError(
             command,
-            f"'{folder_input}' is not a Nested Share Folder")
+            f"'{display_input}' is not a Nested Share Folder")
     return folder_uid
 
 
@@ -310,6 +317,10 @@ class NestedShareConvertCommand(Command):
         with command_error_handler('nsf-convert-record'):
             _print_conversion_step(
                 1, 2, f'Converting {len(record_uids)} Classic record(s)...')
+            # A failed transport can leave the conversion outcome unknown.
+            # Refresh the local cache after any request that may have reached
+            # the server, including requests that return no successful results.
+            params.sync_data = True
             results = _nsf.convert_records_v3(
                 params, record_uids=record_uids, folder_uid=folder_uid)
         if not results:
@@ -346,18 +357,15 @@ class NestedShareConvertCommand(Command):
                 unexpected_result_count)
 
         converted = 0
-        missing_results = False
         for record_uid in record_uids:
             if record_uid in duplicate_uids:
                 logging.warning(
                     'The conversion result for Classic record "%s" is ambiguous.', record_uid)
-                missing_results = True
                 continue
             result = result_by_uid.get(record_uid)
             if result is None:
                 logging.warning(
                     'No conversion result was returned for Classic record "%s".', record_uid)
-                missing_results = True
                 continue
             status = result['status']
             if result['success']:
@@ -372,12 +380,6 @@ class NestedShareConvertCommand(Command):
                     record_uid, message)
                 logging.debug('Conversion status for record %s: %s', record_uid, status)
 
-        if converted or missing_results or unexpected_result_count:
-            if getattr(params, 'service_mode', False):
-                from ..pam_import.nsf_helpers import sync_down_preserving_nsf_keys
-                sync_down_preserving_nsf_keys(params)
-            else:
-                params.sync_data = True
         logging.info(
             'Conversion complete: %d of %d Classic record(s) converted; '
             '%d already Nested Share Record(s) skipped.',
@@ -390,17 +392,12 @@ def _resolve_classic_folder(params, identifier):
     if identifier in folders:
         return identifier
 
+    result = try_resolve_path(params, identifier, find_all_matches=True)
     resolved = []
-    try:
-        result = try_resolve_path(params, identifier, find_all_matches=True)
-        if result is not None:
-            nodes, tail = result
-            if not tail:
-                resolved.extend(node.uid for node in nodes if node and node.uid)
-    except Exception:
-        # Fall back to an exact title search below. Path parsing errors are
-        # reported as "not found" only after both resolution approaches fail.
-        pass
+    if result is not None:
+        nodes, tail = result
+        if not tail:
+            resolved.extend(node.uid for node in nodes if node and node.uid)
 
     resolved = list(dict.fromkeys(resolved))
     if len(resolved) == 1:
@@ -408,7 +405,8 @@ def _resolve_classic_folder(params, identifier):
     if len(resolved) > 1:
         raise CommandError(
             'nsf-convert-folder',
-            f"Folder '{identifier}' is ambiguous. Use a folder UID or full path.")
+            f"Folder '{_escape_non_printable(identifier)}' is ambiguous. "
+            'Use a folder UID or full path.')
 
     matches = [
         uid for uid, node in folders.items()
@@ -420,7 +418,8 @@ def _resolve_classic_folder(params, identifier):
     if len(matches) > 1:
         raise CommandError(
             'nsf-convert-folder',
-            f"Folder '{identifier}' is ambiguous. Use a folder UID or full path.")
+            f"Folder '{_escape_non_printable(identifier)}' is ambiguous. "
+            'Use a folder UID or full path.')
     return None
 
 
@@ -524,8 +523,8 @@ def _current_user_account_uid(params):
     return utils.base64_url_encode(account_uid)
 
 
-def _scope_record_permissions(params, scope_uid):
-    """Return the least-privileged record permissions for a Classic share scope."""
+def _scope_members(params, scope_uid):
+    """Return the deduplicated user/team members of a Classic share scope."""
     shared_folder = (getattr(params, 'shared_folder_cache', {}) or {}).get(scope_uid)
     if shared_folder is None:
         raise CommandError(
@@ -533,68 +532,28 @@ def _scope_record_permissions(params, scope_uid):
             f'Access details for Classic Shared Folder {scope_uid} are not cached; '
             'run sync-down and retry.')
 
-    records = shared_folder.get('records') or []
-    if not records:
-        can_edit = bool(shared_folder.get('default_can_edit'))
-        can_share = bool(shared_folder.get('default_can_share'))
-    else:
-        can_edit = all(bool(record.get('can_edit')) for record in records)
-        can_share = all(bool(record.get('can_share')) for record in records)
-
-    restricted_records = sorted({
-        record.get('record_uid')
-        for record in records
-        if record.get('record_uid') and (
-            'can_edit' not in record or 'can_share' not in record or
-            bool(record.get('can_edit')) != can_edit or
-            bool(record.get('can_share')) != can_share)
-    })
-    unmapped_manage_records = []
-    if not can_edit:
-        unmapped_manage_records.extend(
-            user.get('username') or user.get('account_uid')
-            for user in shared_folder.get('users') or []
-            if user.get('manage_records'))
-        unmapped_manage_records.extend(
-            team.get('name') or team.get('team_uid')
-            for team in shared_folder.get('teams') or []
-            if team.get('manage_records'))
-    return {
-        'can_edit': can_edit,
-        'can_share': can_share,
-        'restricted_records': restricted_records,
-        'unmapped_manage_records': sorted(set(unmapped_manage_records)),
-    }
-
-
-def _scope_accessors(params, scope_uid, record_permissions=None):
-    """Build user/team grants from the Classic Shared Folder cache."""
-    shared_folder = (getattr(params, 'shared_folder_cache', {}) or {}).get(scope_uid)
-    if shared_folder is None:
-        raise CommandError(
-            'nsf-convert-folder',
-            f'Access details for Classic Shared Folder {scope_uid} are not cached; '
-            'run sync-down and retry.')
-    record_permissions = record_permissions or _scope_record_permissions(params, scope_uid)
-
-    accessors = []
+    members = []
     seen = set()
     for user in shared_folder.get('users') or []:
         identifier = user.get('username') or user.get('account_uid')
         if not identifier:
             continue
-        key = ('user', (user.get('account_uid') or identifier).casefold())
+        account_uid = user.get('account_uid')
+        if not account_uid:
+            uid_bytes = resolve_user_uid_bytes(params, identifier)
+            if uid_bytes:
+                account_uid = utils.base64_url_encode(uid_bytes)
+        key = ('AT_USER', account_uid or identifier.casefold())
         if key in seen:
             continue
         seen.add(key)
-        accessors.append({
+        members.append({
             'identifier': identifier,
-            '_account_uid': user.get('account_uid'),
+            'accessor_uid': account_uid,
+            'access_type': 'AT_USER',
             'as_team': False,
-            'role': classic_record_permissions_to_nsf_role(
-                manage_users=user.get('manage_users'),
-                can_edit=record_permissions['can_edit'],
-                can_share=record_permissions['can_share']),
+            'manage_users': bool(user.get('manage_users')),
+            'manage_records': bool(user.get('manage_records')),
             'expiration': user.get('expiration'),
         })
 
@@ -602,18 +561,41 @@ def _scope_accessors(params, scope_uid, record_permissions=None):
         identifier = team.get('team_uid')
         if not identifier:
             continue
-        key = ('team', identifier)
+        key = ('AT_TEAM', identifier)
         if key in seen:
             continue
         seen.add(key)
-        accessors.append({
+        members.append({
             'identifier': identifier,
+            'accessor_uid': identifier,
+            'access_type': 'AT_TEAM',
             'as_team': True,
-            'role': classic_record_permissions_to_nsf_role(
-                manage_users=team.get('manage_users'),
-                can_edit=record_permissions['can_edit'],
-                can_share=record_permissions['can_share']),
+            'manage_users': bool(team.get('manage_users')),
+            'manage_records': bool(team.get('manage_records')),
             'expiration': team.get('expiration'),
+        })
+    return members
+
+
+def _scope_accessors(params, scope_uid):
+    """Build folder-level NSF grants from Classic member permissions."""
+    shared_folder = (getattr(params, 'shared_folder_cache', {}) or {}).get(scope_uid)
+    if shared_folder is None:
+        raise CommandError(
+            'nsf-convert-folder',
+            f'Access details for Classic Shared Folder {scope_uid} are not cached; '
+            'run sync-down and retry.')
+
+    accessors = []
+    for member in _scope_members(params, scope_uid):
+        accessors.append({
+            'identifier': member['identifier'],
+            '_account_uid': member['accessor_uid'],
+            'as_team': member['as_team'],
+            'role': classic_shared_folder_permissions_to_nsf_role(
+                manage_users=member['manage_users'],
+                manage_records=member['manage_records']),
+            'expiration': member['expiration'],
         })
 
     # The Classic owner is not always represented in the member list. NSF
@@ -636,6 +618,166 @@ def _scope_accessors(params, scope_uid, record_permissions=None):
                 'expiration': None,
             })
     return accessors
+
+
+def _classic_record_permissions_by_uid(shared_folder):
+    default_permissions = (
+        bool(shared_folder.get('default_can_edit')),
+        bool(shared_folder.get('default_can_share')),
+    )
+    permissions_by_uid = {}
+    for record in shared_folder.get('records') or []:
+        record_uid = record.get('record_uid')
+        if record_uid and record_uid not in permissions_by_uid:
+            permissions_by_uid[record_uid] = (
+                bool(record.get('can_edit', default_permissions[0])),
+                bool(record.get('can_share', default_permissions[1])),
+            )
+    return default_permissions, permissions_by_uid
+
+
+def _record_accessor_key(access_type, accessor_uid):
+    if access_type == 'AT_USER':
+        return access_type, accessor_uid if '@' not in accessor_uid else accessor_uid.casefold()
+    return access_type, accessor_uid
+
+
+def _record_access_role_changes_before_expiry(record_roles, expirations):
+    active = list(zip(record_roles, expirations))
+    current_role = merge_record_access_roles(
+        *(role for role, _ in active))
+    for expiration in sorted({
+            expiration for _, expiration in active if expiration is not None}):
+        remaining_roles = [
+            role for role, role_expiration in active
+            if role_expiration is None or role_expiration > expiration
+        ]
+        if not remaining_roles:
+            break
+        next_role = merge_record_access_roles(*remaining_roles)
+        if next_role != current_role:
+            return True
+        current_role = next_role
+    return False
+
+
+def _record_access_plan(params, placements, scope_by_folder, destination_accessors):
+    """Plan per-record overrides for each Classic Shared Folder member."""
+    shared_folders = getattr(params, 'shared_folder_cache', {}) or {}
+    scope_members = {}
+    scope_record_permissions = {}
+    role_by_record_accessor = defaultdict(list)
+    folder_role_by_record_accessor = defaultdict(list)
+    expiration_by_record_accessor = defaultdict(list)
+    email_by_record_accessor = {}
+
+    now_ms = current_milli_time()
+    current_uid = _current_user_account_uid(params)
+    for record_uid, source_folders in placements.items():
+        seen_scopes = set()
+        for source_folder_uid in source_folders:
+            scope_uid = scope_by_folder.get(source_folder_uid)
+            if not scope_uid or scope_uid in seen_scopes:
+                continue
+            seen_scopes.add(scope_uid)
+            shared_folder = shared_folders.get(scope_uid)
+            if shared_folder is None:
+                raise CommandError(
+                    'nsf-convert-folder',
+                    f'Access details for Classic Shared Folder {scope_uid} are not cached; '
+                    'run sync-down and retry.')
+            if scope_uid not in scope_record_permissions:
+                scope_record_permissions[scope_uid] = (
+                    _classic_record_permissions_by_uid(shared_folder))
+            defaults, permissions_by_uid = scope_record_permissions[scope_uid]
+            can_edit, can_share = permissions_by_uid.get(record_uid, defaults)
+            record_role = classic_record_permissions_to_nsf_role(
+                can_edit=can_edit, can_share=can_share)
+            if scope_uid not in scope_members:
+                scope_members[scope_uid] = _scope_members(params, scope_uid)
+            for member in scope_members[scope_uid]:
+                accessor_uid = member.get('accessor_uid') or member['identifier']
+                if member['access_type'] == 'AT_USER' and (
+                        accessor_uid == current_uid or
+                        accessor_uid == shared_folder.get('owner_account_uid')):
+                    continue
+                expiration = member.get('expiration')
+                if expiration is not None and expiration <= 0:
+                    expiration = None
+                if expiration is not None and expiration <= now_ms:
+                    continue
+                if member['access_type'] == 'AT_USER' and '@' in accessor_uid:
+                    raise CommandError(
+                        'nsf-convert-folder',
+                        f"Could not resolve Classic user '{accessor_uid}' to an account UID.")
+                key = (
+                    record_uid,
+                    *_record_accessor_key(member['access_type'], accessor_uid),
+                )
+                role_by_record_accessor[key].append(record_role)
+                folder_role_by_record_accessor[key].append(
+                    classic_shared_folder_permissions_to_nsf_role(
+                        manage_users=member['manage_users'],
+                        manage_records=member['manage_records']))
+                expiration_by_record_accessor[key].append(expiration)
+                email_by_record_accessor[key] = (
+                    member['identifier'] if member['access_type'] == 'AT_USER' else None)
+
+    destination_roles = {}
+    expiring_destination_access = set()
+    for accessor in destination_accessors or []:
+        access_type = accessor.get('access_type')
+        accessor_uid = accessor.get('accessor_uid')
+        role = accessor.get('role')
+        if access_type not in ('AT_USER', 'AT_TEAM') or not accessor_uid or not role:
+            continue
+        accessor_key = _record_accessor_key(access_type, accessor_uid)
+        destination_roles.setdefault(accessor_key, []).append(role)
+        expiration = accessor.get('tla_expiration')
+        if expiration and expiration > now_ms:
+            expiring_destination_access.add(accessor_key)
+
+    plan = []
+    for key, record_roles in role_by_record_accessor.items():
+        record_uid, access_type, accessor_uid = key
+        accessor_key = _record_accessor_key(access_type, accessor_uid)
+        destination_role_list = destination_roles.get(accessor_key, [])
+        classic_record_role = merge_record_access_roles(*record_roles)
+        desired_role = merge_record_access_roles(classic_record_role, *destination_role_list)
+        inherited_role = merge_record_access_roles(
+            *folder_role_by_record_accessor[key], *destination_role_list)
+        if desired_role == inherited_role:
+            continue
+        if _record_access_role_changes_before_expiry(
+                record_roles, expiration_by_record_accessor[key]):
+            raise CommandError(
+                'nsf-convert-folder',
+                f'Classic permissions for {accessor_uid} on record {record_uid} '
+                'change role before all access expires, which cannot be represented '
+                'by one NSF record permission. Align the Classic share expirations '
+                'and retry.')
+        if (accessor_key in expiring_destination_access and
+                desired_role != classic_record_role):
+            raise CommandError(
+                'nsf-convert-folder',
+                f'Cannot safely preserve expiring destination access for '
+                f'{accessor_uid} on record {record_uid} while applying a different '
+                'Classic record role. Remove the destination expiration or convert '
+                'the Classic tree at the vault root.')
+
+        expirations = expiration_by_record_accessor[key]
+        expiration = (
+            None if any(value is None for value in expirations)
+            else max(expirations) if expirations else None)
+        plan.append({
+            'record_uid': record_uid,
+            'accessor_uid': accessor_uid,
+            'access_type': access_type,
+            'access_role_type': desired_role,
+            'expiration_timestamp': expiration,
+            'email': email_by_record_accessor.get(key),
+        })
+    return plan
 
 
 def _read_applications(params):
@@ -727,29 +869,30 @@ class NestedShareFolderConvertCommand(Command):
             raise CommandError(
                 'nsf-convert-folder',
                 'A Classic folder UID, title, or path is required.')
+        source_label = _escape_non_printable(source_arg)
         retry = bool(kwargs.get('retry'))
         if retry and kwargs.get('force'):
             raise CommandError(
                 'nsf-convert-folder',
                 '--retry cannot be combined with --force because retry requires confirmation.')
-        if retry:
-            try:
-                sync_down.sync_down(params)
-            except Exception as exc:
-                raise CommandError(
-                    'nsf-convert-folder',
-                    f'Could not refresh the vault before retry reconciliation: {exc}') from exc
+        try:
+            sync_down.sync_down(params)
+        except Exception as exc:
+            raise CommandError(
+                'nsf-convert-folder',
+                f'Could not refresh the vault before conversion; no changes were made. '
+                f'{_escape_non_printable(exc)}') from exc
 
         source_uid = _resolve_classic_folder(params, source_arg)
         if not source_uid:
             raise CommandError(
-                'nsf-convert-folder', f"Classic folder '{source_arg}' was not found.")
+                'nsf-convert-folder', f"Classic folder '{source_label}' was not found.")
 
         source_node = (getattr(params, 'folder_cache', {}) or {}).get(source_uid)
         if source_node is None or source_node.type not in _CLASSIC_FOLDER_TYPES:
             raise CommandError(
                 'nsf-convert-folder',
-                f"'{source_arg}' is not a Classic folder.")
+                f"'{source_label}' is not a Classic folder.")
 
         destination_uid = self._resolve_destination(
             params, kwargs.get('folder_uid'), force=kwargs.get('force', False))
@@ -790,18 +933,15 @@ class NestedShareFolderConvertCommand(Command):
         }
         scope_grants = self._scope_grant_targets(
             nodes, target_parent_sources, scope_by_folder)
-        scope_record_permissions = {
-            scope_uid: _scope_record_permissions(params, scope_uid)
-            for scope_uid, _ in scope_grants
-        }
         scope_accessors = {
-            scope_uid: _scope_accessors(
-                params, scope_uid, scope_record_permissions[scope_uid])
-            for scope_uid in scope_record_permissions
+            scope_uid: _scope_accessors(params, scope_uid)
+            for scope_uid, _ in scope_grants
         }
 
         self._validate_folder_keys(params, destination_uid)
         destination_accessors = self._destination_accessors(params, destination_uid)
+        record_access_plan = _record_access_plan(
+            params, placements, scope_by_folder, destination_accessors)
         existing_target_uids = {}
         if retry:
             existing_target_uids = self._select_retry_folders(
@@ -811,12 +951,7 @@ class NestedShareFolderConvertCommand(Command):
             params, nodes, records_to_convert_by_folder, source_node, destination_uid,
             available_depth, records_to_convert, depths, target_levels,
             skipped_pam_records,
-            destination_accessors=destination_accessors,
-            permission_warnings={
-                scope_uid: details
-                for scope_uid, details in scope_record_permissions.items()
-                if details['restricted_records'] or details['unmapped_manage_records']
-            })
+            destination_accessors=destination_accessors)
 
         if kwargs.get('dry_run'):
             return
@@ -883,13 +1018,18 @@ class NestedShareFolderConvertCommand(Command):
                     'Could not refresh the vault after record conversion: %s', exc)
 
         _print_conversion_step(
-            4, 6, 'Preserving additional record placements and app shares...')
+            4, 6, 'Applying record permissions and preserving placements/app shares...')
         link_failures = self._create_additional_placements(
             params, converted_uids, placements, target_uids,
             include_primary_for=converted_uids if retry else set())
         if link_failures:
             for failure in link_failures:
                 logging.warning('Could not preserve record placement: %s', failure)
+
+        record_permission_failures = self._grant_record_accesses(
+            params, record_access_plan, converted_uids)
+        for failure in record_permission_failures:
+            logging.warning('Could not preserve Classic record permissions: %s', failure)
 
         app_share_failures = self._grant_record_app_shares(
             params, record_app_shares, converted_uids, applications)
@@ -906,7 +1046,8 @@ class NestedShareFolderConvertCommand(Command):
 
         conversion_complete = (
             len(converted_uids) == len(source_record_uids) and
-            not link_failures and not app_share_failures and
+            not link_failures and not record_permission_failures and
+            not app_share_failures and
             verification_sync_error is None)
         verification_issues = []
         if verification_sync_error is not None:
@@ -957,6 +1098,9 @@ class NestedShareFolderConvertCommand(Command):
 
         verification_issues.extend(
             f'Additional placement failure: {failure}' for failure in link_failures[:5])
+        verification_issues.extend(
+            f'Record permission failure: {failure}'
+            for failure in record_permission_failures[:5])
         verification_issues.extend(
             f'Application-share failure: {failure}' for failure in app_share_failures[:5])
         params.sync_data = True
@@ -1033,7 +1177,7 @@ class NestedShareFolderConvertCommand(Command):
 
     @staticmethod
     def _destination_accessors(params, destination_uid):
-        """Read all effective user/team access that new destination children inherit."""
+        """Read all effective accessors that new destination children inherit."""
         if not destination_uid:
             return []
 
@@ -1042,6 +1186,7 @@ class NestedShareFolderConvertCommand(Command):
         accessors_by_key = {}
         continuation_token = None
         seen_tokens = set()
+        now_ms = current_milli_time()
         while True:
             try:
                 result = get_folder_access_v3(
@@ -1072,15 +1217,27 @@ class NestedShareFolderConvertCommand(Command):
                     f'{message}')
 
             for accessor in folder_result.get('accessors') or []:
-                access_type = accessor.get('access_type')
-                if (access_type not in ('AT_USER', 'AT_TEAM', 'AT_OWNER') or
-                        accessor.get('denied_access')):
+                if accessor.get('denied_access'):
                     continue
+                access_type = accessor.get('access_type')
                 accessor_uid = accessor.get('accessor_uid') or ''
                 key = (access_type, accessor_uid)
-                if not accessor_uid or key in accessors_by_key:
+                if not accessor_uid:
                     continue
-                accessors_by_key[key] = accessor
+                existing = accessors_by_key.get(key)
+                if existing:
+                    existing['role'] = merge_record_access_roles(
+                        existing.get('role'), accessor.get('role'))
+                    expirations = [
+                        value for value in (
+                            existing.get('tla_expiration'),
+                            accessor.get('tla_expiration'))
+                        if value and value > now_ms
+                    ]
+                    if expirations:
+                        existing['tla_expiration'] = max(expirations)
+                else:
+                    accessors_by_key[key] = dict(accessor)
 
             if not result.get('has_more'):
                 break
@@ -1251,8 +1408,7 @@ class NestedShareFolderConvertCommand(Command):
     @staticmethod
     def _print_preview(params, nodes, records_by_folder, source_node, destination_uid,
                        available_depth, record_uids, source_depths, target_levels,
-                       skipped_pam_records, destination_accessors=None,
-                       permission_warnings=None):
+                       skipped_pam_records, destination_accessors=None):
         destination = _nested_share_folder_label(params, destination_uid)
         print(
             f'\n{"=" * 72}\n'
@@ -1267,17 +1423,25 @@ class NestedShareFolderConvertCommand(Command):
         if destination_uid:
             print('\nAccess inherited by new folders from the destination:')
             if not destination_accessors:
-                print('  No user, team, or owner grants found.')
+                print('  No inherited access grants found.')
             else:
                 for accessor in destination_accessors:
                     access_type = accessor.get('access_type')
-                    kind = (
-                        'Team' if access_type == 'AT_TEAM' else
-                        'Owner' if access_type == 'AT_OWNER' else 'User')
+                    kind = {
+                        'AT_APPLICATION': 'Application',
+                        'AT_OWNER': 'Owner',
+                        'AT_TEAM': 'Team',
+                        'AT_USER': 'User',
+                    }.get(
+                        access_type,
+                        access_type[3:].replace('_', ' ').title()
+                        if isinstance(access_type, str) and access_type.startswith('AT_')
+                        else 'Unknown accessor')
+                    accessor_uid = accessor.get('accessor_uid') or 'Unknown'
                     identifier = (
-                        accessor.get('username') or accessor.get('accessor_uid') or 'Unknown')
+                        accessor.get('username') or accessor_uid)
                     if accessor.get('hidden'):
-                        identifier = f'Hidden {kind.lower()} ({accessor.get("accessor_uid")})'
+                        identifier = f'Hidden {kind.lower()} ({accessor_uid})'
                     role = (accessor.get('role') or 'unknown').replace('_', ' ').lower()
                     location = (
                         'already inherited by destination'
@@ -1285,29 +1449,6 @@ class NestedShareFolderConvertCommand(Command):
                     print(
                         f'  - {kind}: {_escape_non_printable(identifier)} '
                         f'— {role}; {location}')
-        for scope_uid, warning in (permission_warnings or {}).items():
-            record_uids = warning['restricted_records']
-            manage_records_accessors = warning['unmapped_manage_records']
-            if record_uids:
-                details = ', '.join(record_uids[:10])
-                if len(record_uids) > 10:
-                    details += f', ... ({len(record_uids)} records)'
-                print(
-                    f'\n{bcolors.WARNING}Classic Shared Folder {scope_uid} has mixed or '
-                    f'unavailable record edit/share permissions; the most restrictive '
-                    f'permissions will be applied to its NSF scope to avoid widening access. '
-                    f'Restricted record(s): {details}.{bcolors.ENDC}')
-            if manage_records_accessors:
-                identifiers = ', '.join(
-                    _escape_non_printable(value)
-                    for value in manage_records_accessors[:10])
-                if len(manage_records_accessors) > 10:
-                    identifiers += f', ... ({len(manage_records_accessors)} members)'
-                print(
-                    f'\n{bcolors.WARNING}Classic manage_records permissions cannot be '
-                    f'mapped without granting record edit access. The affected '
-                    f'accessors will not receive that permission in NSF: {identifiers}.'
-                    f'{bcolors.ENDC}')
         _print_skipped_pam_records(skipped_pam_records)
         if skipped_pam_records:
             print(
@@ -1626,6 +1767,81 @@ class NestedShareFolderConvertCommand(Command):
                             'nsf-convert-folder',
                             f"Could not share target folder {target_uid} with "
                             f"'{identifier}': {result.get('message')}")
+
+    @staticmethod
+    def _grant_record_accesses(params, grants, converted_uids):
+        """Apply direct NSF record roles that differ from inherited folder roles."""
+        grants = [grant for grant in grants if grant['record_uid'] in converted_uids]
+        if not grants:
+            return []
+
+        accesses_by_record = {}
+        forbidden = set()
+        record_uids = sorted({grant['record_uid'] for grant in grants})
+        for start in range(0, len(record_uids), NSF_RECORD_BATCH_SIZE):
+            batch = record_uids[start:start + NSF_RECORD_BATCH_SIZE]
+            try:
+                result = _nsf.get_record_accesses_v3(params, batch)
+            except Exception as exc:
+                return [f'Could not read NSF record permissions: {exc}']
+            forbidden.update(result.get('forbidden_records') or [])
+            for access in result.get('record_accesses') or []:
+                accesses_by_record.setdefault(access['record_uid'], []).append(access)
+
+        failures = []
+        updates = []
+        for grant in grants:
+            record_uid = grant['record_uid']
+            if record_uid in forbidden:
+                failures.append(
+                    f'{record_uid}: record permissions could not be read')
+                continue
+
+            matching_accesses = [
+                access for access in accesses_by_record.get(record_uid, [])
+                if access.get('access_type') == grant['access_type'] and
+                access.get('access_type_uid') == grant['accessor_uid']
+            ]
+            if any(access.get('denied_access') for access in matching_accesses):
+                failures.append(
+                    f'{record_uid}: access for {grant["accessor_uid"]} is explicitly denied')
+                continue
+            if any(access.get('owner') for access in matching_accesses):
+                continue
+
+            direct_accesses = [
+                access for access in matching_accesses
+                if not access.get('inherited') and not access.get('denied_access')
+            ]
+            if len(direct_accesses) > 1:
+                failures.append(
+                    f'{record_uid}: multiple direct permissions found for '
+                    f"{grant['accessor_uid']}")
+                continue
+
+            planned = dict(grant)
+            if direct_accesses:
+                current_role = direct_accesses[0].get('access_role_type')
+                planned_role = merge_record_access_roles(
+                    current_role, grant['access_role_type'])
+                if planned_role == merge_record_access_roles(current_role):
+                    continue
+                planned['access_role_type'] = planned_role
+                planned['action'] = 'update'
+                planned['expiration_timestamp'] = None
+            else:
+                planned['action'] = 'create'
+            updates.append(planned)
+
+        if not updates:
+            return failures
+
+        for grant, result in _nsf.batch_upsert_record_accesses_v3(params, updates):
+            if not result.get('success'):
+                message = result.get('message') or 'permission update failed'
+                failures.append(
+                    f"{grant['record_uid']} -> {grant['accessor_uid']}: {message}")
+        return failures
 
     @staticmethod
     def _grant_folder_app_shares(params, folder_app_shares, scope_by_folder,

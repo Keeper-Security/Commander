@@ -126,10 +126,23 @@ ROLE_NAME_MAP: Dict[str, int] = {
 }
 
 
-def classic_record_permissions_to_nsf_role(manage_users=False, can_edit=False,
-                                           can_share=False):
-    """Map Classic share and record permissions to the closest non-owner NSF role."""
-    can_manage_shares = bool(manage_users or can_share)
+def classic_shared_folder_permissions_to_nsf_role(manage_users=False,
+                                                   manage_records=False):
+    """Map Classic Shared Folder membership permissions to an NSF folder role."""
+    can_manage_shares = bool(manage_users)
+    can_manage_content = bool(manage_records)
+    if can_manage_shares and can_manage_content:
+        return 'content-share-manager'
+    if can_manage_content:
+        return 'content-manager'
+    if can_manage_shares:
+        return 'share-manager'
+    return 'viewer'
+
+
+def classic_record_permissions_to_nsf_role(can_edit=False, can_share=False):
+    """Map one Classic Shared Folder record's permissions to an NSF record role."""
+    can_manage_shares = bool(can_share)
     can_manage_content = bool(can_edit)
     if can_manage_shares and can_manage_content:
         return 'content-share-manager'
@@ -138,6 +151,45 @@ def classic_record_permissions_to_nsf_role(manage_users=False, can_edit=False,
     if can_manage_shares:
         return 'share-manager'
     return 'viewer'
+
+
+def merge_record_access_roles(*roles):
+    """Return the least-privileged record role that includes all supplied roles."""
+    required = {field: False for field in _RECORD_ROLE_PERMISSIONS[0]}
+    for role in roles:
+        if role is None:
+            continue
+        if isinstance(role, int):
+            role_type = role
+        else:
+            role_name = role.strip().lower().replace('-', '_')
+            role_type = ROLE_NAME_MAP.get(role_name)
+            if role_type is None:
+                try:
+                    role_type = folder_pb2.AccessRoleType.Value(role_name.upper())
+                except ValueError as exc:
+                    raise ValueError(f"Unknown NSF record role '{role}'") from exc
+        permissions = get_record_permissions_for_role(role_type)
+        for field, value in permissions.items():
+            required[field] |= value
+
+    candidates = []
+    for role_type in _RECORD_ROLE_PERMISSIONS:
+        permissions = get_record_permissions_for_role(role_type)
+        if all(not value or permissions[field] for field, value in required.items()):
+            candidates.append((sum(permissions.values()), role_type))
+    if not candidates:
+        return 'full-manager'
+    role_type = min(candidates)[1]
+    return {
+        0: 'navigator',
+        1: 'requestor',
+        2: 'viewer',
+        3: 'share-manager',
+        4: 'content-manager',
+        5: 'content-share-manager',
+        6: 'full-manager',
+    }[role_type]
 
 
 def get_folder_permissions_for_role(role_type: int) -> 'folder_pb2.FolderPermissions':

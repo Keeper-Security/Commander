@@ -50,6 +50,7 @@ _SUBMODULE_MAP = {
         'share_record_to_application_v3', 'update_record_share_to_application_v3',
         'unshare_record_from_application_v3',
         'batch_update_record_shares_v3', 'batch_create_record_shares_v3',
+        'batch_upsert_record_accesses_v3',
         'batch_unshare_records_v3',
         'transfer_record_ownership_v3', 'transfer_records_ownership_batch_v3',
     ],
