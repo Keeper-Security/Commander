@@ -12,6 +12,7 @@
 
 import logging
 import os
+import re
 import stat
 import subprocess
 import tempfile
@@ -24,6 +25,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 from ... import crypto, vault
 from ...commands.base import RecordMixin
 from ...commands.ssh_agent import load_private_key
+
+LOGIN_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_][a-zA-Z0-9_.@\\-]*$')
 
 
 def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
@@ -111,6 +114,9 @@ def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
                     hosts.append(hostname)
 
     login = RecordMixin.get_record_field(record, 'login')
+    if login and not LOGIN_NAME_PATTERN.match(login):
+        logging.info('SSH key plugin: invalid login %r', login)
+        return False
     if len(hosts) > 0 and old_pk and login:
         old_public_ssh_key = old_pk.public_key().public_bytes(
             encoding=serialization.Encoding.OpenSSH, format=serialization.PublicFormat.OpenSSH).decode()
@@ -129,11 +135,15 @@ def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
                     host, _, dst_port = host.partition(':')
                     if not dst_port and port:
                         dst_port = str(port)
+                    if dst_port and not dst_port.isdigit():
+                        logging.warning('SSH key plugin: invalid port %r for host %s', dst_port, host)
+                        return False
 
                     ssh_command = ['ssh', '-i', key_file_name, '-o', 'StrictHostKeyChecking=no']
                     if dst_port:
                         ssh_command.extend(('-p', dst_port))
-                    ssh_command.append(f'{login}@{host}')
+                    # "--" blocks SSH option injection.
+                    ssh_command.extend(('--', f'{login}@{host}'))
 
                     get_ssh_keys = list(ssh_command)
                     get_ssh_keys.append('cat .ssh/authorized_keys')
