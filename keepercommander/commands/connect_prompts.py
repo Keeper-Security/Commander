@@ -193,7 +193,7 @@ def split_shell_statements(script: Optional[str]) -> List[str]:
         if pos == 0:
             return True
         prev_char = script[pos - 1]
-        return prev_char in (' ', '\t', '\n', ';', '&', '|', '(', ')')
+        return prev_char in (' ', '\t', '\n', ';', '&', '|', '(')
 
     while i < n:
         c = script[i]

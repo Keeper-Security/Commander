@@ -1,5 +1,8 @@
 from __future__ import annotations
 import argparse
+import contextlib
+import io
+import re
 from ..pam.pam_dto import GatewayAction
 from ..discover import PAMGatewayActionDiscoverCommandBase, GatewayContext, MultiConfigurationException, multi_conf_msg
 from ...display import bcolors
@@ -81,6 +84,16 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
     def get_parser(self):
         return PAMActionSaasConfigCommand.parser
+
+    @staticmethod
+    def _print_json_error(message: str, fallback: str) -> None:
+        """Print a JSON error response without terminal color codes."""
+        clean_message = re.sub(
+            r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])',
+            '',
+            message or '',
+        ).strip()
+        print(json.dumps({"error": clean_message or fallback}))
 
     @staticmethod
     def _list_to_json(plugins: dict[str, SaasCatalog]) -> str:
@@ -371,21 +384,65 @@ class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
         gateway = kwargs.get("gateway")  # type: str
         configuration_uid = kwargs.get('configuration_uid')  # type: str | None
 
+        json_output = format_option == "json" and (do_list or (do_info and use_plugin is not None))
+        gateway_output = io.StringIO()
         try:
-            gateway_context = GatewayContext.from_gateway(params=params,
-                                                          gateway=gateway,
-                                                          configuration_uid=configuration_uid)
+            if json_output:
+                with contextlib.redirect_stdout(gateway_output):
+                    gateway_context = GatewayContext.from_gateway(
+                        params=params,
+                        gateway=gateway,
+                        configuration_uid=configuration_uid,
+                    )
+            else:
+                gateway_context = GatewayContext.from_gateway(
+                    params=params,
+                    gateway=gateway,
+                    configuration_uid=configuration_uid,
+                )
             if gateway_context is None:
-                print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
+                if json_output:
+                    self._print_json_error(
+                        gateway_output.getvalue(),
+                        f"Could not find the gateway configuration for {gateway}.",
+                    )
+                else:
+                    print(f"{bcolors.FAIL}Could not find the gateway configuration for {gateway}.{bcolors.ENDC}")
                 return
         except MultiConfigurationException as err:
-            multi_conf_msg(gateway, err)
+            if json_output:
+                with contextlib.redirect_stdout(gateway_output):
+                    multi_conf_msg(gateway, err)
+                self._print_json_error(
+                    gateway_output.getvalue() or str(err),
+                    f"Multiple configurations found for gateway {gateway}.",
+                )
+            else:
+                multi_conf_msg(gateway, err)
             return
 
-        plugins = get_plugins_map(
-            params=params,
-            gateway_context=gateway_context
-        )
+        if json_output:
+            plugin_output = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(plugin_output):
+                    plugins = get_plugins_map(
+                        params=params,
+                        gateway_context=gateway_context,
+                    )
+            except Exception as err:
+                self._print_json_error(str(err), "Could not retrieve SaaS plugins.")
+                return
+            if plugins is None:
+                self._print_json_error(
+                    plugin_output.getvalue(),
+                    "Could not retrieve SaaS plugins.",
+                )
+                return
+        else:
+            plugins = get_plugins_map(
+                params=params,
+                gateway_context=gateway_context,
+            )
 
         if do_list:
             if format_option == "json":
