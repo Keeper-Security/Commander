@@ -11,7 +11,7 @@
 
 import logging
 import time
-from typing import List
+from typing import List, Optional
 
 from ..pam.router_helper import _post_request_to_router
 from ..workflow.helpers import (
@@ -184,6 +184,25 @@ def _reconcile_approvers(
         for a in to_add:
             config.approvers.append(_build_approver_proto(a))
         _post_with_throttle_retry(params, 'add_workflow_approvers', rq_proto=config)
+
+
+def read_workflow_config(params: KeeperParams, record_uid: str, record_title: str = '') -> Optional[dict]:
+    """The workflow configuration of a resource as a plain dict, or None when it has none.
+
+    One router call per resource, so callers read only the resources whose JSON has a ``workflow`` section.
+    The dict is the protobuf message as is (``parameters``, ``approvers`` ...); mapping it to the JSON keys of
+    an import is the diff's job. Raises on a router error (the caller decides if that is a plan error).
+    """
+    from google.protobuf.json_format import MessageToDict
+
+    ref = ProtobufRefBuilder.record_ref(utils.base64_url_decode(record_uid), record_title)
+    existing = _post_with_throttle_retry(
+        params, 'read_workflow_config',
+        rq_proto=ref, rs_type=workflow_pb2.WorkflowConfig,
+    )
+    if not existing or not existing.ByteSize():
+        return None
+    return MessageToDict(existing, preserving_proto_field_name=True)
 
 
 def apply_workflow(
