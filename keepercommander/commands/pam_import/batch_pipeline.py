@@ -277,10 +277,10 @@ def flush_deferred_graph(tdag: TunnelDAG, params, *, label: str = 'graph flush')
     """Save deferred DAG edges with throttle retry and 5xx batch-size backoff.
 
     On add_data HTTP 5xx, halves ``save_batch_count`` (floor
-    ``PAM_DAG_SAVE_BATCH_COUNT_MIN``) and retries ``save()``. Note: upstream
-    ``DAG.save`` clears ``edge.modified`` while building the payload, so a
-    failed first batch may leave nothing dirty for the retry — mid-flush and
-    a smaller initial batch remain the main mitigations.
+    ``PAM_DAG_SAVE_BATCH_COUNT_MIN``) and retries ``save()``. ``DAG.save`` clears
+    ``edge.modified`` only after the batch that carries the edge was accepted, so
+    the retry sends exactly the edges that were not accepted yet (the failed batch
+    and every batch after it), never the ones that already went through.
     """
     while True:
         try:
