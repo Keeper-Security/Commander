@@ -83,10 +83,19 @@ class Connection(ConnectionBase):
 
         return f'{prot_pref}://{hostname}'
 
+    def _server_public_key(self):
+        # Commander resolves the server key per host: a self-managed deployment has its own key pair, normally under
+        # key ID 7, which Keeper's built-in key table also defines. Encrypting to the built-in key 7 makes the server
+        # fail every request. Older Commander versions only have the table, so fall back to it.
+        resolver = getattr(rest_api, "get_server_public_key", None)
+        if resolver is not None:
+            return resolver(self.params.rest_context)
+        return rest_api.SERVER_PUBLIC_KEYS[self.params.rest_context.server_key_id]
+
     # deprecated
     def get_keeper_tokens(self):
         self.transmission_key = utils.generate_aes_key()
-        server_public_key = rest_api.get_server_public_key(self.params.rest_context)
+        server_public_key = self._server_public_key()
 
         if self.params.rest_context.server_key_id < 7:
             self.dep_encrypted_transmission_key = crypto.encrypt_rsa(self.transmission_key, server_public_key)
@@ -108,7 +117,7 @@ class Connection(ConnectionBase):
             self.transmission_key = utils.generate_aes_key()
             self.logger.debug(f"transmission key is {self.transmission_key}")
             # self.params.rest_context.transmission_key = self.transmission_key
-            server_public_key = rest_api.get_server_public_key(self.params.rest_context)
+            server_public_key = self._server_public_key()
 
             if self.params.rest_context.server_key_id < 7:
                 encrypted_transmission_key = crypto.encrypt_rsa(self.transmission_key, server_public_key)
