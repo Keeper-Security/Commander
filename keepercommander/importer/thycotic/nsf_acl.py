@@ -16,12 +16,17 @@ import logging
 ROLE_MATRIX = {
     ('owner', 'owner'): 'full-manager',
     ('owner', 'edit'): 'full-manager',
-     ('owner', 'view'): 'viewer',
+    ('owner', 'view'): 'viewer',
+    ('owner', 'list'): 'viewer',
     ('edit', 'owner'): 'content-manager',
     ('edit', 'edit'): 'content-manager',
-    ('add secret', 'owner'): 'content-manager',
     ('edit', 'view'): 'viewer',
+    ('edit', 'list'): 'viewer',
+    ('add secret', 'owner'): 'content-manager',
+    ('add secret', 'view'): 'viewer',
+    ('add secret', 'list'): 'viewer',
     ('view', 'view'): 'viewer',
+    ('view', 'list'): 'viewer',
 }
 
 def _permission_principal_key(perm_row):
@@ -109,9 +114,9 @@ def thycotic_roles_to_nsf_role(folder_access_role_name, secret_access_role_name)
     if not folder_role:
         return thycotic_secret_role_to_nsf_role(secret_access_role_name)
 
-    # Any folder + List secret → requestor
+    # Any folder + List secret → viewer (List has no requestor UI equivalent in Keeper)
     if secret_role == 'list':
-        return 'requestor'
+        return 'viewer'
 
     # No secret access → no grant
     return None
@@ -121,6 +126,9 @@ def thycotic_secret_role_to_nsf_role(secret_access_role_name):
     # type: (Optional[str]) -> Optional[str]
     """
     Map Delinea secret-only access role to NSF role (for secret-level overrides).
+
+    Targets Keeper documented NSF roles only. List maps to viewer (List has no
+    requestor UI equivalent in Keeper).
 
     Args:
         secret_access_role_name: Delinea secret access role
@@ -134,7 +142,7 @@ def thycotic_secret_role_to_nsf_role(secret_access_role_name):
     role = secret_access_role_name.lower()
 
     if role == 'list':
-        return 'requestor'
+        return 'viewer'
     elif role == 'view':
         return 'viewer'
     elif role == 'edit':

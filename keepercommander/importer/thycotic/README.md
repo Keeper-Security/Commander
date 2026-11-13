@@ -4,7 +4,7 @@ Commander supports importing secrets from Thycotic Secret Server (now known as D
 
 ## Features
 
-- **Nested Share Folders (NSF) with ACL**: Delinea folder and secret-level permissions map to NSF roles (viewer, content-manager, full-manager, requestor)
+- **Nested Share Folders (NSF) with ACL**: Delinea folder and secret-level permissions map to documented NSF roles (viewer, share-manager, content-manager, full-manager)
 - **Restricted Secrets Support**: Automatically handles restricted secrets that require checkout permissions
 - **User Migration**: Optional user provisioning from Thycotic to Keeper enterprise
 - **Team Creation and Assignment**: Create Keeper teams and assign users from Thycotic groups
@@ -244,17 +244,28 @@ When importing with `--nsf`, Delinea permissions are intelligently mapped to NSF
 
 #### Role Mapping
 
+Delinea roles map to documented Keeper NSF roles only (no requestor, which has no UI equivalent):
+
 | Delinea Folder | Delinea Secret | NSF Role |
 |---|---|---|
 | Owner | Owner | full-manager |
 | Owner | Edit | full-manager |
+| Owner | View | viewer (lossy) |
+| Owner | List | viewer |
 | Edit | Owner | content-manager |
 | Edit | Edit | content-manager |
-| Edit | View | viewer |
+| Edit | View | viewer (lossy) |
+| Edit | List | viewer |
 | View | View | viewer |
-| Any | List | requestor |
+| View | List | viewer |
+| Any | List | viewer |
 
-**Note:** Secret roles take precedence over folder roles. When a secret has different permissions than its folder, a direct record share is created with the secret-level role.
+**Special Cases:**
+- **Delinea List → Keeper Viewer**: List has no UI equivalent in Keeper; mapped to viewer for visibility
+- **(Lossy) Owner/Edit + View → Viewer**: Higher folder permission discarded when secret is View-only
+- **Secret roles override folder roles**: When a secret has different permissions than its folder, a direct record share is created with the secret-level role
+
+**Note:** The mapping preserves or downgrades permissions; never grants more than Delinea did.
 
 #### What Gets Created
 

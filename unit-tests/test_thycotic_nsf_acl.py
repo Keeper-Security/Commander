@@ -52,12 +52,15 @@ class TestThycoticNsfAclRoleMappings(unittest.TestCase):
         self.assertEqual(role, 'viewer')
 
     def test_any_folder_secret_list(self):
-        """Any folder + List secret → requestor."""
+        """Any folder + List secret → viewer (List has no Keeper UI equivalent)."""
         role = thycotic_roles_to_nsf_role('Owner', 'List')
-        self.assertEqual(role, 'requestor')
+        self.assertEqual(role, 'viewer')
 
         role = thycotic_roles_to_nsf_role('View', 'List')
-        self.assertEqual(role, 'requestor')
+        self.assertEqual(role, 'viewer')
+
+        role = thycotic_roles_to_nsf_role('Edit', 'List')
+        self.assertEqual(role, 'viewer')
 
     def test_no_secret_access(self):
         """No secret access → None (no grant)."""
@@ -111,9 +114,9 @@ class TestThycoticSecretRoleMappings(unittest.TestCase):
     """Test secret-only role mappings."""
 
     def test_secret_list(self):
-        """Secret List → requestor."""
+        """Secret List → viewer (List has no Keeper UI equivalent)."""
         role = thycotic_secret_role_to_nsf_role('List')
-        self.assertEqual(role, 'requestor')
+        self.assertEqual(role, 'viewer')
 
     def test_secret_view(self):
         """Secret View → viewer."""
