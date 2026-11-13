@@ -964,6 +964,33 @@ class PAMProjectImportCommand(Command):
 
         return res
 
+    @staticmethod
+    def _print_dry_run_records(project: dict, resources: list, users: list) -> None:
+        """One line per record that import would create, same layout as the `pam project extend` dry-run."""
+        folders = project.get("folders") or {}
+        res_folder = folders.get("resources_folder") or "resources folder"
+        usr_folder = folders.get("users_folder") or "users folder"
+
+        def line(obj, default_folder, nested_on=""):
+            label = getattr(obj, "title", None) or getattr(obj, "login", None) or ""
+            path = getattr(obj, "folder_path", "") or default_folder
+            otype = getattr(obj, "type", "") or ""
+            suffix = f" (nested on {nested_on})" if nested_on else ""
+            print(f"  [DRY RUN] [new]  folder={path}\trecord={otype}: {label}{suffix}")
+
+        total = 0
+        for mach in resources:
+            line(mach, res_folder)
+            total += 1
+        for usr in users:
+            line(usr, usr_folder)
+            total += 1
+        for mach in resources:
+            for usr in getattr(mach, "users", None) or []:
+                line(usr, usr_folder, getattr(mach, "title", "") or "")
+                total += 1
+        print(f"[DRY RUN] {total} record(s) would be created")
+
     def generate_sample_data(self, params, project: dict):
         # All sample-data logic (records + credentials + docker-compose) lives
         # in playground.py; this method just orchestrates it.
@@ -972,7 +999,7 @@ class PAMProjectImportCommand(Command):
         if project["options"].get("dry_run", False) is True:
             intended = os.path.abspath(os.path.join(os.getcwd(), COMPOSE_FILENAME))
             plan = session.simulate()
-            print(json.dumps(plan, indent=2))
+            logging.debug("Dry-run plan:\n%s", json.dumps(plan, indent=2))
             print("[DRY RUN] Would generate discovery-playground sample records "
                   "via BatchPamImportEngine "
                   "(MySQL, SSH, VNC, RDP, RBI, PostgreSQL, MariaDB, MSSQL, "
@@ -1762,9 +1789,10 @@ class PAMProjectImportCommand(Command):
                 pam_cfg_uid=pam_cfg_uid,
                 extend_mode=False,
             )
-            plan = engine.simulate()
-            print(json.dumps(plan, indent=2))
-            print("[DRY RUN COMPLETE] No vault/DAG writes.")
+            plan = engine.simulate()  # pre-flight messages are logged by simulate()
+            logging.debug("Dry-run plan:\n%s", json.dumps(plan, indent=2))
+            self._print_dry_run_records(project, resources, users)
+            # "[DRY RUN COMPLETE]" is printed once by execute()
             return
 
         print("Started importing data...")

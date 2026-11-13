@@ -155,25 +155,32 @@ def get_folder_record_uids(params, folder_uid: str) -> set:
     return record_uids
 
 
+def get_record_summary(params, record_uid: str) -> Optional[tuple]:
+    """Return (uid, title, record_type, login) for *record_uid*, or None when the record cannot be loaded."""
+    try:
+        rec = load_pam_record(params, record_uid)
+        if not rec:
+            return None
+        title = getattr(rec, 'title', '') or ''
+        rtype = getattr(rec, 'record_type', '') or ''
+        login = ''
+        fields = getattr(rec, 'fields', None)
+        if isinstance(fields, list):
+            field = next((x for x in fields if getattr(x, 'type', '') == 'login'), None)
+            if field and hasattr(field, 'get_default_value'):
+                login = (field.get_default_value() or '') or ''
+        return (record_uid, title, rtype, login)
+    except Exception:
+        return None
+
+
 def get_records_in_folder(params, folder_uid: str) -> list:
     """Return (uid, title, record_type, login) tuples for records in *folder_uid*."""
     result = []
     for ruid in get_folder_record_uids(params, folder_uid):
-        try:
-            rec = load_pam_record(params, ruid)
-            if not rec:
-                continue
-            title = getattr(rec, 'title', '') or ''
-            rtype = getattr(rec, 'record_type', '') or ''
-            login = ''
-            fields = getattr(rec, 'fields', None)
-            if isinstance(fields, list):
-                field = next((x for x in fields if getattr(x, 'type', '') == 'login'), None)
-                if field and hasattr(field, 'get_default_value'):
-                    login = (field.get_default_value() or '') or ''
-            result.append((ruid, title, rtype, login))
-        except Exception:
-            continue
+        summary = get_record_summary(params, ruid)
+        if summary:
+            result.append(summary)
     return result
 
 
