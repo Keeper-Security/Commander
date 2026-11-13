@@ -18,9 +18,12 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from keepercommander.commands.pam_import.batch_pipeline import (
-    PAM_DAG_SAVE_BATCH_COUNT_MIN, flush_deferred_graph,
+    PAM_DAG_SAVE_BATCH_COUNT_MIN, _is_graph_add_data_server_error, flush_deferred_graph,
 )
+from keepercommander.keeper_dag.exceptions import DAGConnectionException
 from keepercommander.keeper_dag import DAG, EdgeType
 from keepercommander.keeper_dag.connection import ConnectionBase
 from keepercommander.keeper_dag.types import PamEndpoints, RefType
@@ -109,3 +112,61 @@ def test_flush_retries_with_a_smaller_batch_and_sends_every_edge_exactly_once():
     assert conn.calls[1:] == [20, 20, 20]   # the 60 edges not accepted yet
     assert sum(conn.calls) == 100           # nothing lost, nothing sent twice
     assert _dirty(dag) == 0
+
+
+_URL = "https://connect.keepersecurity.com/api/user/graph-sync/pam/add_data"
+
+
+@pytest.mark.parametrize("message", [
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 500, Internal Server Error",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 502, Bad Gateway",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 503, Service Unavailable",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 504, Gateway Time-out",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: HTTPSConnectionPool(host='x', port=443): "
+    "Read timed out. (read timeout=30)",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: ('Connection aborted.', "
+    "RemoteDisconnected('Remote end closed connection without response'))",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: ConnectionResetError(10054)",
+])
+def test_server_side_and_timeout_failures_are_retried_with_a_smaller_batch(message):
+    assert _is_graph_add_data_server_error(DAGConnectionException(message))
+
+
+@pytest.mark.parametrize("message", [
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 400, Bad Request",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 403, Forbidden",
+    f"Call to graph web service {_URL}, after 5 attempts, failed!: 401, Unauthorized",
+])
+def test_client_errors_are_not_retried(message):
+    assert not _is_graph_add_data_server_error(DAGConnectionException(message))
+
+
+def test_other_exceptions_count_only_when_they_name_add_data():
+    assert _is_graph_add_data_server_error(RuntimeError("add_data 500"))
+    assert _is_graph_add_data_server_error(RuntimeError("add_data timed out"))
+    assert not _is_graph_add_data_server_error(RuntimeError("something else 500"))
+    assert not _is_graph_add_data_server_error(ValueError("add_data bad value"))
+
+
+def test_flush_retries_with_a_smaller_batch_after_a_timeout(caplog):
+    dag, conn = _dag(edges=100, batch_count=40)
+    real_add_data = conn.add_data
+    state = {"calls": 0}
+
+    def timing_out_add_data(payload, *args, **kwargs):
+        state["calls"] += 1
+        if state["calls"] == 2:
+            raise DAGConnectionException(
+                f"Call to graph web service {_URL}, after 5 attempts, failed!: Read timed out. (read timeout=30)")
+        real_add_data(payload, *args, **kwargs)
+
+    conn.add_data = timing_out_add_data
+
+    with caplog.at_level("WARNING"):
+        flush_deferred_graph(SimpleNamespace(linking_dag=dag), MagicMock(), label="timeout flush")
+
+    assert dag.save_batch_count == 20
+    assert sum(conn.calls) == 100
+    assert _dirty(dag) == 0
+    # the log names the elapsed time and the cause
+    assert any("add_data failed after" in r.message and "Read timed out" in r.message for r in caplog.records)

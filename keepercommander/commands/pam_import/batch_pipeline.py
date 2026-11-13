@@ -262,15 +262,27 @@ def configure_batch_tdag(tdag: TunnelDAG) -> None:
     tdag.defer_saves(True)
 
 
+# What a failed graph add_data looks like once the connection layer has given up (it already re-sends the same
+# payload 5 times, 10 s apart, with a 30 s timeout per attempt): an HTTP status of a server / gateway fault, or a
+# timeout / dropped connection. A request that takes the server longer than the client timeout fails on the client
+# while the server may still commit it, so timeouts are retried with a smaller batch just like 5xx.
+_GRAPH_ADD_DATA_RETRYABLE = (
+    '500', '502', '503', '504',
+    'timed out', 'timeout', 'time-out',
+    'connection reset', 'connection aborted', 'connectionreset', 'connectionaborted', 'remotedisconnected',
+    'connection error',
+)
+
+
 def _is_graph_add_data_server_error(err: BaseException) -> bool:
-    """True for KRouter add_data HTTP 5xx (payload too large / transient server fault)."""
+    """True for a graph add_data failure worth retrying with a smaller batch: KRouter / load balancer 5xx,
+    a client or gateway timeout, or a dropped connection."""
     from ...keeper_dag.exceptions import DAGConnectionException
 
-    if not isinstance(err, DAGConnectionException):
-        msg = str(err)
-        return 'add_data' in msg and ('500' in msg or '502' in msg or '503' in msg)
-    msg = str(err)
-    return '500' in msg or '502' in msg or '503' in msg
+    msg = str(err).lower()
+    if not isinstance(err, DAGConnectionException) and 'add_data' not in msg:
+        return False
+    return any(token in msg for token in _GRAPH_ADD_DATA_RETRYABLE)
 
 
 def flush_deferred_graph(tdag: TunnelDAG, params, *, label: str = 'graph flush') -> None:
@@ -283,6 +295,7 @@ def flush_deferred_graph(tdag: TunnelDAG, params, *, label: str = 'graph flush')
     and every batch after it), never the ones that already went through.
     """
     while True:
+        started = time.monotonic()
         try:
             call_with_throttle_retry(
                 tdag.linking_dag.save,
@@ -298,10 +311,12 @@ def flush_deferred_graph(tdag: TunnelDAG, params, *, label: str = 'graph flush')
             if current <= PAM_DAG_SAVE_BATCH_COUNT_MIN:
                 raise
             new_count = max(PAM_DAG_SAVE_BATCH_COUNT_MIN, current // 2)
+            # The elapsed time includes the connection layer's own retries; the message names the cause
+            # (HTTP status or timeout). Both are what is needed to tell a timeout from a lock or pool problem.
             logging.warning(
-                '%s: add_data server error with save_batch_count=%d; '
+                '%s: add_data failed after %.1f s with save_batch_count=%d; '
                 'retrying with save_batch_count=%d: %s',
-                label, current, new_count, err,
+                label, time.monotonic() - started, current, new_count, err,
             )
             tdag.linking_dag.save_batch_count = new_count
 
