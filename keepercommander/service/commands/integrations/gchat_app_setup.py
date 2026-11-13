@@ -20,7 +20,7 @@ import re
 from .... import vault
 from ....display import bcolors
 from ....error import CommandError
-from ...docker import GChatConfig, GChatConstants
+from ...docker import GChatConfig, GChatConstants, WorkflowApprovalConstants
 from .approvals_setup import (
     ApprovalsChannelProfile,
     approvals_config_to_record_fields,
@@ -138,6 +138,7 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             )
         approvals = self._collect_approvals_config(params, profile)
 
+        workflow_approval_enabled, workflow_approval_interval = self._collect_workflow_approval_config()
         pedm_enabled, pedm_interval = self._collect_pedm_config()
         da_enabled, da_interval = self._collect_device_approval_config()
 
@@ -153,6 +154,8 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             chat_command_request_folder_id=chat_command_request_folder_id,
             chat_command_external_share_id=chat_command_external_share_id,
             chat_command_create_secret_id=chat_command_create_secret_id,
+            workflow_approval_enabled=workflow_approval_enabled,
+            workflow_approval_polling_interval=workflow_approval_interval,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -174,6 +177,16 @@ class GChatAppSetupCommand(IntegrationSetupCommand):
             ),
             vault.TypedField.new_field(
                 'text', config.google_topic_id, GChatConstants.FIELD_TOPIC_ID
+            ),
+            vault.TypedField.new_field(
+                'text',
+                'true' if config.workflow_approval_enabled else 'false',
+                WorkflowApprovalConstants.FIELD_ENABLED,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                str(config.workflow_approval_polling_interval),
+                WorkflowApprovalConstants.FIELD_POLLING_INTERVAL,
             ),
             vault.TypedField.new_field(
                 'text',

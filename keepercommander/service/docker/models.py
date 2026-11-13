@@ -98,6 +98,13 @@ class ApprovalsConfig:
     teams: List[ApproverTeam] = field(default_factory=list)
 
 
+class WorkflowApprovalConstants:
+    """Shared config-record fields and defaults for chat PAM Workflow polling."""
+    FIELD_ENABLED = 'workflow_approval_enabled'
+    FIELD_POLLING_INTERVAL = 'workflow_approval_polling_interval'
+    DEFAULT_POLLING_INTERVAL = 120
+
+
 @dataclass
 class SlackConfig:
     slack_app_token: str
@@ -108,6 +115,8 @@ class SlackConfig:
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
+    workflow_approval_enabled: bool = False
+    workflow_approval_polling_interval: int = WorkflowApprovalConstants.DEFAULT_POLLING_INTERVAL
 
     @property
     def approvals_channel_id(self) -> str:
@@ -126,6 +135,8 @@ class TeamsConfig:
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
+    workflow_approval_enabled: bool = False
+    workflow_approval_polling_interval: int = WorkflowApprovalConstants.DEFAULT_POLLING_INTERVAL
 
 
 @dataclass
@@ -159,6 +170,8 @@ class GChatConstants:
     FIELD_PEDM_POLLING_INTERVAL = 'pedm_polling_interval'
     FIELD_DEVICE_APPROVAL_ENABLED = 'device_approval_enabled'
     FIELD_DEVICE_APPROVAL_POLLING_INTERVAL = 'device_approval_polling_interval'
+    FIELD_WORKFLOW_APPROVAL_ENABLED = WorkflowApprovalConstants.FIELD_ENABLED
+    FIELD_WORKFLOW_APPROVAL_POLLING_INTERVAL = WorkflowApprovalConstants.FIELD_POLLING_INTERVAL
 
     DEFAULT_COMMAND_REQUEST_RECORD_ID = '1'
     DEFAULT_COMMAND_REQUEST_FOLDER_ID = '2'
@@ -190,6 +203,8 @@ class GChatConfig:
     pedm_polling_interval: int = 120
     device_approval_enabled: bool = False
     device_approval_polling_interval: int = 120
+    workflow_approval_enabled: bool = False
+    workflow_approval_polling_interval: int = WorkflowApprovalConstants.DEFAULT_POLLING_INTERVAL
 
     @property
     def chat_approvals_space_id(self) -> str:

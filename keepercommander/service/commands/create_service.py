@@ -113,7 +113,7 @@ class CreateService(Command):
 
             # Re-sanitize commands against each integration's own allowlist in case docker-compose.yml is stale/hand-edited.
             from .integrations.runtime_policy import apply_runtime_command_policy
-            apply_runtime_command_policy(args)
+            apply_runtime_command_policy(args, params=params)
 
             from .integrations.vault_metadata import get_existing_api_key, write_service_metadata
             existing_api_key = (

@@ -15,7 +15,7 @@ from typing import List
 
 from .... import vault
 from ....display import bcolors
-from ...docker import TeamsConfig
+from ...docker import TeamsConfig, WorkflowApprovalConstants
 from ...config.config_validation import ConfigValidator, ValidationError
 from .integration_setup_base import IntegrationSetupCommand
 
@@ -79,6 +79,7 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
             except ValidationError as e:
                 print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
 
+        workflow_approval_enabled, workflow_approval_interval = self._collect_workflow_approval_config()
         pedm_enabled, pedm_interval = self._collect_pedm_config()
         da_enabled, da_interval = self._collect_device_approval_config()
 
@@ -91,6 +92,8 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
             approvals_channel_id=approvals_channel_id,
             approvals_team_id=approvals_team_id,
             bot_port=bot_port,
+            workflow_approval_enabled=workflow_approval_enabled,
+            workflow_approval_polling_interval=workflow_approval_interval,
             pedm_enabled=pedm_enabled,
             pedm_polling_interval=pedm_interval,
             device_approval_enabled=da_enabled,
@@ -104,6 +107,15 @@ class TeamsAppSetupCommand(IntegrationSetupCommand):
             vault.TypedField.new_field('text', config.tenant_id, 'tenant_id'),
             vault.TypedField.new_field('text', config.approvals_channel_id, 'approvals_channel_id'),
             vault.TypedField.new_field('text', config.approvals_team_id, 'approvals_team_id'),
+            vault.TypedField.new_field(
+                'text',
+                'true' if config.workflow_approval_enabled else 'false',
+                WorkflowApprovalConstants.FIELD_ENABLED,
+            ),
+            vault.TypedField.new_field(
+                'text', str(config.workflow_approval_polling_interval),
+                WorkflowApprovalConstants.FIELD_POLLING_INTERVAL,
+            ),
             vault.TypedField.new_field('text', 'true' if config.pedm_enabled else 'false', 'pedm_enabled'),
             vault.TypedField.new_field('text', str(config.pedm_polling_interval), 'pedm_polling_interval'),
             vault.TypedField.new_field('text', 'true' if config.device_approval_enabled else 'false', 'device_approval_enabled'),
