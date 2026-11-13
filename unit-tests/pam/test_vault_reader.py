@@ -382,3 +382,67 @@ class TestDumpHelpers:
             acl = [e for v in dag.all_vertices for e in v.edges if e.edge_type == EdgeType.ACL][0]
             as_dict = edge_to_dict(acl, g.user.uid, _params(), 'CFG')
             assert as_dict['edge_type'] == 'acl' and as_dict['contents'] == {'is_admin': True}
+
+
+def _item(tail, head, edge_type, path=None):
+    """A raw sync item as the library receives it (only the fields the reader looks at)."""
+    return SimpleNamespace(ref=SimpleNamespace(value=tail),
+                           parentRef=SimpleNamespace(value=head) if head else None,
+                           type=edge_type, path=path)
+
+
+class TestOrderingRules:
+    """The arrival-order bookkeeping on synthetic sync items (no graph needed)."""
+
+    NO_VERTICES = SimpleNamespace(all_vertices=[])
+
+    def _state(self, *items):
+        return build_graph_state(0, list(items), self.NO_VERTICES, _params())
+
+    def test_last_item_per_coordinate_wins_whatever_the_type(self):
+        state = self._state(_item('u', 'm', 'link'), _item('u', 'm', 'acl'))
+        assert state.edge('u', 'm').edge_type == 'acl'
+
+    def test_deletion_then_new_edge_is_present_and_new_edge_then_deletion_is_absent(self):
+        present = self._state(_item('m', None, 'data', 'x'), _item('m', None, 'deletion', 'x'),
+                              _item('m', None, 'data', 'x'))
+        absent = self._state(_item('m', None, 'data', 'x'), _item('m', None, 'deletion', 'x'))
+        assert present.edge('m', 'm', 'x') is not None and absent.edge('m', 'm', 'x') is None
+
+    def test_a_data_item_has_no_parent_and_the_head_is_the_tail(self):
+        state = self._state(_item('m', None, 'data', 'meta'))
+        assert state.edge('m', 'm', 'meta').edge_type == 'data'
+        assert state.data_paths('m') == ['meta']
+
+    def test_paths_are_separate_coordinates(self):
+        state = self._state(_item('m', None, 'data', 'meta'), _item('m', None, 'data', 'jit_settings'),
+                            _item('m', None, 'deletion', 'meta'))
+        assert state.edge('m', 'm', 'meta') is None and state.edge('m', 'm', 'jit_settings') is not None
+
+    def test_a_denial_sits_next_to_the_normal_edge_and_does_not_replace_it(self):
+        state = self._state(_item('u', 'm', 'acl'), _item('u', 'm', 'denial'))
+        assert state.edge('u', 'm').edge_type == 'acl'
+        assert sorted(e.edge_type for e in state.edges_of('u')) == ['acl', 'denial']
+
+    def test_undenial_takes_the_denial_away_and_deletion_removes_edge_and_denial(self):
+        undone = self._state(_item('u', 'm', 'denial'), _item('u', 'm', 'undenial'))
+        deleted = self._state(_item('u', 'm', 'link'), _item('u', 'm', 'denial'), _item('u', 'm', 'deletion'))
+        assert undone.edges_of('u') == [] and deleted.edges_of('u') == []
+
+    def test_an_acl_without_a_set_flag_counts_as_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = Graph(tmp)
+            g.user.belongs_to(g.machine, EdgeType.ACL, content={'is_admin': True, 'belongs_to': True})
+            g.save()
+            g.user.belongs_to(g.machine, EdgeType.ACL, content={'is_admin': False, 'belongs_to': False})
+            g.save()
+            _, _, state = g.read()
+            assert state.edge(g.user.uid, g.machine.uid) is None
+
+    def test_an_acl_with_one_set_flag_stays(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = Graph(tmp)
+            g.user.belongs_to(g.machine, EdgeType.ACL, content={'is_admin': False, 'belongs_to': True})
+            g.save()
+            _, _, state = g.read()
+            assert state.edge(g.user.uid, g.machine.uid).contents == {'is_admin': False, 'belongs_to': True}

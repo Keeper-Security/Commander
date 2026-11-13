@@ -64,17 +64,22 @@ class GraphState:
 
     def __init__(self, graph_id: int, edges: Iterable[CurrentEdge] = ()):
         self.graph_id = graph_id
+        # (tail, head, path, is_filter) -> edge. A DENIAL does not replace the normal edge at its coordinate.
+        self._all: Dict[Tuple[str, str, Optional[str], bool], CurrentEdge] = {}
         self._edges: Dict[Tuple[str, str, Optional[str]], CurrentEdge] = {}
         self._by_uid: Dict[str, List[CurrentEdge]] = {}
         for edge in edges:
-            self._edges[(edge.tail, edge.head, edge.path)] = edge
-        for edge in self._edges.values():
+            is_filter = edge.edge_type == EdgeType.DENIAL.value
+            self._all[(edge.tail, edge.head, edge.path, is_filter)] = edge
+            if not is_filter:
+                self._edges[(edge.tail, edge.head, edge.path)] = edge
+        for edge in self._all.values():
             self._by_uid.setdefault(edge.tail, []).append(edge)
             if edge.head != edge.tail:
                 self._by_uid.setdefault(edge.head, []).append(edge)
 
     def __len__(self) -> int:
-        return len(self._edges)
+        return len(self._all)
 
     def edge(self, tail: str, head: str, path: Optional[str] = None) -> Optional[CurrentEdge]:
         return self._edges.get((tail, head, path or None))
@@ -123,12 +128,26 @@ def _coordinate(item) -> Tuple[str, str, Optional[str]]:
 def build_graph_state(graph_id: int, raw_items: Iterable, dag: DAG, params) -> GraphState:
     """The current edges of a loaded graph.
 
-    The LAST raw item per coordinate (tail, head, path) is the current one; if it is a ``DELETION`` or ``UNDENIAL``
-    the edge is absent. Contents are decoded from the loaded graph's edge of the same coordinate and type.
+    The LAST raw item per coordinate (tail, head, path) is the current one; if it is a ``DELETION`` the edge is
+    absent (and so is an ACL with no set flag). A ``DENIAL`` is kept next to the normal edge. Contents are decoded
+    from the loaded graph's edge of the same coordinate and type.
     """
+    # Same bookkeeping as the server and the Web Vault: a coordinate (tail, head, path) holds ONE current edge,
+    # the last one that arrived. A DELETION removes whatever is there (a denial too). A DENIAL is a filter edge: it
+    # sits next to the normal edge and does not replace it; an UNDENIAL takes the denial away.
     last_type: Dict[Tuple[str, str, Optional[str]], EdgeType] = {}
+    denials: Dict[Tuple[str, str, Optional[str]], EdgeType] = {}
     for item in raw_items:
-        last_type[_coordinate(item)] = EdgeType.find_enum(item.type)
+        coordinate = _coordinate(item)
+        edge_type = EdgeType.find_enum(item.type)
+        if edge_type == EdgeType.DENIAL:
+            denials[coordinate] = edge_type
+        elif edge_type == EdgeType.UNDENIAL:
+            denials.pop(coordinate, None)
+        else:
+            last_type[coordinate] = edge_type
+            if edge_type == EdgeType.DELETION:
+                denials.pop(coordinate, None)
 
     loaded: Dict[Tuple[str, str, Optional[str], EdgeType], Any] = {}
     for vertex in dag.all_vertices:
@@ -137,13 +156,17 @@ def build_graph_state(graph_id: int, raw_items: Iterable, dag: DAG, params) -> G
                 loaded[(vertex.uid, edge.head_uid, edge.path or None, edge.edge_type)] = edge
 
     current: List[CurrentEdge] = []
-    for (tail, head, path), edge_type in last_type.items():
-        if edge_type in EXCLUDE_EDGE_TYPES:
-            continue
+    wanted = [(coordinate, edge_type) for coordinate, edge_type in last_type.items()
+              if edge_type not in EXCLUDE_EDGE_TYPES]
+    wanted += list(denials.items())
+    for (tail, head, path), edge_type in wanted:
         edge = loaded.get((tail, head, path, edge_type))
         contents = decode_edge_local(edge, tail, params) if edge is not None else None
         if edge_type == EdgeType.ACL:
             decrypt_acl_pwd_complexity(contents, head, tail, params)
+            # The Web Vault treats an ACL without a single set flag as deleted (that is how a user is unlinked).
+            if isinstance(contents, dict) and not any(contents.values()):
+                continue
         current.append(CurrentEdge(tail=tail, head=head, edge_type=edge_type.value, path=path, contents=contents))
     return GraphState(graph_id, current)
 
