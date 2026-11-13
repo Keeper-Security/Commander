@@ -1,9 +1,10 @@
 # Commander support for Thycotic (Delinea) Secret Server
 
-Commander supports importing secrets from Thycotic Secret Server (now known as Delinea Secret Server) into Keeper, with advanced features for permissions, team management, and user provisioning.
+Commander supports importing secrets from Thycotic Secret Server (now known as Delinea Secret Server) into Keeper, with advanced features for permissions, team management, user provisioning, and NSF ACL support.
 
 ## Features
 
+- **Nested Share Folders (NSF) with ACL**: Delinea folder and secret-level permissions map to documented NSF roles (viewer, share-manager, content-manager, full-manager)
 - **Restricted Secrets Support**: Automatically handles restricted secrets that require checkout permissions
 - **User Migration**: Optional user provisioning from Thycotic to Keeper enterprise
 - **Team Creation and Assignment**: Create Keeper teams and assign users from Thycotic groups
@@ -14,6 +15,7 @@ Commander supports importing secrets from Thycotic Secret Server (now known as D
 - **Rate Limit Handling**: Automatic retry on rate limits (HTTP 429) with exponential backoff
 - **Error Handling**: Comprehensive error reporting and skipped records summary
 - **Group Lookup**: Handles missing groups and complex group hierarchies
+- **Domain Rewriting**: Optional email domain migration (--old-domain/--new-domain)
 
 ## Installation
 
@@ -61,6 +63,27 @@ This will prompt for:
 - **Username**: Your Thycotic username (unless `KEEPER_THYCOTIC_USER` is set)
 - **Password**: Your Thycotic password (unless `KEEPER_THYCOTIC_PASSWORD` is set)
 - **TOTP code**: If two-factor authentication is enabled
+
+### Import to Nested Share Folders (NSF) with Full ACL
+
+Import Delinea folders and secrets into Keeper NSF with automatic permission mapping:
+
+```bash
+My Vault> import --format=thycotic --nsf user@https://delinea.company.com/ --add-users --add-teams
+```
+
+This creates:
+- NSF folder structure matching Delinea
+- NSF folder-level permissions from Delinea folder ACL
+- Direct record shares for secret-level permission overrides
+- Team membership from Delinea groups
+
+**With domain rewriting:**
+
+```bash
+My Vault> import --format=thycotic --nsf user@https://delinea.company.com/ --add-users --add-teams \
+  --old-domain=delinea.com --new-domain=keeper.com
+```
 
 ### Import Specific Folders
 
@@ -141,6 +164,7 @@ When `--workers` is omitted, **`download-membership` defaults to 4 workers** (va
 | `--add-teams` | Create Keeper teams based on Thycotic groups and assign users |
 | `--dry-run` | Preview changes without making them |
 | `--old-domain` / `--new-domain` | Rewrite email domains in permission data |
+| `--nsf` | Import into Nested Share Folders with ACL support |
 
 The `import` command does **not** define `--verbose` or `--debug`. For detailed API traces, configure Python logging (for example `logging.DEBUG` on the `keepercommander` logger) before starting Commander.
 
@@ -213,6 +237,42 @@ Features:
 - User detail caching for efficiency
 - Graceful handling of missing roles (logs which roles cannot be mapped)
 - Per-user result reporting (created, existing, invalid, failed)
+
+### NSF ACL Support
+
+When importing with `--nsf`, Delinea permissions are intelligently mapped to NSF roles:
+
+#### Role Mapping
+
+Delinea roles map to documented Keeper NSF roles only (no requestor, which has no UI equivalent):
+
+| Delinea Folder | Delinea Secret | NSF Role |
+|---|---|---|
+| Owner | Owner | full-manager |
+| Owner | Edit | full-manager |
+| Owner | View | viewer (lossy) |
+| Owner | List | viewer |
+| Edit | Owner | content-manager |
+| Edit | Edit | content-manager |
+| Edit | View | viewer (lossy) |
+| Edit | List | viewer |
+| View | View | viewer |
+| View | List | viewer |
+| Any | List | viewer |
+
+**Special Cases:**
+- **Delinea List → Keeper Viewer**: List has no UI equivalent in Keeper; mapped to viewer for visibility
+- **(Lossy) Owner/Edit + View → Viewer**: Higher folder permission discarded when secret is View-only
+- **Secret roles override folder roles**: When a secret has different permissions than its folder, a direct record share is created with the secret-level role
+
+**Note:** The mapping preserves or downgrades permissions; never grants more than Delinea did.
+
+#### What Gets Created
+
+1. **Folder-level permissions**: Delinea folder ACL becomes NSF role grants
+2. **Secret-level overrides**: Secrets with different ACL than their folder get direct record shares
+3. **Team expansion**: Delinea groups expand to Keeper team membership
+4. **Domain rewriting**: Optional email domain migration for all permissions
 
 ### Performance Optimization
 
@@ -306,6 +366,13 @@ If groups don't appear in team creation:
 - Check that groups contain members
 - Review error logs for specific missing groups
 
+### NSF Permissions Not Applied
+
+- Verify `--nsf` flag is used in import command
+- Check that users exist in Keeper before importing with `--add-users`
+- Run `--dry-run` to preview what permissions would be granted
+- Check logs for "Granted N NSF folder permission(s)" success message
+
 ## Performance Notes
 
 - Import speed depends on:
@@ -319,6 +386,7 @@ If groups don't appear in team creation:
 - Large imports may take several minutes
 - The import process logs progress every 10 secrets
 - Permission loading uses bulk endpoints for efficiency
+- NSF permission grants are batched (100 folder grants per API call, 1000 record grants per call)
 
 ## Supported Delinea Secret Server Versions
 

@@ -45,7 +45,8 @@ from .base import (
     resolve_script_creds,
     set_launch_record_uid,
     set_sftp_uid,
-    set_user_record_uid
+    set_user_record_uid,
+    quartz_cron_to_keeper_schedule,
 )
 from ..base import Command
 from ..ksm import KSMCommand
@@ -151,8 +152,16 @@ class PAMProjectImportCommand(Command):
                 return
 
             if project["options"]["file_name"] != "" and os.path.isfile(project["options"]["file_name"]):
-                with open(project["options"]["file_name"], encoding="utf-8") as f:
-                    project["data"] = json.load(f)
+                try:
+                    with open(project["options"]["file_name"], encoding="utf-8") as f:
+                        project["data"] = json.load(f)
+                except json.JSONDecodeError as e:
+                    logging.error(f"Invalid JSON in file '{project['options']['file_name']}': {e}")
+                    return
+
+                if not isinstance(project["data"], dict):
+                    logging.error(f"Invalid JSON structure: root must be an object/dictionary, got {type(project['data']).__name__}")
+                    return
 
         # Verify min required entries - project name, etc.
         # Project name from command line overrides project name from JSON file
@@ -432,6 +441,7 @@ class PAMProjectImportCommand(Command):
                     "name": name_,
                     "manage_users": True if str(item.get("manage_users", False)).upper() == "TRUE" else False,
                     "manage_records": True if str(item.get("manage_records", False)).upper() == "TRUE" else False,
+                    "role": item.get("role", None),
                 })
             all_user_perms.extend(uperm)
             safe_folder_records.append({
@@ -1067,10 +1077,10 @@ class PAMProjectImportCommand(Command):
             changes = any(map(lambda x: x is not None, perm.values()))
             if changes:
                 fperm = {
-                    "manage_users": True if str(perm["manage_users"]).upper() == "TRUE" else False,
-                    "manage_records": True if str(perm["manage_records"]).upper() == "TRUE" else False,
-                    "can_edit": True if str(perm["can_edit"]).upper() == "TRUE" else False,
-                    "can_share": True if str(perm["can_share"]).upper() == "TRUE" else False
+                    "manage_users": True if str(perm.get("manage_users", "")).upper() == "TRUE" else False,
+                    "manage_records": True if str(perm.get("manage_records", "")).upper() == "TRUE" else False,
+                    "can_edit": True if str(perm.get("can_edit", "")).upper() == "TRUE" else False,
+                    "can_share": True if str(perm.get("can_share", "")).upper() == "TRUE" else False
                 }
 
             perms = sfu.get("permissions", [])
@@ -1436,18 +1446,17 @@ class PAMProjectImportCommand(Command):
                         usr.uid = utils.generate_uid()
 
         # Detect and reject duplicate UIDs to prevent graph ambiguity
-        _all_assigned_uids: list[str] = []
+        _seen_uids: set[str] = set()
+        _duplicate_uids: set[str] = set()
         for _obj in chain(resources, users):
-            _all_assigned_uids.append(_obj.uid)
+            if _obj.uid in _seen_uids:
+                _duplicate_uids.add(_obj.uid)
+            _seen_uids.add(_obj.uid)
             if hasattr(_obj, 'users') and isinstance(_obj.users, list):
                 for _usr in _obj.users:
-                    _all_assigned_uids.append(_usr.uid)
-        _seen_uids: set[str] = set()
-        _duplicate_uids: list[str] = []
-        for _uid in _all_assigned_uids:
-            if _uid in _seen_uids:
-                _duplicate_uids.append(_uid)
-            _seen_uids.add(_uid)
+                    if _usr.uid in _seen_uids:
+                        _duplicate_uids.add(_usr.uid)
+                    _seen_uids.add(_usr.uid)
         if _duplicate_uids:
             print(
                 f"{bcolors.FAIL}pam project import: duplicate uid values detected in import JSON: "
@@ -1717,9 +1726,11 @@ class PAMProjectImportCommand(Command):
                 if ps_wf:
                     apply_workflow(params, mach.uid, mach.title or '', ps_wf)
 
-            # Machine - create its users (if any)
+            # Machine - create its users (if any). Link all of them before rotation,
+            # which needs the admin linked (often the second user, not the first).
             users = getattr(mach, "users", [])
             users = users if isinstance(users, list) else []
+            pam_users = []
             for user in users:
                 if (isinstance(user, PamUserObject) and user.rotation_settings and
                     user.rotation_settings.rotation.lower() == "general"):
@@ -1732,38 +1743,56 @@ class PAMProjectImportCommand(Command):
                 if user.uid and user.uid not in (getattr(params, 'record_cache', None) or {}):
                     from .nsf_helpers import sync_down_preserving_nsf_keys
                     sync_down_preserving_nsf_keys(params)
-                if isinstance(user, PamUserObject):  # rotation setup
-                    tdag.link_user_to_resource(user.uid, mach.uid, admin_uid==user.uid, True)
-                    if user.rotation_settings:
-                        args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
-                        enabled = user.rotation_settings.enabled # on|off|default
-                        key = {"on": "enable", "off": "disable"}.get(enabled, "")
-                        if key: args[key] = True
-                        # args["schedule_config"] = True  # Schedule from Configuration
-                        # Schedule type is case-insensitive; CyberArk
-                        # importer emits "CRON" (uppercase) per Keeper's
-                        # on-the-wire convention, while older import paths
-                        # use "cron" (lowercase). Compare in lowercase so
-                        # both shapes are honored.
-                        schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
-                        schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
-                        if schedule_type_lc == "on-demand":
-                            args["on_demand"] = True
-                        elif schedule_type_lc == "cron":
-                            if user.rotation_settings.schedule.cron:
-                                # Must be a list for parse_schedule_data (CLI uses action=append).
-                                args["schedule_cron_data"] = [user.rotation_settings.schedule.cron]
-                            else:
-                                logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
-                        if user.rotation_settings.password_complexity:
-                            args["pwd_complexity"]=user.rotation_settings.password_complexity
-                        prc.execute(params, silent=True, **args)
-            # Launch credentials: link for pamMachine, pamDatabase, pamDirectory (not RBI)
-            # Also runs for admin-only (no launch): re-asserts the admin as the last write,
-            # after the JIT/AI/meta writes and after nested users are created.
+                if isinstance(user, PamUserObject):
+                    # belongs_to only: is_admin=True skips the ACL edge and
+                    # is_admin=False would later wipe the admin flag.
+                    tdag.link_user_to_resource(user.uid, mach.uid, belongs_to=True)
+                    pam_users.append(user)
             launch_uid = get_launch_credential(mach, True)
-            if (launch_uid or admin_uid) and not isinstance(mach, PamRemoteBrowserObject):
+
+            def _apply_launch_credentials():
+                if not (launch_uid or admin_uid) or isinstance(mach, PamRemoteBrowserObject):
+                    return
                 tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
+                # A separate admin's local edge lacks is_admin, so the next save drops it.
+                if not admin_uid or admin_uid == launch_uid:
+                    return
+                resource_vertex = tdag.linking_dag.get_vertex(mach.uid)
+                if resource_vertex is not None:
+                    tdag.link_user(admin_uid, resource_vertex, is_admin=True, belongs_to=True)
+
+            _apply_launch_credentials()
+            for user in pam_users:
+                if user.rotation_settings:
+                    args = {"force": True, "config": pam_cfg_uid, "record_name": user.uid, "admin": admin_uid, "resource": mach.uid}
+                    enabled = user.rotation_settings.enabled # on|off|default
+                    key = {"on": "enable", "off": "disable"}.get(enabled, "")
+                    if key: args[key] = True
+                    # args["schedule_config"] = True  # Schedule from Configuration
+                    # Schedule type is case-insensitive; CyberArk
+                    # importer emits "CRON" (uppercase) per Keeper's
+                    # on-the-wire convention, while older import paths
+                    # use "cron" (lowercase). Compare in lowercase so
+                    # both shapes are honored.
+                    schedule_type = user.rotation_settings.schedule.type if user.rotation_settings.schedule and user.rotation_settings.schedule.type else ""
+                    schedule_type_lc = (schedule_type or "").lower().replace("_", "-")
+                    if schedule_type_lc == "on-demand":
+                        args["on_demand"] = True
+                    elif schedule_type_lc == "cron":
+                        cron_expr = user.rotation_settings.schedule.cron
+                        # A raw cron leaves the vault schedule empty; send Keeper's schedule JSON.
+                        keeper_schedule = quartz_cron_to_keeper_schedule(cron_expr)
+                        if keeper_schedule:
+                            args["schedule_json_data"] = [json.dumps(keeper_schedule)]
+                        elif cron_expr:
+                            args["schedule_cron_data"] = [cron_expr]
+                        else:
+                            logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
+                    if user.rotation_settings.password_complexity:
+                        args["pwd_complexity"]=user.rotation_settings.password_complexity
+                    prc.execute(params, silent=True, **args)
+            # Re-assert last so later meta writes cannot drop is_admin.
+            _apply_launch_credentials()
         if resources: print(f"{len(resources)}/{len(resources)}\n")
 
         # link machine -> pamDirectory (LINK, path=domain) for jit_settings.pam_directory_uid
