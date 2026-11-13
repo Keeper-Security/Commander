@@ -2994,6 +2994,10 @@ class CreateRegularUserCommand(Command):
         rules_rs = api.communicate_rest(params, rules_rq, 'authentication/get_domain_password_rules',
                                         rs_type=APIRequest_pb2.NewUserMinimumParams)
         iterations = max(rules_rs.minimumIterations, constants.PBKDF2_ITERATIONS)
+        auth_salt = crypto.get_random_bytes(16)
+        iterations = utils.validate_pbkdf2_parameters(
+            auth_salt, iterations, minimum_iterations=rules_rs.minimumIterations,
+            purpose='new account master password')
 
         while True:
             password1 = getpass.getpass(prompt='  New User Password: ', stream=None)
@@ -3023,7 +3027,7 @@ class CreateRegularUserCommand(Command):
         user_rq = APIRequest_pb2.CreateUserRequest()
         user_rq.username = email
         user_rq.authVerifier = utils.create_auth_verifier(
-            user_password, crypto.get_random_bytes(16), iterations)
+            user_password, auth_salt, iterations)
         user_rq.encryptionParams = utils.create_encryption_params(
             user_password, crypto.get_random_bytes(16), iterations, user_data_key)
         if not params.forbid_rsa:
