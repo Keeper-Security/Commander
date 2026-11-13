@@ -14,18 +14,18 @@ FOLDER_ROLE_MAP: Dict[Tuple[bool, str], str] = {
     (True, 'owner'): 'full-manager',
     (True, 'edit'): 'full-manager',
     (True, 'view'): 'share-manager',
-    (True, 'list'): 'requestor',
+    (True, 'list'): 'viewer',
     (False, 'owner'): 'content-share-manager',
     (False, 'edit'): 'content-manager',
     (False, 'view'): 'viewer',
-    (False, 'list'): 'requestor',
+    (False, 'list'): 'viewer',
 }
 
 SECRET_ROLE_MAP: Dict[str, str] = {
     'owner': 'content-share-manager',
     'edit': 'content-manager',
     'view': 'viewer',
-    'list': 'requestor',
+    'list': 'viewer',
 }
 
 # NSF role -> classic (manage_users, manage_records); None = no classic equivalent.
