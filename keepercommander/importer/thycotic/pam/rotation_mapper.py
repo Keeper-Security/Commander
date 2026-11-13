@@ -60,7 +60,10 @@ class RotationMapper:
         (pre-11.7 servers) is not an error.
         """
         secret_id = _int_id(secret.get('id')) or 0
-        policy = self.resolver.policy_for(secret)
+        policy = self.resolver.policy_for(secret) or {}
+        rpc_script_secrets = {}
+        if policy == {}:
+            rpc_script_secrets = self.client.rpc_script_secrets(secret_id) or {}
         rpc = self._rpc(secret_id)
         changer_id, changer_name = self._changer(secret, rpc)
         rpc_items = (policy or {}).get('rpcItems') or {}
@@ -78,8 +81,7 @@ class RotationMapper:
         else:
             state = RotationState.DISABLED
 
-        schedule_value, _source = SecretPolicyResolver.effective(
-            rpc.get('autoChangeSchedule'), rpc_items.get('autoChangeSchedule'))
+        schedule_value=rpc.get('autoChangeSchedule') or rpc_items.get('autoChangeSchedule') or rpc_script_secrets.get('autoChangeSchedule')
         schedule = {'type': 'on-demand'}
         cron = self.schedule_to_cron(schedule_value if isinstance(schedule_value, dict) else None)
         if isinstance(schedule_value, dict) and not cron and (

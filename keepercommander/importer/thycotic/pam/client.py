@@ -22,7 +22,7 @@ ENDPOINTS = {
     'secrets_lookup': '/v1/secrets/lookup?filter.folderId={id}',
     'secret': '/v1/secrets/{id}',
     'secret_settings': '/v1/secrets/{id}/settings',
-    'secret_rpc': '/v1/secrets/secret-detail/{id}/rpc',
+    'secret_rpc': '/v1/secrets/secret-detail/{id}/general',
     'rpc_script_secrets': '/v3/secrets/{id}/rpc-script-secrets',
     'secret_permissions': '/v1/secret-permissions?filter.secretId={id}',
     'secret_policy': '/v2/secret-policy/{id}',
