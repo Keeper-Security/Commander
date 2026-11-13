@@ -22,11 +22,6 @@ class FolderApplicationShareMigration:
                 app = dict(app)
                 app.setdefault('record_uid', uid)
                 candidates[uid] = app
-        for uid in (getattr(params, 'nested_share_records', {}) or {}):
-            app = KSMCommand._normalize_nsf_app_record(
-                params, uid, require_key=False)
-            if app:
-                candidates[uid] = app
 
         applications = {}
         for app_uid, app_record in candidates.items():

@@ -860,6 +860,22 @@ class TestNsfConversionDestinationSelection(TestCase):
 
 class TestClassicFolderConversionApplicationReads(TestCase):
 
+    def test_nsf_records_are_not_treated_as_ksm_applications(self):
+        app_uid = _uid()
+        params = SimpleNamespace(
+            record_cache={},
+            nested_share_records={app_uid: {'record_key_unencrypted': b'app-key'}},
+            nested_share_record_data={
+                app_uid: {'data_json': {'type': 'app', 'title': 'NSF App'}}
+            },
+        )
+
+        with patch.object(KSMCommand, 'get_app_info_batch') as get_app_info_batch:
+            applications = _read_applications(params)
+
+        self.assertEqual(applications, {})
+        get_app_info_batch.assert_not_called()
+
     def test_app_info_is_requested_in_batches_and_shares_are_mapped(self):
         app_uids = [_uid() for _ in range(101)]
         params = SimpleNamespace(
