@@ -199,7 +199,7 @@ class TestClassicToNsfConversionCommand(TestCase):
             sync_data=False,
         )
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_omitted_folder_targets_root_and_refreshes_after_success(self, mock_convert):
         mock_convert.return_value = [{
             'record_uid': self.record_uid, 'status': 'OK', 'success': True,
@@ -222,23 +222,18 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn('Destination: Vault (root)', output.getvalue())
         self.assertNotIn('server support', output.getvalue())
 
-    @patch('keepercommander.commands.pam_import.nsf_helpers.sync_down_preserving_nsf_keys')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    def test_service_mode_syncs_after_success(self, mock_convert, mock_sync):
-        mock_convert.return_value = [{
-            'record_uid': self.record_uid, 'status': 'OK', 'success': True,
-        }]
-        self.params.service_mode = True
-        output = StringIO()
-
-        with redirect_stdout(output):
+    @patch(
+        'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
+        '_nsf.convert_records_v3',
+        side_effect=RuntimeError('request timed out'))
+    def test_unknown_conversion_outcome_marks_cache_for_refresh(self, _mock_convert):
+        with self.assertRaises(CommandError):
             NestedShareConvertCommand().execute(
-                self.params, records=[self.record_uid], folder_uid=None, force=True)
+                self.params, records=[self.record_uid], force=True)
 
-        mock_sync.assert_called_once_with(self.params)
-        self.assertFalse(self.params.sync_data)
+        self.assertTrue(self.params.sync_data)
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_classic_folder_is_not_accepted_as_drive_destination(self, mock_convert):
         folder_uid = _uid()
         self.params.folder_cache = {folder_uid: object()}
@@ -250,7 +245,7 @@ class TestClassicToNsfConversionCommand(TestCase):
                 folder_uid=folder_uid, force=True)
         mock_convert.assert_not_called()
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_bare_title_does_not_match_outside_current_folder(self, mock_convert):
         record_uid = self.record_uid
         self.params.record_cache[record_uid]['data_unencrypted'] = '{"title":"Server Login"}'
@@ -277,8 +272,8 @@ class TestClassicToNsfConversionCommand(TestCase):
 
         mock_convert.assert_not_called()
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.resolve_folder_identifier',
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.resolve_folder_identifier',
            return_value=None)
     def test_command_rejects_unresolved_folder(self, _mock_resolve_folder, mock_convert):
         with self.assertRaisesRegex(CommandError, "Folder 'Missing' was not found"):
@@ -287,7 +282,7 @@ class TestClassicToNsfConversionCommand(TestCase):
 
         mock_convert.assert_not_called()
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_command_rejects_known_nested_share_record(self, mock_convert):
         self.params.nested_share_records[self.record_uid] = {}
 
@@ -300,7 +295,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn('No Classic records remain to convert.', '\n'.join(captured.output))
         mock_convert.assert_not_called()
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_known_nested_share_records_are_skipped_from_mixed_batch(self, mock_convert):
         other_uid = _uid()
         self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Other"}'}
@@ -323,8 +318,8 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn('already a Nested Share Record; skipped', logs)
         self.assertIn('1 already Nested Share Record(s) skipped', logs)
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands.RecordMixin.resolve_single_record')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands.RecordMixin.resolve_single_record')
     def test_bare_title_uses_standard_record_resolution(self, mock_resolve_record, mock_convert):
         other_uid = _uid()
         self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Legacy"}'}
@@ -341,8 +336,8 @@ class TestClassicToNsfConversionCommand(TestCase):
         mock_convert.assert_called_once_with(
             self.params, record_uids=[other_uid], folder_uid=None)
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands.user_choice',
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands.user_choice',
            return_value='n')
     def test_confirmation_escapes_control_characters_in_title(self, _mock_choice, mock_convert):
         self.params.record_cache[self.record_uid]['data_unencrypted'] = (
@@ -360,7 +355,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertNotIn(r'\\u001b', record_list)
         mock_convert.assert_not_called()
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3',
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3',
            return_value=[])
     def test_empty_response_requests_sync_to_reconcile_state(self, _mock_convert):
         with self.assertLogs(level='WARNING'):
@@ -369,8 +364,8 @@ class TestClassicToNsfConversionCommand(TestCase):
 
         self.assertTrue(self.params.sync_data)
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands.user_choice',
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands.user_choice',
            return_value='n')
     def test_cancelled_confirmation_does_not_call_endpoint(self, _mock_choice, mock_convert):
         NestedShareConvertCommand().execute(
@@ -378,7 +373,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         mock_convert.assert_not_called()
         self.assertFalse(self.params.sync_data)
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_command_matches_unordered_results_by_uid(self, mock_convert):
         other_uid = _uid()
         self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Other"}'}
@@ -403,7 +398,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn(f'Classic record "{other_uid}" was not converted:',
                       '\n'.join(captured.output))
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_duplicate_results_are_reported_as_ambiguous_and_refresh(self, mock_convert):
         other_uid = _uid()
         self.params.record_cache[other_uid] = {'data_unencrypted': '{"title":"Other"}'}
@@ -428,7 +423,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertNotIn(
             f'Classic record "{self.record_uid}" converted to a Nested Share Record.', logs)
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_unrequested_results_trigger_reconciliation(self, mock_convert):
         unrequested_uid = _uid()
         mock_convert.return_value = [
@@ -443,7 +438,7 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertTrue(self.params.sync_data)
         self.assertIn('unrequested records', '\n'.join(captured.output))
 
-    @patch('keepercommander.commands.nested_share_folder.conversion_commands._nsf.convert_records_v3')
+    @patch('keepercommander.commands.nested_share_folder.conversion.conversion_commands._nsf.convert_records_v3')
     def test_backend_already_converted_status_is_reported(self, mock_convert):
         mock_convert.return_value = [{
             'record_uid': self.record_uid,
@@ -458,4 +453,4 @@ class TestClassicToNsfConversionCommand(TestCase):
         self.assertIn(
             'was not converted: The record is already a Nested Share Record.',
             '\n'.join(captured.output))
-        self.assertFalse(self.params.sync_data)
+        self.assertTrue(self.params.sync_data)

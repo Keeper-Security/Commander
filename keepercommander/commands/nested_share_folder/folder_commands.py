@@ -33,6 +33,7 @@ from .helpers import (
     ensure_nested_share_folder, is_nested_share_folder,
     is_nested_share_folder_owner_email, owner_share_target_message,
 )
+from ...nested_share_folder.common import NSF_FOLDER_REMOVE_BATCH_SIZE
 from ...nested_share_folder.folder_api import _is_current_account_folder_owner
 from .parsers import (
     nested_share_folder_mkdir_parser,
@@ -627,8 +628,10 @@ class NestedShareFolderRemoveCommand(Command):
             check_folder_delete_permission(params, folder_uid, 'nsf-rmdir')
             removals.append({'folder_uid': folder_uid, 'operation_type': operation})
 
-        if len(removals) > 100:
-            raise CommandError('nsf-rmdir', 'Maximum 100 folders per invocation')
+        if len(removals) > NSF_FOLDER_REMOVE_BATCH_SIZE:
+            raise CommandError(
+                'nsf-rmdir',
+                f'Maximum {NSF_FOLDER_REMOVE_BATCH_SIZE} folders per invocation')
 
         if operation == 'delete-permanent' and not force and not dry_run:
             print(

@@ -11,9 +11,26 @@ from typing import Optional, Dict, Any, Tuple
 
 from .. import utils, crypto, api
 from ..proto import folder_pb2, record_sharing_pb2
-from ..error import KeeperApiError
 
 logger = logging.getLogger(__name__)
+
+# Shared Nested Share Folder limits and identifiers.
+ROOT_FOLDER_UID = 'AAAAAAAAAAAAAAAAAPmtNA'
+MAX_NESTED_SHARE_FOLDER_DEPTH = 5
+PAM_RECORD_TYPE_PREFIX = 'pam'
+NSF_FOLDER_BATCH_SIZE = 100
+NSF_FOLDER_ACCESS_BATCH_SIZE = 100
+NSF_FOLDER_ACCESS_UPDATE_BATCH_SIZE = 500
+NSF_FOLDER_RECORD_BATCH_SIZE = 500
+NSF_FOLDER_REMOVE_BATCH_SIZE = 100
+NSF_RECORD_BATCH_SIZE = 1000
+NSF_RECORD_REMOVE_BATCH_SIZE = 500
+NSF_RECORD_PAGE_SIZE = 500
+NSF_FOLDER_ACCESS_PAGE_SIZE = 1000
+NSF_APP_INFO_BATCH_SIZE = 100
+NSF_IMPORT_THROTTLE_BASE_WAIT = 10.0
+NSF_IMPORT_THROTTLE_BACKOFF_MULTIPLIER = 1.5
+NSF_IMPORT_THROTTLE_MAX_RETRIES = 5
 
 # Keeper UIDs are 16 random bytes encoded as unpadded base64url (22 chars).
 _KEEPER_UID_RE = re.compile(r'^[A-Za-z0-9_-]{22}$')
@@ -22,6 +39,24 @@ _KEEPER_UID_RE = re.compile(r'^[A-Za-z0-9_-]{22}$')
 def is_keeper_uid(value: str) -> bool:
     """True when *value* looks like a Keeper UID (not a display name)."""
     return bool(value and _KEEPER_UID_RE.match(value))
+
+
+def normalize_parent_uid(uid: Optional[str]) -> str:
+    """Normalize root folder UIDs to a consistent ``'root'`` or empty string."""
+    if not isinstance(uid, str):
+        uid = str(uid) if uid else ''
+    if uid == ROOT_FOLDER_UID or uid == 'root':
+        return 'root'
+    return uid or ''
+
+
+def normalize_nsf_user_message(message):
+    """Replace legacy server terminology in user-facing error text."""
+    if not message:
+        return message
+    return (message
+            .replace('Keeper Drive', 'Nested Share Folder')
+            .replace('keeper drive', 'nested share folder'))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

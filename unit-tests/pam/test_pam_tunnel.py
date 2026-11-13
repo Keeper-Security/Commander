@@ -65,8 +65,15 @@ class TestFindOpenPort(unittest.TestCase):
     def test_preferred_port(self):
         # Test that the function returns the preferred port if it's available
         preferred_port = 50000
-        open_port = find_open_port([], preferred_port=preferred_port)
+        with mock.patch(
+                'keepercommander.commands.tunnel.port_forward.tunnel_helpers.is_port_open',
+                return_value=True) as mock_is_port_open, \
+             mock.patch(
+                 'keepercommander.commands.tunnel.port_forward.tunnel_helpers.time.sleep'):
+            open_port = find_open_port([], preferred_port=preferred_port)
+
         self.assertEqual(open_port, preferred_port)
+        mock_is_port_open.assert_called_once_with('127.0.0.1', preferred_port)
 
     def test_preferred_port_unavailable(self):
         # Mock the bind method to simulate that port 80 is in use
@@ -79,8 +86,15 @@ class TestFindOpenPort(unittest.TestCase):
         # Test that the function returns a port within the specified range
         start_port = 50000
         end_port = 50010
-        open_port = find_open_port([], start_port=start_port, end_port=end_port)
+        with mock.patch(
+                'keepercommander.commands.tunnel.port_forward.tunnel_helpers.is_port_open',
+                side_effect=[False, False, True]), \
+             mock.patch(
+                 'keepercommander.commands.tunnel.port_forward.tunnel_helpers.time.sleep'):
+            open_port = find_open_port([], start_port=start_port, end_port=end_port)
+
         self.assertTrue(start_port <= open_port <= end_port)
+        self.assertEqual(open_port, start_port + 2)
 
     def test_no_available_ports(self):
         # Setup

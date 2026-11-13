@@ -824,7 +824,7 @@ class TestRegister(TestCase):
         }
 
         with mock.patch('keepercommander.api.get_record_shares', return_value=None), \
-                mock.patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3',
+                mock.patch('keepercommander.nested_share_folder.get_record_accesses_v3',
                            return_value=access_result):
             cmd = register.ShareReportCommand()
             report = cmd.execute(params, format='json', owner=True, verbose=True, container=[folder_uid])
