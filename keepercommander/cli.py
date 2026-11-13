@@ -431,7 +431,11 @@ def do_command(params, command_line):
 
         # Invoke via argv list with shell=False so arguments aren't re-parsed.
         ksm_args[0] = ksm_path
-        subprocess.check_call(ksm_args, shell=False)
+        try:
+            subprocess.check_call(ksm_args, shell=False)
+        except subprocess.CalledProcessError as cpe:
+            if cpe.returncode != 2:
+                raise cpe
         return
     elif '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):
