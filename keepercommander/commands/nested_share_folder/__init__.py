@@ -26,6 +26,7 @@ Package layout (Facade pattern)::
         record_commands.py   ← record CRUD & linking (SRP)
         sharing_commands.py  ← sharing & permissions (Strategy, Template Method)
         display_commands.py  ← read-only inspection (SRP)
+        conversion/          ← Classic-to-NSF conversion commands and helpers
 """
 
 # Folder commands
@@ -61,7 +62,7 @@ from .display_commands import (                          # noqa: F401
 )
 
 # Classic-to-Nested Share conversion
-from .conversion_commands import (                       # noqa: F401
+from .conversion.conversion_commands import (                       # noqa: F401
     NestedShareConvertCommand,
     NestedShareFolderConvertCommand,
 )
