@@ -6,7 +6,16 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from keepercommander.commands.nested_share_folder.conversion_commands import (
+from keepercommander.commands.nested_share_folder.conversion.conversion_acl import FolderPermissionMigration
+from keepercommander.commands.nested_share_folder.conversion.conversion_app_shares import FolderApplicationShareMigration
+from keepercommander.commands.nested_share_folder.conversion.conversion_planning import FolderConversionPlanner
+from keepercommander.commands.nested_share_folder.conversion.conversion_records import FolderRecordMigration
+from keepercommander.commands.nested_share_folder.conversion.conversion_retry import FolderConversionRetry
+from keepercommander.commands.nested_share_folder.conversion.conversion_tree import FolderConversionTree
+from keepercommander.commands.nested_share_folder.conversion.conversion_utils import (
+    FolderConversionVerification,
+)
+from keepercommander.commands.nested_share_folder.conversion.conversion_commands import (
     NestedShareConvertCommand,
     NestedShareFolderConvertCommand,
     _collect_classic_subtree,
@@ -116,6 +125,7 @@ class TestClassicFolderConversionPlanning(TestCase):
         self.assertEqual(nodes[left_uid].name, nodes[right_uid].name)
         self.assertNotEqual(left_uid, right_uid)
 
+
     def test_classic_folder_and_record_permissions_map_independently(self):
         self.assertEqual(classic_shared_folder_permissions_to_nsf_role(), 'viewer')
         self.assertEqual(
@@ -211,7 +221,7 @@ class TestClassicFolderConversionPlanning(TestCase):
             'tla_expiration': 5_000,
         }]
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_acl.'
                 'current_milli_time',
                 return_value=1_000):
             with self.assertRaisesRegex(CommandError, 'Cannot safely preserve expiring'):
@@ -251,7 +261,7 @@ class TestClassicFolderConversionPlanning(TestCase):
         )
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_acl.'
                 'current_milli_time',
                 return_value=1_000):
             plan = _record_access_plan(
@@ -308,7 +318,7 @@ class TestClassicFolderConversionPlanning(TestCase):
         scope_by_folder = dict(zip(folder_uids, scope_uids))
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_acl.'
                 'current_milli_time',
                 return_value=1_000):
             with self.assertRaisesRegex(CommandError, 'change role before all access expires'):
@@ -359,14 +369,14 @@ class TestClassicFolderConversionPlanning(TestCase):
         ]
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.get_record_accesses_v3',
                 return_value={'record_accesses': accesses, 'forbidden_records': []}), \
                 patch(
-                    'keepercommander.commands.nested_share_folder.conversion_commands.'
+                    'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                     '_nsf.batch_upsert_record_accesses_v3',
                     return_value=[]) as apply_grants:
-            failures = NestedShareFolderConvertCommand._grant_record_accesses(
+            failures = FolderPermissionMigration._grant_record_accesses(
                 SimpleNamespace(), grants, set(record_uids))
 
         self.assertEqual(failures, [])
@@ -422,18 +432,85 @@ class TestClassicFolderConversionPlanning(TestCase):
         }]
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.get_record_accesses_v3',
                 return_value={'record_accesses': accesses, 'forbidden_records': []}), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                  '_nsf.batch_upsert_record_accesses_v3') as apply_grants:
-            failures = NestedShareFolderConvertCommand._grant_record_accesses(
+            failures = FolderPermissionMigration._grant_record_accesses(
                 SimpleNamespace(), [grant], {record_uid})
 
         self.assertEqual(len(failures), 1)
         self.assertIn('explicitly denied', failures[0])
         apply_grants.assert_not_called()
+
+
+class TestClassicFolderConversionVerification(TestCase):
+
+    def _verify(self, params, retry=False):
+        return FolderConversionVerification.verify(
+            params,
+            source_record_uids=['record'],
+            converted_uids={'record'},
+            target_uids={'source': 'target'},
+            placements={'record': ['source']},
+            retry=retry,
+            link_failures=[],
+            record_permission_failures=[],
+            app_share_failures=[],
+        )
+
+    def test_verification_confirms_converted_records_and_folders(self):
+        params = SimpleNamespace(
+            nested_share_folders={'target': {}},
+            nested_share_records={'record': {}},
+            nested_share_folder_records={'target': {'record'}},
+            sync_data=False,
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
+                'sync_down.sync_down'):
+            complete, issues = self._verify(params, retry=True)
+
+        self.assertTrue(complete)
+        self.assertEqual(issues, [])
+        self.assertTrue(params.sync_data)
+
+    def test_retry_verification_detects_missing_record_placement(self):
+        params = SimpleNamespace(
+            nested_share_folders={'target': {}},
+            nested_share_records={'record': {}},
+            nested_share_folder_records={'target': set()},
+            sync_data=False,
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
+                'sync_down.sync_down'):
+            complete, issues = self._verify(params, retry=True)
+
+        self.assertFalse(complete)
+        self.assertIn('1 record placement(s) were not confirmed', issues)
+
+    def test_verification_failure_is_incomplete_and_reported(self):
+        params = SimpleNamespace(
+            nested_share_folders={},
+            nested_share_records={},
+            nested_share_folder_records={},
+            sync_data=False,
+        )
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
+                'sync_down.sync_down',
+                side_effect=RuntimeError('offline')):
+            complete, issues = self._verify(params)
+
+        self.assertFalse(complete)
+        self.assertIn('Final sync-down failed', issues[0])
+        self.assertTrue(params.sync_data)
 
 
 class TestRecordAccessShareApi(TestCase):
@@ -577,7 +654,7 @@ class TestRecordAccessShareApi(TestCase):
             child_uid: shared_uid,
         }
         self.assertEqual(
-            NestedShareFolderConvertCommand._scope_grant_targets(
+            FolderPermissionMigration._scope_grant_targets(
                 nodes, {shared_uid: None, child_uid: shared_uid},
                 scope_by_folder),
             [(shared_uid, shared_uid)])
@@ -599,7 +676,7 @@ class TestRecordAccessShareApi(TestCase):
         }
 
         self.assertEqual(
-            NestedShareFolderConvertCommand._scope_grant_targets(
+            FolderPermissionMigration._scope_grant_targets(
                 nodes, {private_uid: None, shared_uid: private_uid},
                 scope_by_folder),
             [(shared_uid, shared_uid)])
@@ -661,7 +738,7 @@ class TestNsfConversionDestinationSelection(TestCase):
         params = SimpleNamespace(nested_share_folders={})
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.resolve_folder_identifier',
                 return_value=None):
             with self.assertRaises(CommandError) as raised:
@@ -729,7 +806,7 @@ class TestNsfConversionDestinationSelection(TestCase):
         with patch(
                 'keepercommander.nested_share_folder.folder_api.get_folder_access_v3',
                 side_effect=pages) as get_access:
-            accessors = NestedShareFolderConvertCommand._destination_accessors(
+            accessors = FolderPermissionMigration._destination_accessors(
                 SimpleNamespace(), destination_uid)
 
         self.assertEqual(len(accessors), 3)
@@ -886,10 +963,10 @@ class TestClassicFolderConversionApplicationReads(TestCase):
         with patch.object(
                 KSMCommand, 'get_app_info_batch', return_value=[app_info]) as read_apps, \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                  '_nsf.share_record_to_application_v3',
                  return_value={'success': True}) as share_record:
-            failures = NestedShareFolderConvertCommand._grant_record_app_shares(
+            failures = FolderApplicationShareMigration._grant_record_app_shares(
                 params,
                 application_shares,
                 set(record_uids),
@@ -922,9 +999,9 @@ class TestClassicFolderConversionTargetCreation(TestCase):
         levels = {source_root_uid: 1, source_child_uid: 2}
         parents = {source_root_uid: None, source_child_uid: source_root_uid}
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_retry.'
                 'user_choice', return_value='y'):
-            retry_mapping = NestedShareFolderConvertCommand._select_retry_folders(
+            retry_mapping = FolderConversionRetry._select_retry_folders(
                 params, nodes, levels, parents, destination_uid, {})
 
         self.assertEqual(retry_mapping, {source_root_uid: existing_root_uid})
@@ -941,12 +1018,12 @@ class TestClassicFolderConversionTargetCreation(TestCase):
             } for spec in specs]
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.create_folders_batch_v3', side_effect=create_batch), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_retry.'
                  'user_choice', return_value='y'):
-            target_uids = NestedShareFolderConvertCommand._create_target_tree(
+            target_uids = FolderConversionTree._create_target_tree(
                 params, nodes, levels, parents, destination_uid, False,
                 existing_target_uids=retry_mapping)
 
@@ -977,10 +1054,10 @@ class TestClassicFolderConversionTargetCreation(TestCase):
 
         with patch('builtins.input', side_effect=['2', '1']), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_retry.'
                  'user_choice', return_value='y') as confirm, \
              redirect_stdout(io.StringIO()):
-            mapping = NestedShareFolderConvertCommand._select_retry_folders(
+            mapping = FolderConversionRetry._select_retry_folders(
                 params,
                 {source_one_uid: source_one, source_two_uid: source_two},
                 {source_one_uid: 1, source_two_uid: 1},
@@ -1011,10 +1088,10 @@ class TestClassicFolderConversionTargetCreation(TestCase):
         )
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_retry.'
                 'user_choice', return_value='n'), \
              redirect_stdout(io.StringIO()):
-            mapping = NestedShareFolderConvertCommand._select_retry_folders(
+            mapping = FolderConversionRetry._select_retry_folders(
                 params, {source_uid: source}, {source_uid: 1},
                 {source_uid: None}, None, {})
 
@@ -1032,10 +1109,10 @@ class TestClassicFolderConversionTargetCreation(TestCase):
         )
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_retry.'
                 'user_choice') as confirm, \
              redirect_stdout(io.StringIO()) as output:
-            mapping = NestedShareFolderConvertCommand._select_retry_folders(
+            mapping = FolderConversionRetry._select_retry_folders(
                 params, {source_uid: source}, {source_uid: 1},
                 {source_uid: None}, None, {})
 
@@ -1068,10 +1145,10 @@ class TestClassicFolderConversionTargetCreation(TestCase):
                     } for spec in specs]
 
                 with patch(
-                        'keepercommander.commands.nested_share_folder.'
+                        'keepercommander.commands.nested_share_folder.conversion.'
                         'conversion_commands._nsf.create_folders_batch_v3',
                         side_effect=create_batch):
-                    NestedShareFolderConvertCommand._create_target_tree(
+                    FolderConversionTree._create_target_tree(
                         params,
                         {source_uid: node},
                         {source_uid: 1},
@@ -1105,10 +1182,10 @@ class TestClassicFolderConversionTargetCreation(TestCase):
             } for spec in specs]
 
         with patch(
-                'keepercommander.commands.nested_share_folder.'
+                'keepercommander.commands.nested_share_folder.conversion.'
                 'conversion_commands._nsf.create_folders_batch_v3',
                 side_effect=create_batch):
-            NestedShareFolderConvertCommand._create_target_tree(
+            FolderConversionTree._create_target_tree(
                 params,
                 {private_uid: private, shared_uid: shared},
                 {private_uid: 1, shared_uid: 2},
@@ -1142,10 +1219,10 @@ class TestClassicFolderConversionTargetCreation(TestCase):
             ]
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.create_folders_batch_v3',
                 side_effect=create_batch):
-            target_uids = NestedShareFolderConvertCommand._create_target_tree(
+            target_uids = FolderConversionTree._create_target_tree(
                 params,
                 nodes,
                 {first_uid: 1, second_uid: 1},
@@ -1173,10 +1250,10 @@ class TestPamRecordConversionRestrictions(TestCase):
         )
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
                 '_record_type', return_value='login'):
             record_uids, placements, skipped = (
-                NestedShareFolderConvertCommand._collect_records(
+                FolderConversionPlanner._collect_records(
                     params,
                     {source_uid: object()},
                     {source_uid: [record_uid]},
@@ -1232,11 +1309,11 @@ class TestPamRecordConversionRestrictions(TestCase):
         types_by_uid[regular_uid] = 'login'
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
                 '_record_type',
                 side_effect=lambda _params, uid: types_by_uid[uid]):
             converted_uids, placements, skipped = (
-                NestedShareFolderConvertCommand._collect_records(
+                FolderConversionPlanner._collect_records(
                     params, {folder_uid: object()},
                     {folder_uid: record_uids}))
 
@@ -1294,7 +1371,7 @@ class TestPamRecordConversionRestrictions(TestCase):
             NestedShareFolderConvertCommand._print_preview(
                 params, {folder_uid: folder}, {folder_uid: []}, folder,
                 destination_uid, 5, [], {folder_uid: 1}, {folder_uid: 1}, [])
-            NestedShareFolderConvertCommand._print_uid_mapping(
+            FolderConversionTree._print_uid_mapping(
                 {folder_uid: folder}, {folder_uid: target_uid})
 
         rendered = output.getvalue()
@@ -1314,11 +1391,11 @@ class TestPamRecordConversionRestrictions(TestCase):
         types_by_uid = {pam_uid: 'pamMachine', regular_uid: 'login'}
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
                 '_record_type',
                 side_effect=lambda _params, uid: types_by_uid[uid]), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                  '_nsf.convert_records_v3',
                  return_value=[{
                      'record_uid': regular_uid,
@@ -1348,11 +1425,11 @@ class TestPamRecordConversionRestrictions(TestCase):
         )
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
                 '_record_type',
                 return_value='pamUser'), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                  '_nsf.convert_records_v3') as convert_records:
             output = io.StringIO()
             with redirect_stdout(output):
@@ -1417,32 +1494,32 @@ class TestClassicFolderConversionExecution(TestCase):
             return set()
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
-                '_read_applications', return_value={}), \
+                'keepercommander.commands.nested_share_folder.conversion.conversion_app_shares.'
+                'FolderApplicationShareMigration._read_applications', return_value={}), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_utils.'
                  '_record_type', return_value=record_type), \
              patch.object(NestedShareFolderConvertCommand, '_print_preview'), \
              patch.object(
-                 NestedShareFolderConvertCommand, '_create_target_tree',
+                 FolderConversionTree, '_create_target_tree',
                  side_effect=create_tree), \
              patch.object(
-                 NestedShareFolderConvertCommand, '_convert_records',
+                 FolderRecordMigration, '_convert_records',
                  side_effect=convert_records), \
              patch.object(
-                 NestedShareFolderConvertCommand, '_create_additional_placements',
+                 FolderRecordMigration, '_create_additional_placements',
                  return_value=[]), \
              patch.object(
-                 NestedShareFolderConvertCommand, '_grant_record_app_shares',
+                 FolderApplicationShareMigration, '_grant_record_app_shares',
                  return_value=[]), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.folder_conversion.'
                  'sync_down.sync_down'), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
+                 'keepercommander.commands.nested_share_folder.conversion.folder_conversion.'
                  'user_choice', return_value='y') as user_choice, \
              patch.object(
-                 NestedShareFolderConvertCommand, '_delete_classic_source') as delete_source:
+                 FolderConversionTree, '_delete_classic_source') as delete_source:
             NestedShareFolderConvertCommand().execute(
                 params, source=folder_uid, folder_uid=None, force=force)
         return user_choice, delete_source
@@ -1484,12 +1561,12 @@ class TestClassicFolderConversionExecution(TestCase):
         params, folder_uid, _, _ = self._params()
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.folder_conversion.'
                 'sync_down.sync_down',
                 side_effect=RuntimeError('offline')), \
              patch(
-                 'keepercommander.commands.nested_share_folder.conversion_commands.'
-                 '_read_applications') as read_applications:
+                 'keepercommander.commands.nested_share_folder.conversion.conversion_app_shares.'
+                 'FolderApplicationShareMigration._read_applications') as read_applications:
             with self.assertRaisesRegex(CommandError, 'no changes were made'):
                 NestedShareFolderConvertCommand().execute(
                     params, source=folder_uid, force=True)
@@ -1522,7 +1599,7 @@ class TestClassicFolderConversionExecution(TestCase):
         output = io.StringIO()
 
         with redirect_stdout(output):
-            NestedShareFolderConvertCommand._print_incomplete_conversion(
+            FolderConversionRetry._print_incomplete_conversion(
                 params,
                 folder_uid,
                 destination_uid,
@@ -1548,9 +1625,9 @@ class TestClassicFolderConversionExecution(TestCase):
         remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_tree.'
                 'sync_down.sync_down'), patch(remove_path) as remove:
-            deleted = NestedShareFolderConvertCommand._delete_classic_source(
+            deleted = FolderConversionTree._delete_classic_source(
                 params, folder_uid)
 
         self.assertFalse(deleted)
@@ -1568,10 +1645,10 @@ class TestClassicFolderConversionExecution(TestCase):
 
         remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_tree.'
                 'sync_down.sync_down', side_effect=refresh), \
              patch(remove_path) as remove:
-            deleted = NestedShareFolderConvertCommand._delete_classic_source(
+            deleted = FolderConversionTree._delete_classic_source(
                 params, folder_uid)
 
         self.assertTrue(deleted)
@@ -1586,10 +1663,10 @@ class TestClassicFolderConversionExecution(TestCase):
         remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_tree.'
                 'sync_down.sync_down', side_effect=RuntimeError('sync failed')), \
              patch(remove_path) as remove:
-            result = NestedShareFolderConvertCommand._delete_classic_source(
+            result = FolderConversionTree._delete_classic_source(
                 params, folder_uid)
 
         self.assertIsNone(result)
@@ -1604,10 +1681,10 @@ class TestClassicFolderConversionExecution(TestCase):
         }
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.manage_folder_records_batch_v3',
                 return_value=[]):
-            failures = NestedShareFolderConvertCommand._create_additional_placements(
+            failures = FolderRecordMigration._create_additional_placements(
                 SimpleNamespace(),
                 {record_uid},
                 {record_uid: source_uids},
@@ -1626,10 +1703,10 @@ class TestClassicFolderConversionExecution(TestCase):
         )
 
         with patch(
-                'keepercommander.commands.nested_share_folder.conversion_commands.'
+                'keepercommander.commands.nested_share_folder.conversion.conversion_commands.'
                 '_nsf.manage_folder_records_batch_v3',
                 return_value=[{'record_uid': record_uid, 'success': True}]) as add:
-            failures = NestedShareFolderConvertCommand._create_additional_placements(
+            failures = FolderRecordMigration._create_additional_placements(
                 params,
                 {record_uid},
                 {record_uid: source_folders},
