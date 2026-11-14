@@ -5,8 +5,62 @@
 ### About Keeper Commander
 Keeper Commander is a command-line and terminal UI interface to Keeper® Password Manager and KeeperPAM. Commander can be used to access and control your Keeper vault, perform administrative actions (managing users, teams, roles, SSO, privileged access resources, device approvals, data import/export), launch sessions, rotate passwords, integrate with developer tools, eliminate hardcoded passwords, run as a REST service and more. Keeper Commander is an open source project with contributions from Keeper's engineering team, customers and partners.
 
-### Windows and macOS Binaries
-See the [Releases](https://github.com/Keeper-Security/Commander/releases)
+### Windows, macOS and Linux Binaries
+
+**Install script** (per-user, no administrator rights needed)
+
+macOS and Linux (x86_64 and arm64):
+```
+curl -fsSL https://github.com/Keeper-Security/Commander/releases/latest/download/install.sh | bash
+```
+
+Windows (PowerShell):
+```
+irm https://github.com/Keeper-Security/Commander/releases/latest/download/install.ps1 | iex
+```
+
+The script downloads the build for your platform from the latest release, verifies its SHA-256 checksum and installs it next to any earlier version. It does not need `sudo`.
+
+| | macOS / Linux | Windows |
+|---|---|---|
+| Install location | `~/.local/share/keeper-commander` | `%LOCALAPPDATA%\keeper-commander` |
+| Command | `~/.local/bin/keeper` (add `~/.local/bin` to `PATH` if the script tells you to) | `keeper` (the folder is added to your user `PATH`; open a new terminal) |
+
+Linux builds need glibc. Alpine and other musl-based systems are not supported; use `pip` or the Docker image there.
+
+**Update**
+
+Run `update` inside Commander (or `keeper update`) to check for and install a newer version. When you close an interactive shell and a new version is available, Commander asks once per version whether to update now. Set `KEEPER_NO_UPDATE_PROMPT=1` to turn the question off. Running the install command again also updates. The previous version is kept so you can go back to it.
+
+If Commander was installed another way (installer, Homebrew, pip, Docker), `update` shows the right update instructions for that method.
+
+**Uninstall**
+
+macOS and Linux:
+```
+curl -fsSL https://github.com/Keeper-Security/Commander/releases/latest/download/install.sh | bash -s -- --uninstall
+```
+
+Windows (PowerShell):
+```
+$env:KEEPER_COMMANDER_UNINSTALL='1'; irm https://github.com/Keeper-Security/Commander/releases/latest/download/install.ps1 | iex
+```
+
+This removes the program only. Your configuration and data in `~/.keeper` are kept.
+
+**Options** (environment variables, or flags on macOS/Linux)
+
+| Setting | Meaning |
+|---|---|
+| `--prefix DIR` / `KEEPER_COMMANDER_HOME` | install folder |
+| `--bin-dir DIR` / `KEEPER_COMMANDER_BIN` (macOS/Linux) | where the `keeper` link is created |
+| `--meta-url URL` / `KEEPER_COMMANDER_META_URL` | install from a specific release, for example `https://github.com/Keeper-Security/Commander/releases/download/v18.1.10/keeper-commander.meta` |
+
+Use the same `--prefix` and `--bin-dir` when uninstalling a custom install.
+
+**Installers and other options**
+
+Windows and macOS installer packages (`.exe`, `.pkg`) are available on the [Releases](https://github.com/Keeper-Security/Commander/releases) page.
 
 ### Linux / Python using PIP
 ```

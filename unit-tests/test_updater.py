@@ -82,6 +82,19 @@ class TestMeta(TestCase):
             with self.assertRaises(updater.UpdateError):
                 updater.fetch_meta('https://example.com/keeper-commander.meta')
 
+    def test_version_must_be_a_plain_folder_name(self):
+        for bad in ('..', '.', '...', '.hidden', '-rf', '1/2', '1\\2', '', '1.0\n', ' 1.0'):
+            self.assertIsNone(updater.VERSION_RE.match(bad), repr(bad))
+        for good in ('17.2.0', '18.1.10', '1.0.0-rc1', '2026.11_b3'):
+            self.assertIsNotNone(updater.VERSION_RE.match(good), good)
+
+    def test_fetch_meta_rejects_dot_versions(self):
+        for bad in ('..', '.', '.hidden'):
+            with mock.patch('requests.get', return_value=FakeResponse(
+                    'keeper-commander.version={0}\n'.format(bad).encode())):
+                with self.assertRaises(updater.UpdateError):
+                    updater.fetch_meta('https://example.com/keeper-commander.meta')
+
     def test_is_newer(self):
         self.assertTrue(updater.is_newer('99.0.0', '1.0.0'))
         self.assertFalse(updater.is_newer('1.0.0', '1.0.0'))
@@ -237,6 +250,18 @@ class TestActivate(TempDirTestCase):
     def test_bad_version_rejected(self):
         with self.assertRaises(updater.UpdateError):
             updater.activate_version(self.tmp, '../x', self.stage('s', 'x'))
+
+    def test_dot_versions_never_touch_the_parent_folder(self):
+        parent = os.path.join(self.tmp, 'share')
+        prefix = os.path.join(parent, 'keeper-commander')
+        os.makedirs(prefix)
+        os.makedirs(os.path.join(parent, 'other-app'))
+        with open(os.path.join(parent, 'other-app', 'data.txt'), 'w') as f:
+            f.write('precious')
+        for bad in ('..', '.', '.hidden'):
+            with self.assertRaises(updater.UpdateError):
+                updater.activate_version(prefix, bad, self.stage('s' + bad.replace('.', '_'), 'x'))
+        self.assertTrue(os.path.isfile(os.path.join(parent, 'other-app', 'data.txt')))
 
 
 class TestPerformUpdate(TempDirTestCase):

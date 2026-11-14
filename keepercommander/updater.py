@@ -43,7 +43,8 @@ STATE_FILE = 'update-state.json'
 DEFAULT_META_URL = 'https://github.com/Keeper-Security/Commander/releases/latest/download/keeper-commander.meta'
 META_PREFIX = 'keeper-commander.'
 APP_DIR = 'keeper-commander'
-VERSION_RE = re.compile(r'^[0-9A-Za-z._-]+$')
+# A version becomes a folder name. It must start with a letter or digit, which rules out '.', '..' and hidden names.
+VERSION_RE = re.compile(r'^[0-9A-Za-z][0-9A-Za-z._-]*\Z')
 NO_PROMPT_ENV = 'KEEPER_NO_UPDATE_PROMPT'
 
 METHOD_SCRIPT = 'script'
@@ -348,6 +349,8 @@ def activate_version(prefix, version, staged):  # type: (str, str, str) -> str
 
     previous = _version_of_current(prefix)
     dest = os.path.join(prefix, version)
+    if os.path.dirname(os.path.realpath(dest)) != os.path.realpath(prefix):
+        raise UpdateError('invalid version: {0}'.format(version))     # must be a direct child of the install folder
     if os.path.isdir(dest):
         shutil.rmtree(dest)
     os.rename(staged, dest)
