@@ -55,6 +55,9 @@ FieldTypes = {x[0]: x for x in (
     FieldType('pamSettings', {'allowSupplyHost': False, 'connection': {}, 'portForward': {}}, 'PAM Settings'),
     FieldType('pamRemoteBrowserSettings', {'connection': {}}, 'RBI Settings'),
     FieldType('rbiUrl', '', 'RBI URL'),
+    FieldType('cnappSettings', {'cnapp_provider': '', 'encryption_key': '', 'encrypter_base_url': '',
+                                'secret_key_gen_api_token': '', 'provider_data': {}},
+              'CNAPP settings; provider_data holds the provider specific fields'),
 
 )}   # type: Dict[str, FieldType]
 
@@ -89,6 +92,7 @@ RecordFields = {x[0]: x for x in (
     RecordField('pamSettings', 'pamSettings', Multiple.Never),
     RecordField('pamRemoteBrowserSettings', 'pamRemoteBrowserSettings', Multiple.Never),
     RecordField('rbiUrl', 'rbiUrl', Multiple.Never),
+    RecordField('cnappSettings', 'cnappSettings', Multiple.Never),
 
 )}   # type: Dict[str, RecordField]
 

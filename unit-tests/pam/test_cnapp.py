@@ -809,6 +809,51 @@ class TestLoadEncrypterKey(unittest.TestCase):
             result = cnapp_commands._load_encrypter_key(params, 'uid123')
         self.assertEqual(result, self.VALID_KEY)
 
+    def _make_record_with_settings(self, settings, **kwargs):
+        record = self._make_record(**kwargs)
+        legacy = record.get_typed_field.side_effect
+
+        def get_typed_field(type_ref, label=None):
+            if type_ref == cnapp_commands.CNAPP_SETTINGS_FIELD:
+                return self._field_with_value(settings) if settings is not None else None
+            return legacy(type_ref, label)
+
+        record.get_typed_field.side_effect = get_typed_field
+        return record
+
+    def test_cnapp_settings_key_is_used_first(self):
+        other = bytes([0xCD]) * 32
+        record = self._make_record_with_settings(
+            {'cnapp_provider': 'wiz', 'encryption_key': base64.b64encode(self.VALID_KEY).decode('ascii'),
+             'provider_data': {'client_id_required': 'id'}},
+            secret_labeled=self._field_with_value(base64.b64encode(other).decode('ascii')))
+        with patch.object(cnapp_commands.vault.KeeperRecord, 'load', return_value=record):
+            self.assertEqual(cnapp_commands._load_encrypter_key(MagicMock(), 'uid123'), self.VALID_KEY)
+
+    def test_invalid_cnapp_settings_key_falls_back_to_the_legacy_fields(self):
+        record = self._make_record_with_settings(
+            {'cnapp_provider': 'tenable', 'encryption_key': self.INVALID_RAW},
+            secret_labeled=self._field_with_value(base64.b64encode(self.VALID_KEY).decode('ascii')))
+        with patch.object(cnapp_commands.vault.KeeperRecord, 'load', return_value=record):
+            with self.assertLogs(cnapp_commands.__name__, level='WARNING') as cm:
+                result = cnapp_commands._load_encrypter_key(MagicMock(), 'uid123')
+        self.assertEqual(result, self.VALID_KEY)
+        self.assertTrue(any('cnappSettings.encryption_key' in msg for msg in cm.output))
+
+    def test_cnapp_settings_without_a_key_or_not_an_object_is_ignored(self):
+        legacy = self._field_with_value(base64.b64encode(self.VALID_KEY).decode('ascii'))
+        for settings in ({'cnapp_provider': 'wiz'}, 'text', None):
+            record = self._make_record_with_settings(settings, secret_labeled=legacy)
+            with patch.object(cnapp_commands.vault.KeeperRecord, 'load', return_value=record):
+                self.assertEqual(cnapp_commands._load_encrypter_key(MagicMock(), 'uid123'), self.VALID_KEY)
+
+    def test_cnapp_settings_is_a_registered_field_type(self):
+        from keepercommander.record_types import FieldTypes, RecordFields
+        self.assertIn('cnappSettings', FieldTypes)
+        self.assertEqual(RecordFields['cnappSettings'].type, 'cnappSettings')
+        self.assertEqual(sorted(k for k in FieldTypes['cnappSettings'].value if k != 'provider_data'),
+                         ['cnapp_provider', 'encrypter_base_url', 'encryption_key', 'secret_key_gen_api_token'])
+
     def test_falls_through_to_note_labeled_when_secret_invalid(self):
         """When the secret-labeled field is invalid, note-labeled field must still be tried."""
         valid_raw = base64.b64encode(self.VALID_KEY).decode('ascii')
