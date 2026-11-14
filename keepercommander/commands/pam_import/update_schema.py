@@ -228,7 +228,7 @@ CONNECTION_KEYS = frozenset('''
 accept_language allow_file_downloads allow_file_uploads allow_supply_user allow_url_manipulation
 allowed_resource_url_patterns allowed_url_patterns audio_bps audio_channels audio_sample_rate audio_servername
 autofill_targets backspace ca_certificate cef_log_level cert_fingerprints cert_tofu client_certificate client_key
-client_name clipboard_encoding color_depth color_scheme command compress_level console console_audio container
+client_name clipboard_buffer_size clipboard_encoding color_depth color_scheme command compress_level console console_audio container
 cursor db_connection_method default_database destination_host destination_port disable_audio
 disable_authentication disable_bitmap_caching disable_cert_hostname_verification disable_copy disable_csv_export
 disable_csv_import disable_display_resize disable_download disable_dynamic_resizing disable_gfx
@@ -282,7 +282,20 @@ CONNECTION_RENAMES: Dict[str, Any] = {
     'ignore_server_cert': {'http': 'ignoreInitialSslCert', '': 'ignoreCert'},
     'pod_name': 'pod',
     'public_host_key': 'hostKey',
+    # RBI keeps it flat; the KeeperDB section of a database connection nests it (a dotted output key = a path)
+    'session_persistence': {'http': 'sessionPersistence', '': 'rbiSettings.sessionPersistence'},
     'use_ssl': 'useSSL',
+}
+
+# Keys the Web Vault writes under another name than the one the import writes ON PURPOSE (KCM / guacd names; the
+# Gateway ignores the Vault names, see the NB comments in base.py, 2026-11-03). {import output key: Vault key}.
+# update compares the IMPORT key only; a value found only under the Vault key is reported as "not honoured by the
+# Gateway" instead of being treated as the current value.
+VAULT_ALIASES: Dict[str, str] = {
+    'compressLevel': 'compressionLevel',
+    'qualityLevel': 'displayQuality',
+    'encodings': 'displayEncodings',
+    'printerName': 'redirectedPrinterName',
 }
 SFTP_RENAMES: Dict[str, str] = {
     'sftp_upload_directory': 'sftpDirectory',

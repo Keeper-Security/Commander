@@ -1,4 +1,5 @@
 """`update_schema`: raw import-JSON path -> vault target, and the drift guard against the import parsers."""
+import ast
 import logging
 import re
 import unittest
@@ -24,6 +25,7 @@ SAMPLES = [True, 'sample', 5, 32, 96, 1920, 22, 30, 10, 1, 'Sample', '5', ['a', 
 # expected output key); the output is checked with the value given.
 HINTS = {
     'backspace': ('ssh', '8', 'backspace'),
+    'clipboard_buffer_size': ('rdp', '1mb', 'clipboardBufferSize'),
     'cursor': ('vnc', 'local', 'cursor'),
     'encodings': ('vnc', 'zrle', 'encodings'),
     'resize_method': ('rdp', 'reconnect', 'resizeMethod'),
@@ -34,7 +36,7 @@ HINTS = {
     'wol_broadcast_addr': ('ssh', '1.1.1.1', 'wolBroadcastAddr'),
 }
 # Accepted by the parser but no sample made it visible in the output; only checked to still exist in the parser.
-NOT_VISIBLE = {'drive_redirection_path', 'func_keys_and_keypad', 'session_persistence', 'disable_dynamic_resizing',
+NOT_VISIBLE = {'drive_redirection_path', 'func_keys_and_keypad', 'disable_dynamic_resizing',
                'allow_url_manipulation'}
 # reference keys (not output keys of the connection object) are checked by name only
 REF_KEYS = set(us.CONNECTION_REFS) | set(us.SFTP_REFS)
@@ -250,13 +252,49 @@ class TestDriftGuard(unittest.TestCase):
                     seen.add(key)
                     if key not in us.CONNECTION_KEYS:
                         problems.append(f'{protocol}: new connection key "{key}" -> {sorted(changed)} is not in CONNECTION_KEYS')
-                    elif key != 'disable_dynamic_resizing' and changed != {us.connection_output_key(key, protocol)}:
+                    elif (key != 'disable_dynamic_resizing'
+                          and changed != {us.connection_output_key(key, protocol).split('.')[0]}):
                         problems.append(f'{protocol}: "{key}" changes {sorted(changed)}, schema says '
                                         f'"{us.connection_output_key(key, protocol)}"')
                     break
         self.assertEqual(problems, [])
         # sanity: the probe really found a lot (a broken harness would find nothing and pass)
         self.assertGreater(len(seen), 80)
+
+    def test_every_key_the_connection_classes_read_is_in_the_registry(self):
+        """Static check (no sample values needed): keys read with data.get("x") / data["x"] / "x" in data /
+        parse_*(data, "x", ...) inside the connection-related classes of base.py."""
+        tree = ast.parse(BASE_PY.read_text(encoding='utf-8'))
+        class_re = re.compile(r'(ConnectionSettings|SFTP|Terminal|Wol|RecordingFilter|Clipboard|BaseDatabase|CliCapable)')
+        data_names = {'data', 'cdata', 'sftp', 'bcs'}
+
+        def const(node):
+            return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+        read = set()
+        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef) and class_re.search(n.name)):
+            for node in ast.walk(cls):
+                key = None
+                if isinstance(node, ast.Call):
+                    func = node.func
+                    if (isinstance(func, ast.Attribute) and func.attr == 'get' and isinstance(func.value, ast.Name)
+                            and func.value.id in data_names and node.args):
+                        key = const(node.args[0])
+                    elif (isinstance(func, ast.Name) and func.id.startswith(('parse_', '_parse')) and len(node.args) >= 2
+                          and isinstance(node.args[0], ast.Name) and node.args[0].id in data_names):
+                        key = const(node.args[1])
+                elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+                      and node.value.id in data_names):
+                    key = const(node.slice)
+                elif (isinstance(node, ast.Compare) and isinstance(node.left, ast.Constant)
+                      and any(isinstance(op, ast.In) for op in node.ops)):
+                    key = const(node.left)
+                if key and re.fullmatch(r'[a-z][a-z0-9_]*', key):
+                    read.add(key)
+        self.assertGreater(len(read), 100)   # a broken walk would find nothing and pass
+        known = (us.CONNECTION_KEYS | us.SFTP_KEYS | set(us.CONNECTION_REFS) | set(us.SFTP_REFS)
+                 | us.PORT_FORWARD_KEYS | {'sftp'})   # `sftp` is the nested container
+        self.assertEqual(sorted(read - known), [], 'keys the connection classes read that update_schema does not know')
 
     def test_keys_that_need_a_particular_value(self):
         for key, (protocol, value, expected) in HINTS.items():
@@ -265,6 +303,23 @@ class TestDriftGuard(unittest.TestCase):
             self.assertEqual(_changed(base, out), {expected}, key)
             self.assertIn(key, us.CONNECTION_KEYS, key)
             self.assertEqual(us.connection_output_key(key, protocol), expected, key)
+
+    def test_session_persistence_is_flat_for_rbi_and_nested_for_databases(self):
+        rbi = _connection('http', {'session_persistence': 'user'})
+        self.assertEqual(rbi['sessionPersistence'], 'user')
+        self.assertEqual(us.connection_output_key('session_persistence', 'http'), 'sessionPersistence')
+        db = _connection('postgresql', {'db_connection_method': 'keeperDB', 'session_persistence': 'user'})
+        self.assertEqual(db['rbiSettings'], {'sessionPersistence': 'user'})
+        self.assertEqual(us.connection_output_key('session_persistence', 'postgresql'), 'rbiSettings.sessionPersistence')
+        t = us.resolve('pam_settings.connection.session_persistence', 'pamDatabase', 'postgresql')
+        self.assertEqual(t.sub, 'connection.rbiSettings.sessionPersistence')
+
+    def test_vault_aliases_are_not_what_the_import_writes(self):
+        for ours, vault in us.VAULT_ALIASES.items():
+            self.assertNotEqual(ours, vault)
+        self.assertEqual(_connection('vnc', {'compress_level': 5}).get('compressLevel'), 5)
+        self.assertNotIn('compressionLevel', _connection('vnc', {'compress_level': 5}))
+        self.assertEqual(_connection('rdp', {'printer_name': 'P'}).get('printerName'), 'P')
 
     def test_keys_that_are_accepted_but_not_visible_still_exist(self):
         for key in NOT_VISIBLE:
