@@ -972,6 +972,10 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
     # Clear the shell loop flag
     params._in_shell_loop = False
 
+    # Offer to update (install-script installations only; asks once per new version)
+    from . import updater
+    updater.prompt_for_update_on_exit(params)
+
     return error_no
 
 
