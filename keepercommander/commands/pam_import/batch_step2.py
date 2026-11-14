@@ -124,9 +124,10 @@ def run_step2_full(
                 launch_uid=launch_uid or None,
                 admin_uid=admin_uid or None,
             )
-        # set_launch_credentials can send meta that wipes connections/portForwards
-        # on the server. Re-apply resource allowedSettings after launch so the
-        # Launch button sticks.
+        # set_launch_credentials sends the meta snapshot it holds; krouter merges
+        # it, but the legacy DAG-write fallback replaces the whole edge and can
+        # drop connections/portForwards. Re-apply the resource allowedSettings
+        # after launch so the Launch button sticks (kept as a precaution).
         _apply_machine_allowed_settings(tdag, mach)
 
 

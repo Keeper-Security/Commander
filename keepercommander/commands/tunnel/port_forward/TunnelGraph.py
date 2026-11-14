@@ -103,12 +103,14 @@ def ensure_resource_meta_v1(content):
 def build_configure_resource_meta(content=None):
     """Inclusive meta payload for ``configure_resource`` (Web Vault parity).
 
-    krouter decodes ``Meta.allowedSettings`` as a DTO and applies replacement-
-    style semantics for that object: sending ``allowedSettings: {}`` clears
-    connections / portForwards / recording flags. Web Vault clients send a full
-    ``allowedSettings`` object (not empty). Clients must send the **full desired
-    snapshot** of known flags — same pattern as vault
-    ``updatePamResourceGraph`` (explicit booleans; omit only unmanaged keys).
+    krouter DEEP-MERGES the ``meta`` edge (``mergeJsonEdges`` / ``mergeJson``,
+    checked in krouter ``UserRest.kt`` on master and release/1.11.3): keys in the
+    request overwrite, keys left out keep their stored value, so
+    ``allowedSettings: {}`` changes nothing and a flag can only be set to
+    true / false, never removed. (Older routers replaced ``allowedSettings``
+    as a whole; Commander still sends the full snapshot, like the Web Vault's
+    ``updatePamResourceGraph``, which is harmless with both behaviours.) The
+    legacy direct DAG write, used as a fallback, DOES replace the whole edge.
     """
     return ensure_resource_meta_v1(content)
 
@@ -117,8 +119,9 @@ def build_meta_version_upgrade(content=None):
     """Build v1 meta for configure_resource; prefer :func:`build_configure_resource_meta`.
 
     ``content`` should be the resource's current meta (local vertex and/or
-    Layer-B overlay). Passing ``None`` yields empty allowedSettings and will
-    clear server flags — only appropriate when no settings exist yet.
+    Layer-B overlay). Passing ``None`` yields empty allowedSettings: with the
+    current router (deep merge) that leaves the stored flags as they are, but
+    the legacy direct DAG fallback would replace the edge and lose them.
     """
     return build_configure_resource_meta(content)
 
@@ -860,7 +863,8 @@ class TunnelDAG:
             return
 
         # Inclusive meta (WV parity): send full current allowedSettings snapshot.
-        # Empty allowedSettings:{} replaces/clears connections on the server.
+        # (krouter deep-merges meta, so omitted flags are kept; the full snapshot
+        # is still needed for the legacy DAG-write fallback, which replaces the edge.)
         # Prefer Layer-B overlay from a prior set_resource_allowed in this session.
         content = self._local_resource_meta(resource_uid, resource_vertex)
         upgraded_meta = build_configure_resource_meta(content)
@@ -931,7 +935,8 @@ class TunnelDAG:
         upgraded = build_configure_resource_meta(content)
 
         # Primary: Layer-B configure_resource (permission-checked). Send the full
-        # inclusive meta snapshot (WV parity) — empty allowedSettings clears flags.
+        # inclusive meta snapshot (WV parity); krouter merges it into the stored
+        # meta, the legacy fallback replaces the edge with it.
         from ...pam.router_helper import router_configure_resource, get_router_url
         from ...pam._layer_b import is_layer_b_feature_disabled
         host = get_router_url(self.params)
