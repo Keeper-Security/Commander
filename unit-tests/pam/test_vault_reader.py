@@ -399,9 +399,20 @@ class TestOrderingRules:
     def _state(self, *items):
         return build_graph_state(0, list(items), self.NO_VERTICES, _params())
 
-    def test_last_item_per_coordinate_wins_whatever_the_type(self):
+    def test_a_link_and_an_acl_at_one_coordinate_are_both_current(self):
+        # the server replaces an edge only by one of the same type (ka-libs deleteUpdatedEntries)
         state = self._state(_item('u', 'm', 'link'), _item('u', 'm', 'acl'))
-        assert state.edge('u', 'm').edge_type == 'acl'
+        assert [e.edge_type for e in state.edges_at('u', 'm')] == ['link', 'acl']
+        assert state.edge('u', 'm', edge_type='link') is not None and state.edge('u', 'm', edge_type='acl') is not None
+        assert state.edge('u', 'm').edge_type == 'acl'      # no type asked: the one that arrived last
+
+    def test_a_later_edge_replaces_only_the_earlier_one_of_its_type(self):
+        state = self._state(_item('u', 'm', 'link'), _item('u', 'm', 'acl'), _item('u', 'm', 'link'))
+        assert [e.edge_type for e in state.edges_at('u', 'm')] == ['acl', 'link']
+
+    def test_a_deletion_removes_every_type_at_the_coordinate(self):
+        state = self._state(_item('u', 'm', 'link'), _item('u', 'm', 'acl'), _item('u', 'm', 'deletion'))
+        assert state.edges_at('u', 'm') == [] and state.edges_of('u') == []
 
     def test_deletion_then_new_edge_is_present_and_new_edge_then_deletion_is_absent(self):
         present = self._state(_item('m', None, 'data', 'x'), _item('m', None, 'deletion', 'x'),

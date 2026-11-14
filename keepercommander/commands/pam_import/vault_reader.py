@@ -20,12 +20,15 @@ What is read, and where it lives:
 
 Design points (found by reading the library and the server, 2026-11-13):
 
-* THE CURRENT EDGE IS THE LAST ONE THE SERVER SENT for a coordinate (tail, head, path); a last ``DELETION`` /
-  ``UNDENIAL`` means absent. The loaded graph model cannot be used for this: it assigns versions in processing
-  order (all non-DATA edges first, then all DATA edges), so the ``DELETION`` of a data path gets a LOWER version
-  than the data it deletes, and its ``active`` flag is not path-aware (a rewrite of ``meta`` marks a still-current
-  ``jit_settings`` as inactive). The server returns edges ordered by sync point (arrival order), so the raw order
-  is captured while the graph loads.
+* THE CURRENT EDGE IS THE LAST ONE THE SERVER SENT for a coordinate (tail, head, path) AND TYPE (a LINK and an
+  ACL between the same vertices are both current; a ``DELETION`` removes all of them). The real server keeps one
+  stream entry per such key (a DELETION replaces what it deletes and stays as a tombstone), so KRouter sends
+  the current edges plus the tombstones; this reader still applies the arrival order, because the loaded graph
+  model cannot be used for it: it
+  numbers edges in processing order (all non-DATA edges first, then all DATA edges), so a ``DELETION`` of a data
+  path gets a LOWER version than the data it deletes, and its ``active`` flag is not path-aware (a rewrite of
+  ``meta`` marks a still-current ``jit_settings`` as inactive). The local fake engine does send superseded edges,
+  so that is where the order matters. The raw order is captured while the graph loads.
 * Settings encrypted with the resource's own record key are decrypted locally; nothing here reloads a graph per
   resource.
 * Everything is indexed once and read many times.
@@ -60,20 +63,24 @@ class CurrentEdge:
 
 
 class GraphState:
-    """The current edges of one graph, indexed by vertex UID. Build once, query many times."""
+    """The current edges of one graph, indexed by vertex UID. Build once, query many times.
+
+    A coordinate (tail, head, path) can hold one current edge PER TYPE (a LINK and an ACL between the same two
+    vertices are both current); a DENIAL is a filter edge and sits next to them.
+    """
 
     def __init__(self, graph_id: int, edges: Iterable[CurrentEdge] = ()):
         self.graph_id = graph_id
-        # (tail, head, path, is_filter) -> edge. A DENIAL does not replace the normal edge at its coordinate.
-        self._all: Dict[Tuple[str, str, Optional[str], bool], CurrentEdge] = {}
-        self._edges: Dict[Tuple[str, str, Optional[str]], CurrentEdge] = {}
+        # (tail, head, path, edge_type) -> edge
+        self._all: Dict[Tuple[str, str, Optional[str], str], CurrentEdge] = {}
+        # (tail, head, path) -> the non-filter edges there, in arrival order
+        self._at: Dict[Tuple[str, str, Optional[str]], List[CurrentEdge]] = {}
         self._by_uid: Dict[str, List[CurrentEdge]] = {}
         for edge in edges:
-            is_filter = edge.edge_type == EdgeType.DENIAL.value
-            self._all[(edge.tail, edge.head, edge.path, is_filter)] = edge
-            if not is_filter:
-                self._edges[(edge.tail, edge.head, edge.path)] = edge
+            self._all[(edge.tail, edge.head, edge.path, edge.edge_type)] = edge
         for edge in self._all.values():
+            if edge.edge_type != EdgeType.DENIAL.value:
+                self._at.setdefault((edge.tail, edge.head, edge.path), []).append(edge)
             self._by_uid.setdefault(edge.tail, []).append(edge)
             if edge.head != edge.tail:
                 self._by_uid.setdefault(edge.head, []).append(edge)
@@ -81,8 +88,17 @@ class GraphState:
     def __len__(self) -> int:
         return len(self._all)
 
-    def edge(self, tail: str, head: str, path: Optional[str] = None) -> Optional[CurrentEdge]:
-        return self._edges.get((tail, head, path or None))
+    def edge(self, tail: str, head: str, path: Optional[str] = None,
+             edge_type: Optional[str] = None) -> Optional[CurrentEdge]:
+        """The current edge at (tail, head, path) of *edge_type*; without a type, the one that arrived last."""
+        found = self._at.get((tail, head, path or None), ())
+        if edge_type is not None:
+            return next((e for e in found if e.edge_type == edge_type), None)
+        return found[-1] if found else None
+
+    def edges_at(self, tail: str, head: str, path: Optional[str] = None) -> List[CurrentEdge]:
+        """Every current non-filter edge at (tail, head, path), one per type."""
+        return list(self._at.get((tail, head, path or None), ()))
 
     def edges_of(self, uid: str) -> List[CurrentEdge]:
         """Every current edge that has *uid* as tail or head."""
@@ -93,8 +109,8 @@ class GraphState:
 
     def data(self, uid: str, path: str) -> Any:
         """The contents of the DATA edge of *uid* at *path* (``meta``, ``jit_settings`` ...), or None when absent."""
-        edge = self._edges.get((uid, uid, path))
-        return edge.contents if edge is not None and edge.edge_type == EdgeType.DATA.value else None
+        edge = self.edge(uid, uid, path, EdgeType.DATA.value)
+        return edge.contents if edge is not None else None
 
     def data_paths(self, uid: str) -> List[str]:
         return [e.path for e in self._by_uid.get(uid, ())
@@ -128,26 +144,24 @@ def _coordinate(item) -> Tuple[str, str, Optional[str]]:
 def build_graph_state(graph_id: int, raw_items: Iterable, dag: DAG, params) -> GraphState:
     """The current edges of a loaded graph.
 
-    The LAST raw item per coordinate (tail, head, path) is the current one; if it is a ``DELETION`` the edge is
-    absent (and so is an ACL with no set flag). A ``DENIAL`` is kept next to the normal edge. Contents are decoded
-    from the loaded graph's edge of the same coordinate and type.
+    Bookkeeping as in the server (ka-libs ``deleteUpdatedEntries``): a coordinate (tail, head, path) holds ONE
+    current edge PER TYPE, the last of that type that arrived; a ``DELETION`` removes every edge there (denial
+    included); a ``DENIAL`` is a filter edge that sits beside the normal ones; an ``UNDENIAL`` takes it away. An
+    ACL with no set flag counts as deleted. Contents are decoded from the loaded graph's edge of the same
+    coordinate and type.
     """
-    # Same bookkeeping as the server and the Web Vault: a coordinate (tail, head, path) holds ONE current edge,
-    # the last one that arrived. A DELETION removes whatever is there (a denial too). A DENIAL is a filter edge: it
-    # sits next to the normal edge and does not replace it; an UNDENIAL takes the denial away.
-    last_type: Dict[Tuple[str, str, Optional[str]], EdgeType] = {}
-    denials: Dict[Tuple[str, str, Optional[str]], EdgeType] = {}
+    present: Dict[Tuple[str, str, Optional[str]], Dict[EdgeType, None]] = {}   # insertion order = arrival order
     for item in raw_items:
         coordinate = _coordinate(item)
         edge_type = EdgeType.find_enum(item.type)
-        if edge_type == EdgeType.DENIAL:
-            denials[coordinate] = edge_type
+        types = present.setdefault(coordinate, {})
+        if edge_type == EdgeType.DELETION:
+            types.clear()
         elif edge_type == EdgeType.UNDENIAL:
-            denials.pop(coordinate, None)
+            types.pop(EdgeType.DENIAL, None)
         else:
-            last_type[coordinate] = edge_type
-            if edge_type == EdgeType.DELETION:
-                denials.pop(coordinate, None)
+            types.pop(edge_type, None)    # the new edge replaces the earlier one of its type, and goes last
+            types[edge_type] = None
 
     loaded: Dict[Tuple[str, str, Optional[str], EdgeType], Any] = {}
     for vertex in dag.all_vertices:
@@ -156,18 +170,19 @@ def build_graph_state(graph_id: int, raw_items: Iterable, dag: DAG, params) -> G
                 loaded[(vertex.uid, edge.head_uid, edge.path or None, edge.edge_type)] = edge
 
     current: List[CurrentEdge] = []
-    wanted = [(coordinate, edge_type) for coordinate, edge_type in last_type.items()
-              if edge_type not in EXCLUDE_EDGE_TYPES]
-    wanted += list(denials.items())
-    for (tail, head, path), edge_type in wanted:
-        edge = loaded.get((tail, head, path, edge_type))
-        contents = decode_edge_local(edge, tail, params) if edge is not None else None
-        if edge_type == EdgeType.ACL:
-            decrypt_acl_pwd_complexity(contents, head, tail, params)
-            # The Web Vault treats an ACL without a single set flag as deleted (that is how a user is unlinked).
-            if isinstance(contents, dict) and not any(contents.values()):
+    for (tail, head, path), types in present.items():
+        for edge_type in types:
+            if edge_type in EXCLUDE_EDGE_TYPES:
                 continue
-        current.append(CurrentEdge(tail=tail, head=head, edge_type=edge_type.value, path=path, contents=contents))
+            edge = loaded.get((tail, head, path, edge_type))
+            contents = decode_edge_local(edge, tail, params) if edge is not None else None
+            if edge_type == EdgeType.ACL:
+                decrypt_acl_pwd_complexity(contents, head, tail, params)
+                # The Web Vault treats an ACL without a single set flag as deleted (that is how a user is unlinked).
+                if isinstance(contents, dict) and not any(contents.values()):
+                    continue
+            current.append(CurrentEdge(tail=tail, head=head, edge_type=edge_type.value, path=path,
+                                       contents=contents))
     return GraphState(graph_id, current)
 
 
