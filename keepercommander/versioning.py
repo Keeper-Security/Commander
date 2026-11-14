@@ -18,6 +18,11 @@ from . import __version__, display
 from .params import KeeperParams
 
 
+# Result of the most recent version check (set by welcome_print_version). Used by the exit-time update prompt
+# so that no additional network request is needed when the shell closes.
+last_version_info = None  # type: dict
+
+
 def is_up_to_date_version(params):  # type: (KeeperParams) -> dict
 
     curr_git_version = None
@@ -100,11 +105,17 @@ def __version_compare(v1, v2):
     return 0
 
 
+# Public name for other modules (a double-underscore name is mangled when used inside a class body).
+version_compare = __version_compare
+
+
 def welcome_print_version(params):
+    global last_version_info
 
     this_app_version = __version__
 
     ver_info = is_up_to_date_version(params)
+    last_version_info = ver_info
 
     if ver_info.get('is_up_to_date') is None:
         logging.debug(display.bcolors.WARNING + "It appears that the internet connection is offline." + display.bcolors.ENDC)
