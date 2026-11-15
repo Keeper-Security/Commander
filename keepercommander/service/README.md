@@ -607,6 +607,36 @@ The command generates a complete `docker-compose.yml` with both Commander servic
 
 Image name used in compose: `keeper/gchat-app:latest`.
 
+### Teams App Integration Setup
+
+For integrating Commander Service Mode with Microsoft Teams, run:
+
+```bash
+My Vault> teams-app-setup
+```
+
+This automates the Teams App integration setup:
+- **Phase 1**: Runs Docker setup (same as `service-docker-setup`)
+- **Phase 2**: Collects Azure AD credentials, tenant/team/channel IDs, and the bot port (default: 3978)
+- Optionally enables EPM, SSO Cloud Device Approval, and PAM Workflow approval
+- Creates the Teams config record and updates `docker-compose.yml` with the Teams App service
+
+PAM Workflow approval adds `pam` to the Service Mode command list only when enabled.
+
+**Generated compose environment for the Teams service:**
+
+| Env var | Value |
+|---------|-------|
+| `KSM_CONFIG` | Base64 KSM config |
+| `COMMANDER_RECORD` | Commander Docker config record UID |
+| `TEAMS_RECORD` | Teams config record UID |
+
+Image name used in compose: `keeper/teams-app:latest`.
+
+### PAM Workflow Pending Requests
+
+Use `pam workflow pending --format json --include-approvers` to include approvers in pending-request JSON. Team approvers include member email addresses from the enterprise directory; treat this output as sensitive directory data.
+
 ---
 
 ### Manual Authentication Methods (Alternative)

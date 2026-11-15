@@ -140,6 +140,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
         extract = WorkflowGetApprovalRequestsCommand._extract_param
         workflow_states = workflow_states or {}
         workflow_configs = {}
+        unavailable_workflow_configs = set()
         team_members = {}
         requests = []
         for wf in workflows:
@@ -155,6 +156,8 @@ class WorkflowGetApprovalRequestsCommand(Command):
                         rq_proto=wf.resource,
                         rs_type=workflow_pb2.WorkflowConfig,
                     )
+                    if workflow_config is None:
+                        unavailable_workflow_configs.add(rec_uid)
                 except Exception:
                     logging.debug(
                         'Failed to read workflow config for pending request on %s',
@@ -162,6 +165,7 @@ class WorkflowGetApprovalRequestsCommand(Command):
                         exc_info=True,
                     )
                     workflow_config = None
+                    unavailable_workflow_configs.add(rec_uid)
                 workflow_configs[rec_uid] = workflow_config
 
             request = {
@@ -171,7 +175,8 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 'record_name': RecordResolver.resolve_name(params, wf.resource),
                 'approvals_needed': (
                     workflow_config.parameters.approvalsNeeded
-                    if workflow_config and workflow_config.HasField('parameters') else None
+                    if workflow_config is not None and workflow_config.HasField('parameters')
+                    else None
                 ),
                 'approvals_received': (
                     len(state.status.approvedBy)
@@ -187,23 +192,32 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 'reason': decrypt(params, rec_uid, extract(wf, 'reason')),
                 'ticket': decrypt(params, rec_uid, extract(wf, 'ticket')),
             }
+            if rec_uid in unavailable_workflow_configs:
+                request['workflow_config_unavailable'] = True
             if include_approvers:
-                request['approvers'] = (
-                    WorkflowGetApprovalRequestsCommand._serialize_approvers(
-                        params,
-                        workflow_config,
-                        team_members,
+                if rec_uid in unavailable_workflow_configs:
+                    request['approvers'] = []
+                    request['approvers_unavailable'] = True
+                else:
+                    approvers, approvers_unavailable = (
+                        WorkflowGetApprovalRequestsCommand._serialize_approvers(
+                            params,
+                            workflow_config,
+                            team_members,
+                        )
                     )
-                    if workflow_config else []
-                )
+                    request['approvers'] = approvers
+                    if approvers_unavailable:
+                        request['approvers_unavailable'] = True
             requests.append(request)
         print(json.dumps({'requests': requests}, indent=2))
 
     @staticmethod
     def _serialize_approvers(params, workflow_config, team_members):
         approvers = []
-        if not workflow_config:
-            return approvers
+        approvers_unavailable = False
+        if workflow_config is None:
+            return approvers, approvers_unavailable
         for approver in workflow_config.approvers:
             approver_info = {'escalation': approver.escalation}
             if approver.escalationAfterMs:
@@ -220,15 +234,19 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 team_uid = utils.base64_url_encode(approver.teamUid)
                 approver_info['type'] = 'team'
                 approver_info['team_uid'] = team_uid
-                approver_info['members'] = (
+                members, members_unavailable = (
                     WorkflowGetApprovalRequestsCommand._get_team_member_emails(
                         params,
                         approver.teamUid,
                         team_members,
                     )
                 )
+                approver_info['members'] = members
+                if members_unavailable:
+                    approver_info['members_unavailable'] = True
+                    approvers_unavailable = True
             approvers.append(approver_info)
-        return approvers
+        return approvers, approvers_unavailable
 
     @staticmethod
     def _get_team_member_emails(params, team_uid_bytes, cache):
@@ -254,8 +272,10 @@ class WorkflowGetApprovalRequestsCommand(Command):
                 team_uid,
                 exc_info=True,
             )
-        cache[team_uid] = emails
-        return emails
+            cache[team_uid] = ([], True)
+            return cache[team_uid]
+        cache[team_uid] = (emails, False)
+        return cache[team_uid]
 
     @staticmethod
     def _print_table(params, workflows):

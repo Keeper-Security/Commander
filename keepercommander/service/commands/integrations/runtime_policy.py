@@ -17,7 +17,6 @@ import os
 
 from .... import vault
 from ...util.exceptions import ValidationError
-from ...docker import WorkflowApprovalConstants
 
 
 def apply_runtime_command_policy(args, params=None) -> None:
@@ -50,6 +49,10 @@ def _read_workflow_approval_enabled(params, env_key: str) -> bool:
     Missing config, missing field, or unreadable values are treated as disabled
     so a stale Compose command list cannot enable PAM accidentally.
     """
+    # Import lazily: importing the full Docker package at module load time can
+    # participate in the service setup import cycle.
+    from ...docker import WorkflowApprovalConstants
+
     if not params or not (record_uid := (os.environ.get(env_key) or '').strip()):
         return False
     try:
@@ -60,7 +63,7 @@ def _read_workflow_approval_enabled(params, env_key: str) -> bool:
             if custom_field.label != WorkflowApprovalConstants.FIELD_ENABLED:
                 continue
             value = custom_field.get_default_value()
-            return str(value or '').strip().lower() in {'true', '1', 'yes', 'y', 'on'}
+            return str(value or '').strip().lower() == 'true'
     except Exception:
         return False
     return False

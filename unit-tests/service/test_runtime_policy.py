@@ -79,16 +79,25 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         from types import SimpleNamespace
         from keepercommander.service.commands.integrations import runtime_policy
 
-        field = mock.Mock()
-        field.label = 'workflow_approval_enabled'
-        field.get_default_value.return_value = 'false'
-        record = SimpleNamespace(custom=[field])
-        args = _Args(commands='search,pam')
-        with mock.patch.dict(os.environ, {'SLACK_RECORD': 'integration-record'}, clear=True), \
-                mock.patch.object(runtime_policy.vault.KeeperRecord, 'load', return_value=record):
-            apply_runtime_command_policy(args, params=object())
+        for value in ('false', '1', 'yes', 'y', 'on'):
+            with self.subTest(value=value):
+                field = mock.Mock()
+                field.label = 'workflow_approval_enabled'
+                field.get_default_value.return_value = value
+                record = SimpleNamespace(custom=[field])
+                args = _Args(commands='search,pam')
+                with mock.patch.dict(
+                    os.environ,
+                    {'SLACK_RECORD': 'integration-record'},
+                    clear=True,
+                ), mock.patch.object(
+                    runtime_policy.vault.KeeperRecord,
+                    'load',
+                    return_value=record,
+                ):
+                    apply_runtime_command_policy(args, params=object())
 
-        self.assertNotIn('pam', args.commands.split(','))
+                self.assertNotIn('pam', args.commands.split(','))
 
     def test_gchat_record_env_confines_to_gchat_allowlist(self):
         allowed = set(GChatAppSetupCommand().get_service_commands().split(','))

@@ -615,12 +615,13 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
                     break
                 try:
                     interval = int(interval_input)
-                    if interval < 1:
+                    if interval < WorkflowApprovalConstants.MIN_POLLING_INTERVAL:
                         raise ValueError
                     break
                 except ValueError:
                     print(
-                        f"{bcolors.FAIL}Error: Enter a whole number of seconds greater than zero"
+                        f"{bcolors.FAIL}Error: Enter a whole number of seconds "
+                        f"(at least {WorkflowApprovalConstants.MIN_POLLING_INTERVAL})"
                         f"{bcolors.ENDC}"
                     )
         return enabled, interval

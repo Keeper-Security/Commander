@@ -39,7 +39,14 @@ class TestWorkflowPendingApprovers(unittest.TestCase):
         team_approver.escalation = True
         team_approver.escalationAfterMs = 3600000
 
-    def _run_pending(self, *, include_approvers):
+    def _run_pending(
+        self,
+        *,
+        include_approvers,
+        router_failures=None,
+        router_response_overrides=None,
+        team_lookup_error=None,
+    ):
         team_members = enterprise_pb2.GetTeamMemberResponse()
         team_members.enterpriseUser.add(email='team.member@example.com')
         router_responses = {
@@ -47,18 +54,26 @@ class TestWorkflowPendingApprovers(unittest.TestCase):
             'get_workflow_state': self.workflow_state,
             'read_workflow_config': self.workflow_config,
         }
+        router_responses.update(router_response_overrides or {})
+        router_failures = router_failures or {}
 
         def router_call(_params, endpoint, **_kwargs):
+            if endpoint in router_failures:
+                raise router_failures[endpoint]
             return router_responses[endpoint]
 
         output = io.StringIO()
+        team_lookup_patch = mock.patch(
+            'keepercommander.commands.workflow.approver_commands.api.communicate_rest',
+            side_effect=team_lookup_error,
+        ) if team_lookup_error else mock.patch(
+            'keepercommander.commands.workflow.approver_commands.api.communicate_rest',
+            return_value=team_members,
+        )
         with mock.patch(
             'keepercommander.commands.workflow.approver_commands._post_request_to_router',
             side_effect=router_call,
-        ), mock.patch(
-            'keepercommander.commands.workflow.approver_commands.api.communicate_rest',
-            return_value=team_members,
-        ) as team_lookup, mock.patch.object(
+        ), team_lookup_patch as team_lookup, mock.patch.object(
             WorkflowGetApprovalRequestsCommand,
             '_decrypt_param',
             return_value=None,
@@ -110,6 +125,45 @@ class TestWorkflowPendingApprovers(unittest.TestCase):
         self.assertEqual(request['approvals_received'], 1)
         self.assertNotIn('approvers', request)
         team_lookup.assert_not_called()
+
+    def test_workflow_config_lookup_failure_is_reported(self):
+        result, team_lookup = self._run_pending(
+            include_approvers=True,
+            router_failures={'read_workflow_config': RuntimeError('router unavailable')},
+        )
+        request = result['requests'][0]
+
+        self.assertIsNone(request['approvals_needed'])
+        self.assertTrue(request['workflow_config_unavailable'])
+        self.assertEqual(request['approvers'], [])
+        self.assertTrue(request['approvers_unavailable'])
+        team_lookup.assert_not_called()
+
+    def test_missing_workflow_config_response_is_reported(self):
+        result, team_lookup = self._run_pending(
+            include_approvers=True,
+            router_response_overrides={'read_workflow_config': None},
+        )
+        request = result['requests'][0]
+
+        self.assertTrue(request['workflow_config_unavailable'])
+        self.assertTrue(request['approvers_unavailable'])
+        team_lookup.assert_not_called()
+
+    def test_team_member_lookup_failure_is_reported(self):
+        result, team_lookup = self._run_pending(
+            include_approvers=True,
+            team_lookup_error=RuntimeError('directory unavailable'),
+        )
+        request = result['requests'][0]
+
+        self.assertTrue(request['approvers_unavailable'])
+        self.assertEqual(
+            request['approvers'][1]['members'],
+            [],
+        )
+        self.assertTrue(request['approvers'][1]['members_unavailable'])
+        team_lookup.assert_called_once()
 
 
 if __name__ == '__main__':

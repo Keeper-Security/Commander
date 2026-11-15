@@ -103,6 +103,7 @@ class WorkflowApprovalConstants:
     FIELD_ENABLED = 'workflow_approval_enabled'
     FIELD_POLLING_INTERVAL = 'workflow_approval_polling_interval'
     DEFAULT_POLLING_INTERVAL = 120
+    MIN_POLLING_INTERVAL = 15
 
 
 @dataclass

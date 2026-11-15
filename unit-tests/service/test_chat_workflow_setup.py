@@ -29,11 +29,20 @@ class TestChatWorkflowSetup(unittest.TestCase):
     def test_prompt_collects_positive_interval_when_enabled(self):
         command = TeamsAppSetupCommand()
         with mock.patch.object(command, '_prompt_yes_no', return_value=True), \
-                mock.patch('builtins.input', side_effect=['0', 'not-a-number', '45']):
+                mock.patch('builtins.input', side_effect=['0', '14', 'not-a-number', '45']):
             enabled, interval = command._collect_workflow_approval_config()
 
         self.assertTrue(enabled)
         self.assertEqual(interval, 45)
+
+    def test_prompt_accepts_minimum_polling_interval(self):
+        command = TeamsAppSetupCommand()
+        with mock.patch.object(command, '_prompt_yes_no', return_value=True), \
+                mock.patch('builtins.input', return_value='15'):
+            enabled, interval = command._collect_workflow_approval_config()
+
+        self.assertTrue(enabled)
+        self.assertEqual(interval, WorkflowApprovalConstants.MIN_POLLING_INTERVAL)
 
     def test_slack_persists_workflow_approval_config(self):
         command = SlackAppSetupCommand()
