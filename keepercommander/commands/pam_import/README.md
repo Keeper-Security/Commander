@@ -109,7 +109,7 @@ Vault record creation uses **`BatchPamImportEngine`** ([`batch_pipeline.py`](bat
 
 **Dry-run (`simulate()`):** returns creation tiers, Step 2 dispatch, deferred ref/link plans, `link_count_warnings` when projected typed `record_links` per record exceed 100, and **`import_tail`** flags for post–Step 2 import-only work.
 
-**Step 2 rotation:** `set_record_rotation` calls are throttled (10 per 10s pause) via [`rotation_throttle.py`](rotation_throttle.py). Schedule types are case-insensitive (`CRON` / `cron`). Extend/import skip rotation when `record_rotation_cache` already has the pamUser bound to the same resource.
+**Step 2 rotation:** `set_record_rotation` calls are throttled (10 per 10s pause) via [`rotation_throttle.py`](rotation_throttle.py). Schedule types are case-insensitive (`CRON` / `cron`). A user's `rotation_settings.schedule.cron` must have all 6 fields incl. seconds, with `?` in the day-of-month or day-of-week field (for example `0 30 18 * * ?` = every day at 18:30:00); a 5-field cron is rejected with an error and the schedule is skipped. `schedule.tz` (an IANA name such as `America/Chicago`) is applied: the cron is then evaluated in that time zone. Without `tz` (or with `UTC` / `Etc/UTC`) the schedule is stored in `Etc/UTC`. Extend/import skip rotation when `record_rotation_cache` already has the pamUser bound to the same resource.
 
 **Sample-data (`--sample-data` / `-s`):** [`playground.py`](playground.py) builds the same Pam* object graph as a JSON import (fresh credentials + discovery-playground services), then runs **`BatchPamImportEngine`** — same Step 1a/1b/1c/2 path as file import. Dry-run prints `simulate()` plus compose/seccomp target paths. Compose YAML generation is unchanged (post-engine).
 
@@ -1342,7 +1342,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"rotation_settings": {
 					"rotation": "iam_user",
 					"enabled": "on",
-					"schedule": {"type": "CRON", "cron": "30 18 * * *" },
+					"schedule": {"type": "CRON", "cron": "0 30 18 * * ?", "tz": "America/Chicago" },
 					"password_complexity": "32,5,5,5,5"
 				}
 			},

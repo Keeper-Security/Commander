@@ -1,6 +1,7 @@
 """PAM import/extend batch pipeline — Step 2 PAM wiring on shared deferred TunnelDAG."""
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, List, Optional
 
@@ -374,7 +375,20 @@ def _rotation_common_args(user) -> dict:
         args['on_demand'] = True
     elif schedule_type_lc == 'cron':
         if user.rotation_settings.schedule.cron:
-            args['schedule_cron_data'] = [user.rotation_settings.schedule.cron]
+            cron = user.rotation_settings.schedule.cron
+            tz = (user.rotation_settings.schedule.tz or '').strip()
+            if tz and tz.lower() not in ('utc', 'etc/utc'):
+                from ..discoveryrotation import validate_cron_expression   # lazy: circular import at module level
+                # `schedule_cron_data` always stores the schedule in Etc/UTC, so a schedule with its own time zone
+                # goes through `schedule_json_data` (stored verbatim, like the Web Vault custom cron). That path does
+                # not validate the cron, so do it here, the same way the cron path does.
+                valid, err = validate_cron_expression(cron, for_rotation=True)
+                if valid:
+                    args['schedule_json_data'] = [json.dumps({'type': 'CRON', 'cron': cron, 'tz': tz})]
+                else:
+                    logging.error(f'Invalid CRON "{cron}" Error: {err}')
+            else:
+                args['schedule_cron_data'] = [cron]
         else:
             logging.warning(
                 f'{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC}',
