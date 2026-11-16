@@ -161,7 +161,42 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
             self.assertEqual(orchestrator.map(Crosswalk()).resources, [])
         self.assertIn('Nope, Nada', logs.output[0])
 
-    def test_folder_permissions_read_once_per_boundary(self):
+    def test_nested_inheriting_folder_keeps_its_own_shared_folder(self):
+        """A secret stays in its own folder even when that folder inherits permissions."""
+        self.client.folders_by_id = {
+            1: {'id': 1, 'folderName': 'Level1', 'folderPath': '\\Level1'},
+            2: {'id': 2, 'folderName': 'Level2', 'folderPath': '\\Level1\\Level2',
+                'parentFolderId': 1, 'inheritPermissions': True},
+            3: {'id': 3, 'folderName': 'Level3', 'folderPath': '\\Level1\\Level2\\Level3',
+                'parentFolderId': 2, 'inheritPermissions': False},
+            4: {'id': 4, 'folderName': 'Level4', 'folderPath': '\\Level1\\Level2\\Level3\\Level4',
+                'parentFolderId': 3, 'inheritPermissions': True},
+            5: {'id': 5, 'folderName': 'Level5', 'folderPath': '\\Level1\\Level2\\Level3\\Level4\\Level5',
+                'parentFolderId': 4, 'inheritPermissions': True},
+        }
+        self.client.secrets = {
+            1: secret(1, 'Account1', 6007, folderId=3, autoChangeEnabled=False,
+                      items=items(machine='res1', username='user1', password='p1')),
+            2: secret(2, 'Account2', 6007, folderId=3, autoChangeEnabled=False,
+                      items=items(machine='res2', username='user2', password='p2')),
+            3: secret(3, 'Account3', 6007, folderId=5, autoChangeEnabled=False,
+                      items=items(machine='res3', username='user3', password='p3')),
+        }
+        mapped = self.orchestrator().map(Crosswalk())
+        self.assertEqual(sorted(r['folder_path'] for r in mapped.resources), [
+            'Level3/Level3 - Resources',
+            'Level3/Level3 - Resources',
+            'Level5/Level5 - Resources',
+        ])
+        self.assertEqual(sorted(user['folder_path'] for resource in mapped.resources for user in resource['users']), [
+            'Level3/Level3 - Users',
+            'Level3/Level3 - Users',
+            'Level5/Level5 - Users',
+        ])
+        self.assertEqual(sorted(mapped.folder_grants), ['Level3', 'Level5'])
+        self.assertEqual(sorted(c.args[0] for c in self.client.folder_permissions.call_args_list), [3, 5])
+
+    def test_folder_permissions_read_once_per_folder(self):
         self.client.secrets[3] = secret(3, 'root2', 6007, folderId=5, autoChangeEnabled=False,
                                         items=items(machine='web03', username='r', password='p'))
         row = {'userId': 10, 'folderAccessRoleName': 'View', 'secretAccessRoleName': 'View'}

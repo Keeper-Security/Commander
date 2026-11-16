@@ -33,15 +33,17 @@ class LauncherMapper:
             'text_session_recording': 'on' if recording and mapping.protocol != 'rdp' else 'off',
         }
         result: dict = {'options': options}
+        connection = {}
         if mapping.protocol:
-            connection = {
-                'protocol': mapping.protocol,
-                'port': mapping.port,
-                'launch_credentials': launch_title,
-                'administrative_credentials': admin_title,
-            }
+            connection['protocol'] = mapping.protocol
+            connection['port'] = mapping.port
             if mapping.protocol == 'rdp':
                 connection.update(self.rdp_options(settings, policy))
+        if launch_title:
+            connection['launch_credentials'] = launch_title
+        if admin_title:
+            connection['administrative_credentials'] = admin_title
+        if connection:
             result['connection'] = connection
         return result
 
