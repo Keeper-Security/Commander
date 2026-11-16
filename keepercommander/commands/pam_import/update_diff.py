@@ -565,17 +565,10 @@ def diff_jit(raw_jit: Any, wanted_dag: Optional[Dict[str, Any]], current_jit: Op
     return changes, warnings
 
 
-# graph comparators that are not implemented yet: a path that needs one is reported, never dropped silently
-NOT_COMPARED_YET = {
-    'ai_settings': 'KeeperAI settings (the stored blob carries audit metadata that needs its own comparison)',
-    'admin_credential': 'administrative credential (needs the UID the matcher resolved)',
-    'launch_credential': 'launch credential (needs the UID the matcher resolved)',
-    'http_credentials': 'autofill credentials (needs the UID the matcher resolved)',
-    'sftp_resource': 'SFTP resource reference (needs the UID the matcher resolved)',
-    'sftp_user': 'SFTP user reference (needs the UID the matcher resolved)',
-    'rotation': 'rotation settings (comparator not decided yet, plan open item 2)',
-    'workflow': 'workflow (comparator not decided yet, plan open item 2)',
-}
+# comparators that do not exist yet: a path that needs one is reported, never dropped silently. Empty since
+# 2026-11-16: KeeperAI, rotation, workflow and the credential references are compared by `update_compare`
+# (the orchestrator calls them with the UIDs the matcher resolved and the state `vault_reader` read).
+NOT_COMPARED_YET: Dict[str, str] = {}
 
 
 def not_compared_warnings(raw: Dict[str, Any], record_type: str, title: str = '') -> List[str]:

@@ -2,6 +2,7 @@
 import json
 import logging
 import unittest
+import unittest.mock
 
 from keepercommander.commands.pam_import import update_diff as ud
 from keepercommander.commands.pam_import import update_schema as us
@@ -336,12 +337,20 @@ class TestJit(unittest.TestCase):
 
 
 class TestNotComparedYet(unittest.TestCase):
-    def test_settings_without_a_comparator_are_reported_once_per_kind(self):
-        raw = {'type': 'pamMachine', 'title': 'M',
-               'pam_settings': {'options': {'ai_settings': {'risk_levels': {}}, 'workflow': {'a': 1}},
-                                'connection': {'protocol': 'rdp', 'administrative_credentials': 'u',
-                                               'launch_credentials': 'u'}}}
-        warnings = ud.not_compared_warnings(raw, 'pamMachine', 'M')
+    RAW = {'type': 'pamMachine', 'title': 'M',
+           'pam_settings': {'options': {'ai_settings': {'risk_levels': {}}, 'workflow': {'a': 1}},
+                            'connection': {'protocol': 'rdp', 'administrative_credentials': 'u',
+                                           'launch_credentials': 'u'}}}
+
+    def test_every_setting_has_a_comparator_now(self):
+        self.assertEqual(ud.NOT_COMPARED_YET, {})
+        self.assertEqual(ud.not_compared_warnings(self.RAW, 'pamMachine', 'M'), [])
+
+    def test_the_mechanism_reports_once_per_kind_while_a_comparator_is_missing(self):
+        registry = {'ai_settings': 'KeeperAI settings', 'workflow': 'workflow',
+                    'admin_credential': 'administrative credential', 'launch_credential': 'launch credential'}
+        with unittest.mock.patch.dict(ud.NOT_COMPARED_YET, registry):
+            warnings = ud.not_compared_warnings(self.RAW, 'pamMachine', 'M')
         text = ' | '.join(warnings)
         for word in ('KeeperAI', 'workflow', 'administrative credential', 'launch credential'):
             self.assertIn(word, text)
