@@ -62,6 +62,7 @@ from .tunnel.port_forward.tunnel_helpers import get_config_uid, get_keeper_token
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..recordv3 import RecordV3
 from ..display import bcolors
+from ..constants import RouterHostError
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2, APIRequest_pb2
@@ -1946,6 +1947,9 @@ class PAMGatewayListCommand(Command):
                 return
             else:
                 logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_url}]{bcolors.ENDC}")
+
+        except RouterHostError:
+            raise
 
         except Exception as e:
             logging.warning("Unhandled error during retrieval of the connected gateways.")

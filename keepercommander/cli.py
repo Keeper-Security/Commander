@@ -313,6 +313,7 @@ def server_command(params, args):   # type: (KeeperParams, str) -> None
             return
         params.server = server
         logging.info('Keeper server is set to %s', params.server)
+        rest_api.forget_fetched_server_key(server)
 
     host = rest_api.server_host(params.server)
     if not set_key:

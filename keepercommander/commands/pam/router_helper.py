@@ -30,19 +30,11 @@ from ._layer_b import RouterResponseError
 
 
 def get_router_url(params: KeeperParams):
-    krouter_env_var_name = "KROUTER_URL"
-    if os.getenv(krouter_env_var_name):
-        krouter_server_url = os.getenv(krouter_env_var_name)
-        logging.debug(f"Getting Krouter url from ENV Variable '{krouter_env_var_name}'='{krouter_server_url}'")
-    else:
-        from ...constants import get_router_host
-        base_server_url = params.rest_context.server_base
-        base_server = urlparse(base_server_url).netloc
-        if isinstance(base_server, bytes):
-            base_server = base_server.decode('utf-8')
-        krouter_server_url = 'https://' + get_router_host(base_server)
-
-    return krouter_server_url
+    from ...constants import get_router_base
+    base_server = urlparse(params.rest_context.server_base).netloc
+    if isinstance(base_server, bytes):
+        base_server = base_server.decode('utf-8')
+    return get_router_base(base_server, params.config)
 
 
 def get_router_ws_url(params: KeeperParams):

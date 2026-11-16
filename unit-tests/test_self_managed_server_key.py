@@ -363,14 +363,57 @@ class TestExecuteRest(SelfManagedKeyTestCase):
 
     @patch('keepercommander.rest_api.requests.post')
     @patch('keepercommander.rest_api.requests.get')
-    def test_changed_server_key_is_fetched_again(self, mock_get, mock_post):
+    def test_changed_server_key_fails_and_shows_the_new_fingerprint(self, mock_get, mock_post):
         _, old_public_key = make_key_pair()
         mock_get.side_effect = [make_server_key_response(old_public_key),
                                 make_server_key_response(self.public_key)]
         mock_post.side_effect = [make_key_error_response(), make_success_response()]
         ctx = make_context('keeper.example.com')
+        with self.assertRaises(KeeperApiError) as cm:
+            rest_api.execute_rest(ctx, 'authentication/register_device', proto.ApiRequestPayload())
+        self.assertEqual(cm.exception.result_code, 'server_key_changed')
+        self.assertIn('The server key changed. Contact your administrator.', cm.exception.message)
+        self.assertIn(rest_api.server_key_fingerprint(self.public_key), cm.exception.message)
+        self.assertEqual(mock_post.call_count, 1)
+        # The stored key stays the old key.
+        self.assertEqual(rest_api._resolved_server_keys['keeper.example.com'].public_key, old_public_key)
+
+    @patch('keepercommander.rest_api.requests.get')
+    def test_refetch_with_a_new_key_id_returns_the_new_key(self, mock_get):
+        _, old_public_key = make_key_pair()
+        mock_get.side_effect = [make_server_key_response(old_public_key, key_id=7),
+                                make_server_key_response(self.public_key, key_id=8)]
+        ctx = make_context('keeper.example.com')
+        rest_api.get_self_managed_server_key(ctx)
+        new_key = rest_api.refetch_server_key(ctx)
+        self.assertEqual((new_key.key_id, new_key.public_key), (8, self.public_key))
+        self.assertEqual(rest_api._resolved_server_keys['keeper.example.com'].key_id, 8)
+
+    @patch('keepercommander.rest_api.requests.get')
+    def test_refetch_without_a_key_keeps_the_old_key(self, mock_get):
+        mock_get.side_effect = [make_server_key_response(self.public_key, key_id=7),
+                                Exception('timed out')]
+        ctx = make_context('keeper.example.com')
+        old_key = rest_api.get_self_managed_server_key(ctx)
+        self.assertIsNone(rest_api.refetch_server_key(ctx))
+        self.assertIs(rest_api._resolved_server_keys['keeper.example.com'], old_key)
+
+    @patch('keepercommander.rest_api.requests.post')
+    @patch('keepercommander.rest_api.requests.get')
+    def test_entering_the_server_again_trusts_the_new_key(self, mock_get, mock_post):
+        from keepercommander import cli
+        _, old_public_key = make_key_pair()
+        mock_get.side_effect = [make_server_key_response(old_public_key),
+                                make_server_key_response(self.public_key),
+                                make_server_key_response(self.public_key)]
+        mock_post.side_effect = [make_key_error_response(), make_success_response()]
+        ctx = make_context('keeper.example.com')
+        with self.assertRaises(KeeperApiError):
+            rest_api.execute_rest(ctx, 'authentication/register_device', proto.ApiRequestPayload())
+        params = KeeperParams()
+        params.server = 'keeper.example.com'
+        cli.server_command(params, 'keeper.example.com')
         rest_api.execute_rest(ctx, 'authentication/register_device', proto.ApiRequestPayload())
-        self.assertEqual(mock_post.call_count, 2)
         request = proto.ApiRequest()
         request.ParseFromString(mock_post.call_args[1]['data'])
         self.assertEqual(crypto.decrypt_ec(request.encryptedTransmissionKey, self.private_key),

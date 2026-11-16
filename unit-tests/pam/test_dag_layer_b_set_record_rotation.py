@@ -39,6 +39,7 @@ def _mock_params():
     p.config = {'server': 'krouter.test'}
     p.session_token = 'BBBBBBBB'
     p.rest_context.server_key_id = 7
+    p.rest_context.server_base = 'https://keepersecurity.com'  # real string; the Router URL code parses it
     os.environ['KROUTER_URL'] = 'https://krouter.test'
     os.environ['VERIFY_SSL'] = 'false'
     return p

@@ -62,26 +62,27 @@ class Connection(ConnectionBase):
         return record.record_key
 
     @property
+    def router_target(self):
+        return self.get_router_target(self.params.config.get("server"), self.params.config)
+
+    @property
     def hostname(self) -> str:
-        return self.get_router_host(self.params.config.get("server"))
+        target = self.router_target
+        return f'{target.host}{target.path}'
 
     @property
     def dag_server_url(self) -> str:
 
-        # Allow override of the URL. If not set, get the hostname from the config.
-        hostname = os.environ.get("KROUTER_URL", self.hostname)
-        if hostname.startswith('ws') or hostname.startswith('http'):
-            return hostname
-
-        use_ssl = value_to_boolean(os.environ.get("USE_SSL", True))
-        if self.is_ws:
-            prot_pref = 'ws'
-        else:
-            prot_pref = 'http'
-        if use_ssl is True:
+        # A scheme in KROUTER_URL decides secure or plain. Otherwise USE_SSL decides.
+        target = self.router_target
+        use_ssl = target.secure
+        if use_ssl is None:
+            use_ssl = value_to_boolean(os.environ.get("USE_SSL", True)) is True
+        prot_pref = 'ws' if self.is_ws else 'http'
+        if use_ssl:
             prot_pref += "s"
 
-        return f'{prot_pref}://{hostname}'
+        return f'{prot_pref}://{target.host}{target.path}'
 
     # deprecated
     def get_keeper_tokens(self):
