@@ -53,6 +53,25 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 - Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault. Import/extend dry-run prints the **batch plan** (creation tiers + Step 2 dispatch + `import_tail` on import) from `BatchPamImportEngine.simulate()` — no vault or DAG writes. It also runs **pre-flight checks** for problems the live run would only hit after the records exist, printed as `Dry-run preflight: ...` warnings and listed under `preflight_warnings` in the plan: an unresolved `saas_config` or `service_resources`, a `saas`, `iam_user` or `scripts_only` user nested under a machine, an `iam_user` rotation on a PAM configuration that is not AWS / Azure / GCP / Domain / Okta, a record type the tenant does not have (`pamCloudResource`, `saasConfiguration`), a `pamCloudResource` on a PAM configuration that cannot federate an IdP, KeeperAI requested on a new `pamRemoteBrowser` / `pamCloudResource` while the existing PAM configuration has `ai_threat_detection` off, and, for `extend`, an existing machine that is not linked to the configuration or has **no admin credential** while new users with a rotation are added (their rotation would fail). The extend checks read the PAM graph once (read-only).
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
 
+### `pam project update` (under development - the command is not available yet)
+
+Brings **existing** PAM records in line with the same import JSON that `import` and `extend` use. It never creates and never removes a record: a record that is in the JSON but not in the vault is an error ("run `pam project extend` first"); a record that is in the vault but not in the JSON is left alone. This section describes the rules the implementation (`update_schema.py`, `update_diff.py`) follows; it is completed when the command is added.
+
+**The JSON keys you wrote decide.** The comparison looks only at the keys that are written in the JSON item. A key you did not write is never reset to a default: a JSON without `"port"` does not change a port that is already in the vault.
+
+**`--mode merge` (default)** - the keys the JSON sets win, everything else in the record stays, including keys this version of Commander does not know. Lists are merged (custom fields are matched by type and label).
+
+**`--mode overwrite`** - the record becomes what the JSON describes. The rules, exactly:
+- **Settings object (`pamSettings`, `pamRemoteBrowserSettings`):** acted on **only when the JSON item has a `pam_settings` section**. With one, the object in the vault becomes what the import would build from it: values are set (including the defaults the import adds, such as `resizeMethod`), and keys that are not part of it are **removed**, also keys a newer Vault added. **A JSON item without `pam_settings` leaves the settings object of the vault record untouched**, in both modes: not mentioning a section is not an instruction to empty it.
+- **Custom fields:** acted on **only when the JSON item has a `custom` list**. With one, the vault's custom fields that are not in the list are removed (secret fields never). **An item without a `custom` list leaves the vault's custom fields untouched.**
+- **Known fields** the JSON does not set (for example `operating_system`, `ssl_verification`) are removed. The title, host and port, the remote-browser URL and secrets are never removed.
+- **Graph settings** (`options` flags, `jit_settings`, `ai_settings`, links, rotation, workflow): `overwrite` does not remove anything from the graph yet - which graph items it may remove is still to be decided. Written keys are compared and updated as in `merge`.
+- Never touched in either mode: the record UID, type, folder and (when the match was made by title) the title; `locked`; `service_names`; attachments.
+
+**Passwords** (password, private key, one-time-code seed) are replaced only with `--include-passwords`; by default a differing password is only counted in a warning. Omitting a password from the JSON never removes it. Passwords, secrets and notes are never printed (`<hidden>`).
+
+**No undo.** Record fields can be restored from the record history in the Web Vault; graph settings cannot be restored with a Commander command. Run with `--dry-run` first, especially before `--mode overwrite`.
+
 ### Phase 0 skeleton (not batched)
 
 Before `BatchPamImportEngine.run()`, import still runs sequentially:
