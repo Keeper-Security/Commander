@@ -13,17 +13,31 @@ from ...pam._layer_b import should_fallback_on_layer_b_error
 from keeper_secrets_manager_core.utils import url_safe_str_to_bytes
 
 
-def get_vertex_content(vertex):
-    return_content = None
+META_PATH = 'meta'
+
+
+def get_vertex_content(vertex, path=META_PATH):
+    """Content of the vertex's DATA edge for ``path`` (default: the ``meta`` edge).
+
+    ``vertex.content_as_dict`` returns the newest DATA edge of ANY path, and the TunnelDAG
+    graph is not path-aware. A resource can carry several DATA edges (``meta``,
+    ``jit_settings``, ``ai_settings``, ...), so once ``jit_settings`` or ``ai_settings`` is
+    written the old read returned that edge instead of ``meta``. ``set_resource_allowed``
+    then sent it back as the resource's meta, without a ``version``.
+    For ``meta``, a legacy edge written without a path tag is still honoured, but never an
+    edge belonging to a different path.
+    """
     if vertex is None:
-        return return_content
+        return None
     try:
-        return_content = vertex.content_as_dict
+        edge = vertex.get_data(path=path, path_aware=True)
+        if edge is None and path == META_PATH:
+            edge = vertex.get_data(path=None, path_aware=True)
+        return edge.content_as_dict if edge is not None else None
     except Exception as e:
         import logging
         logging.debug(f"Error getting vertex content: {e}")
-        return_content = None
-    return return_content
+        return None
 
 
 # Resource meta version (int). Vault uses version >= 1 to read launch credentials from ACL.

@@ -431,7 +431,11 @@ def do_command(params, command_line):
 
         # Invoke via argv list with shell=False so arguments aren't re-parsed.
         ksm_args[0] = ksm_path
-        subprocess.check_call(ksm_args, shell=False)
+        try:
+            subprocess.check_call(ksm_args, shell=False)
+        except subprocess.CalledProcessError as cpe:
+            if cpe.returncode != 2:
+                raise cpe
         return
     elif '-h' in command_line.lower():
         if command_line.lower().startswith('h ') or command_line.lower().startswith('history '):
@@ -967,6 +971,10 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
 
     # Clear the shell loop flag
     params._in_shell_loop = False
+
+    # Offer to update (install-script installations only; asks once per new version)
+    from . import updater
+    updater.prompt_for_update_on_exit(params)
 
     return error_no
 

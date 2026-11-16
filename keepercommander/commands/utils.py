@@ -53,6 +53,7 @@ from ..security_audit import needs_security_audit, update_security_audit_data
 from ..utils import password_score, master_password_score
 from ..vault import KeeperRecord
 from ..versioning import is_binary_app, is_up_to_date_version
+from .. import updater
 
 BREACHWATCH_MAX = 5
 KEEPER_API_BATCH_LIMIT = 999  # Maximum objects per pre_delete API request
@@ -203,6 +204,7 @@ def register_commands(commands):
     commands['help'] = HelpCommand()
     commands['secrets-manager'] = KSMCommand()
     commands['version'] = VersionCommand()
+    commands['update'] = UpdateCommand()
     commands['keep-alive'] = KeepAliveCommand()
     commands['generate'] = GenerateCommand()
     commands['reset-password'] = ResetPasswordCommand()
@@ -221,7 +223,7 @@ def register_command_info(aliases, command_info):
     aliases['secrets'] = 'secrets-manager'
     aliases['ssd'] = 'sync-security-data'
     for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
-              version_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
+              version_parser, update_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
               sync_security_data_parser, delete_all_parser, loginstatus_parser, run_as_parser]:
         command_info[p.prog] = p.description
 
@@ -347,6 +349,12 @@ help_parser.exit = suppress_exit
 
 version_parser = argparse.ArgumentParser(prog='version', description='Displays version of the installed Commander')
 version_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='verbose output')
+
+update_parser = argparse.ArgumentParser(prog='update', description='Check for a newer Commander and install it')
+update_parser.add_argument('--check', dest='check_only', action='store_true', help='only report whether a newer version is available')
+update_parser.add_argument('-y', '--yes', dest='yes', action='store_true', help='do not ask for confirmation')
+update_parser.error = raise_parse_exception
+update_parser.exit = suppress_exit
 version_parser.add_argument('-p', '--packages', action='store_true', help='Show installed Python packages')
 version_parser.error = raise_parse_exception
 version_parser.exit = suppress_exit
@@ -1650,6 +1658,53 @@ class VersionCommand(Command):
                   % (latest_version, version_details.get('new_version_download_url')))
         if is_binary_app():
             print("Installation path: {0} ".format(sys._MEIPASS))
+
+
+class UpdateCommand(Command):
+    def get_parser(self):
+        return update_parser
+
+    def is_authorised(self):
+        return False
+
+    def execute(self, params, **kwargs):
+        method = updater.detect_install_method()
+        info = updater.get_install_info()
+        proxies = params.rest_context.proxies
+
+        if not info:
+            # Not installed with the install script: show how to update this kind of installation.
+            details = is_up_to_date_version(params)
+            latest = details.get('current_github_version')
+            if details.get('is_up_to_date') is False and latest:
+                print('Keeper Commander {0} is available (you have {1}).'.format(latest, __version__))
+            elif details.get('is_up_to_date') is None and not latest:
+                print('Cannot check for updates (offline?). You have {0}.'.format(__version__))
+            else:
+                print('Keeper Commander {0} is up to date.'.format(__version__))
+            print('Installed via {0}. {1}'.format(updater.METHOD_NAMES.get(method, method),
+                                                  updater.get_update_instructions(method)))
+            return
+
+        try:
+            meta = updater.get_latest(info, proxies)
+            latest = meta['version']
+            if not updater.is_newer(latest):
+                print('Keeper Commander {0} is up to date.'.format(__version__))
+                return
+            print('Keeper Commander {0} is available (you have {1}).'.format(latest, __version__))
+            if kwargs.get('check_only'):
+                print("Run 'update' to install it.")
+                return
+            if not kwargs.get('yes'):
+                answer = input('Update now? [y/N]: ').strip().lower()
+                if answer not in ('y', 'yes'):
+                    return
+            updater.perform_update(info, meta=meta, proxies=proxies)
+        except updater.UpdateError as e:
+            raise CommandError('update', str(e))
+        except (EOFError, KeyboardInterrupt):
+            print('')
 
 
 class KeepAliveCommand(Command):
