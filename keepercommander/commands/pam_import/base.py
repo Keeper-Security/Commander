@@ -490,10 +490,11 @@ def quartz_named_dow_to_numbers(cron):
     parts = str(cron or '').split()
     if len(parts) != 6:
         return cron
-    tokens = [token.strip().upper()[:3] for token in parts[5].split(',') if token.strip()]
-    if not tokens or any(token not in CRON_WEEKDAY_NUMBERS for token in tokens):
+    tokens = [token.strip() for token in parts[5].split(',') if token.strip()]
+    tokens_upper = [t.upper() for t in tokens]
+    if not tokens or any(t[:3] not in CRON_WEEKDAY_NUMBERS or len(t) != 3 or t != t.upper() for t, tu in zip(tokens, tokens_upper)):
         return cron
-    parts[5] = ','.join(CRON_WEEKDAY_NUMBERS[token] for token in tokens)
+    parts[5] = ','.join(CRON_WEEKDAY_NUMBERS[tu] for tu in tokens_upper)
     return ' '.join(parts)
 
 
@@ -522,11 +523,13 @@ def quartz_cron_to_keeper_schedule(cron):
         interval = _step(dom)
         if interval:
             return {'type': 'DAILY', 'utcTime': utc_time, 'intervalCount': interval, 'tz': 'Etc/UTC'}
-    if dom in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and month == CRON_ANY_VALUE and dow in CRON_WEEKDAYS:
-        return {
-            'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': CRON_WEEKDAYS[dow],
-            'intervalCount': 1, 'tz': 'Etc/UTC',
-        }
+    if dom in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and month == CRON_ANY_VALUE:
+        dow_num_to_name = {'1': 'SUNDAY', '2': 'MONDAY', '3': 'TUESDAY', '4': 'WEDNESDAY', '5': 'THURSDAY', '6': 'FRIDAY', '7': 'SATURDAY'}
+        if dow in dow_num_to_name:
+            return {
+                'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': dow_num_to_name[dow],
+                'intervalCount': 1, 'tz': 'Etc/UTC',
+            }
     if dow in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and dom.isdigit():
         interval = _step(month)
         day = int(dom)
