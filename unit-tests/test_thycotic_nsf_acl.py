@@ -3,111 +3,15 @@
 
 import unittest
 from keepercommander.importer.thycotic.nsf_acl import (
-    thycotic_roles_to_nsf_role,
     thycotic_secret_role_to_nsf_role,
-    is_lossy_folder_secret_pair,
     diff_secret_acl,
     nsf_record_shares_for_secret_acl,
     parse_secret_inherit_permissions,
     secret_acl_differs_from_folder_rows,
+    thycotic_folder_role_to_nsf_role,
+    folder_roles_by_email,
+    record_roles_by_email,
 )
-
-
-class TestThycoticNsfAclRoleMappings(unittest.TestCase):
-    """Test role mappings from Delinea to NSF."""
-
-    def test_folder_owner_secret_owner(self):
-        """Owner folder + Owner secret → full-manager."""
-        role = thycotic_roles_to_nsf_role('Owner', 'Owner')
-        self.assertEqual(role, 'full-manager')
-
-    def test_folder_owner_secret_edit(self):
-        """Owner folder + Edit secret → full-manager."""
-        role = thycotic_roles_to_nsf_role('Owner', 'Edit')
-        self.assertEqual(role, 'full-manager')
-
-    def test_folder_edit_secret_owner(self):
-        """Edit folder + Owner secret → content-manager."""
-        role = thycotic_roles_to_nsf_role('Edit', 'Owner')
-        self.assertEqual(role, 'content-manager')
-
-    def test_folder_edit_secret_edit(self):
-        """Edit folder + Edit secret → content-manager."""
-        role = thycotic_roles_to_nsf_role('Edit', 'Edit')
-        self.assertEqual(role, 'content-manager')
-
-    def test_folder_add_secret_secret_owner(self):
-        """Add Secret folder + Owner secret → content-manager."""
-        role = thycotic_roles_to_nsf_role('Add Secret', 'Owner')
-        self.assertEqual(role, 'content-manager')
-
-    def test_folder_owner_secret_view_lossy(self):
-        """Owner folder + View secret → viewer (lossy)."""
-        role = thycotic_roles_to_nsf_role('Owner', 'View')
-        self.assertEqual(role, 'viewer')
-
-    def test_folder_edit_secret_view_lossy(self):
-        """Edit folder + View secret → viewer (lossy)."""
-        role = thycotic_roles_to_nsf_role('Edit', 'View')
-        self.assertEqual(role, 'viewer')
-
-    def test_any_folder_secret_list(self):
-        """Any folder + List secret → viewer (List has no Keeper UI equivalent)."""
-        role = thycotic_roles_to_nsf_role('Owner', 'List')
-        self.assertEqual(role, 'viewer')
-
-        role = thycotic_roles_to_nsf_role('View', 'List')
-        self.assertEqual(role, 'viewer')
-
-        role = thycotic_roles_to_nsf_role('Edit', 'List')
-        self.assertEqual(role, 'viewer')
-
-    def test_no_secret_access(self):
-        """No secret access → None (no grant)."""
-        role = thycotic_roles_to_nsf_role('Owner', None)
-        self.assertIsNone(role)
-
-        role = thycotic_roles_to_nsf_role('Owner', '')
-        self.assertIsNone(role)
-
-    def test_case_insensitive(self):
-        """Role names should be case-insensitive."""
-        role = thycotic_roles_to_nsf_role('owner', 'owner')
-        self.assertEqual(role, 'full-manager')
-
-        role = thycotic_roles_to_nsf_role('OWNER', 'OWNER')
-        self.assertEqual(role, 'full-manager')
-
-    def test_view_folder_view_secret(self):
-        """View folder + View secret → viewer."""
-        role = thycotic_roles_to_nsf_role('View', 'View')
-        self.assertEqual(role, 'viewer')
-
-    def test_view_folder_edit_secret(self):
-        """View folder + Edit secret → content-manager."""
-        role = thycotic_roles_to_nsf_role('View', 'Edit')
-        self.assertEqual(role, 'content-manager')
-
-    def test_view_folder_owner_secret(self):
-        """View folder + Owner secret → full-manager."""
-        role = thycotic_roles_to_nsf_role('View', 'Owner')
-        self.assertEqual(role, 'full-manager')
-
-    def test_no_folder_access_with_secret(self):
-        """No folder access role but has secret role → use secret role."""
-        role = thycotic_roles_to_nsf_role(None, 'View')
-        self.assertEqual(role, 'viewer')
-
-        role = thycotic_roles_to_nsf_role('', 'Owner')
-        self.assertEqual(role, 'full-manager')
-
-    def test_no_secret_access_returns_none(self):
-        """No secret access (None or empty) → None."""
-        role = thycotic_roles_to_nsf_role('Owner', None)
-        self.assertIsNone(role)
-
-        role = thycotic_roles_to_nsf_role('Owner', '')
-        self.assertIsNone(role)
 
 
 class TestThycoticSecretRoleMappings(unittest.TestCase):
@@ -137,38 +41,6 @@ class TestThycoticSecretRoleMappings(unittest.TestCase):
         """None input → None."""
         role = thycotic_secret_role_to_nsf_role(None)
         self.assertIsNone(role)
-
-
-class TestLossyRoleDetection(unittest.TestCase):
-    """Test detection of lossy role mappings."""
-
-    def test_owner_folder_view_secret(self):
-        """Owner folder + View secret is lossy."""
-        is_lossy = is_lossy_folder_secret_pair('Owner', 'View')
-        self.assertTrue(is_lossy)
-
-    def test_edit_folder_view_secret(self):
-        """Edit folder + View secret is lossy."""
-        is_lossy = is_lossy_folder_secret_pair('Edit', 'View')
-        self.assertTrue(is_lossy)
-
-    def test_owner_folder_owner_secret(self):
-        """Owner folder + Owner secret is not lossy."""
-        is_lossy = is_lossy_folder_secret_pair('Owner', 'Owner')
-        self.assertFalse(is_lossy)
-
-    def test_view_folder_view_secret(self):
-        """View folder + View secret is not lossy."""
-        is_lossy = is_lossy_folder_secret_pair('View', 'View')
-        self.assertFalse(is_lossy)
-
-    def test_none_input(self):
-        """None input is not lossy."""
-        is_lossy = is_lossy_folder_secret_pair(None, 'View')
-        self.assertFalse(is_lossy)
-
-        is_lossy = is_lossy_folder_secret_pair('Owner', None)
-        self.assertFalse(is_lossy)
 
 
 class TestSecretAclDiff(unittest.TestCase):
@@ -229,6 +101,18 @@ class TestSecretAclDiff(unittest.TestCase):
 
 class TestSecretInheritParsing(unittest.TestCase):
 
+    def test_parse_enable_inherit_permissions_true(self):
+        self.assertTrue(parse_secret_inherit_permissions({'enableInheritPermissions': True}))
+
+    def test_parse_enable_inherit_permissions_false(self):
+        self.assertFalse(parse_secret_inherit_permissions({'enableInheritPermissions': False}))
+
+    def test_parse_enable_inherit_permissions_prefers_over_legacy(self):
+        self.assertFalse(parse_secret_inherit_permissions({
+            'enableInheritPermissions': False,
+            'inheritPermissions': True,
+        }))
+
     def test_parse_inherit_false(self):
         self.assertFalse(parse_secret_inherit_permissions({'inheritPermissions': False}))
 
@@ -250,50 +134,138 @@ class TestSecretInheritParsing(unittest.TestCase):
         self.assertFalse(secret_acl_differs_from_folder_rows(rows, rows))
 
 
-class TestSecretInheritBrokenRecordShares(unittest.TestCase):
-    """Secret inheritPermissions=false → full secret ACL as record shares."""
-    def test_broken_inherit_emits_all_secret_grants(self):
-        secret_roles = {
-            'owner@example.com': 'full-manager',
-            'priya@example.com': 'viewer',
-        }
-        folder_roles = {'owner@example.com': 'full-manager'}
-        shares = nsf_record_shares_for_secret_acl(
-            secret_roles, folder_roles, secret_inherits_folder_permissions=False)
-        self.assertEqual(len(shares), 2)
-        self.assertIn(('priya@example.com', 'viewer'), shares)
-        self.assertIn(('owner@example.com', 'full-manager'), shares)
+USERS = {
+    1: {'emailAddress': 'sarah@example.com'},
+    2: {'emailAddress': 'priya@example.com'},
+    3: {'emailAddress': 'david@example.com'},
+    4: {'emailAddress': 'clint@example.com'},
+}
+GROUPS = {
+    10: {'name': 'test_group', 'users': [3, 4]},
+}
 
-    def test_broken_inherit_excludes_keeper_import_user_only(self):
-        secret_roles = {
-            'sarah.wilson@norvaledynamics.com': 'full-manager',
-            'priya.sharma@norvaledynamics.com': 'full-manager',
-            'matteo.rossi@norvaledynamics.com': 'viewer',
-        }
-        import_user = 'sarah.wilson@norvaledynamics.com'
-        filtered = {
-            e: r for e, r in secret_roles.items()
-            if e.lower() != import_user.lower()
-        }
-        shares = nsf_record_shares_for_secret_acl(
-            filtered, {}, secret_inherits_folder_permissions=False)
-        self.assertIn(('priya.sharma@norvaledynamics.com', 'full-manager'), shares)
-        self.assertIn(('matteo.rossi@norvaledynamics.com', 'viewer'), shares)
-        self.assertFalse(any(e.lower() == import_user.lower() for e, _ in shares))
 
-    def test_inheriting_secret_still_uses_deltas(self):
-        secret_roles = {'priya@example.com': 'viewer'}
-        folder_roles = {}
+class TestFolderOnlyRoleMapping(unittest.TestCase):
+    """Keeper folder role comes from the Delinea folder permission only."""
+
+    def test_folder_roles(self):
+        self.assertEqual(thycotic_folder_role_to_nsf_role('Owner'), 'full-manager')
+        self.assertEqual(thycotic_folder_role_to_nsf_role('Edit'), 'content-manager')
+        self.assertEqual(thycotic_folder_role_to_nsf_role('Add Secret'), 'content-manager')
+        self.assertEqual(thycotic_folder_role_to_nsf_role('View'), 'viewer')
+
+    def test_folder_role_case_and_empty(self):
+        self.assertEqual(thycotic_folder_role_to_nsf_role('  owner '), 'full-manager')
+        self.assertIsNone(thycotic_folder_role_to_nsf_role(None))
+        self.assertIsNone(thycotic_folder_role_to_nsf_role(''))
+
+    def test_folder_roles_ignore_secret_role(self):
+        rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'View'},
+            {'userId': 3, 'folderAccessRoleName': 'View', 'secretAccessRoleName': 'Owner'},
+        ]
+        roles = folder_roles_by_email(rows, USERS, GROUPS)
+        self.assertEqual(roles, {'priya@example.com': 'full-manager', 'david@example.com': 'viewer'})
+
+    def test_folder_group_members_and_user_row_wins(self):
+        rows = [
+            {'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+            {'userId': 4, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'},
+        ]
+        roles = folder_roles_by_email(rows, USERS, GROUPS)
+        self.assertEqual(roles, {'david@example.com': 'content-manager', 'clint@example.com': 'full-manager'})
+
+    def test_folder_group_filtered_when_team_missing(self):
+        rows = [{'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'}]
+        roles = folder_roles_by_email(rows, USERS, GROUPS, group_filter=lambda g: False)
+        self.assertEqual(roles, {})
+
+
+class TestRecordRolesAndShares(unittest.TestCase):
+    """Record role comes from the Delinea secret permission; shares only on differences."""
+
+    def test_record_roles_from_secret_role(self):
+        rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Add Secret', 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'secretAccessRoleName': 'List'},
+        ]
+        roles = record_roles_by_email(rows, USERS, GROUPS)
+        self.assertEqual(roles, {'priya@example.com': 'full-manager', 'david@example.com': 'viewer'})
+
+    def test_inherit_on_folder_owner_secret_view_gets_viewer_share(self):
+        rows = [{'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'View'}]
         shares = nsf_record_shares_for_secret_acl(
-            secret_roles, folder_roles, secret_inherits_folder_permissions=True)
+            record_roles_by_email(rows, USERS, GROUPS), folder_roles_by_email(rows, USERS, GROUPS))
         self.assertEqual(shares, [('priya@example.com', 'viewer')])
 
-    def test_inheriting_secret_no_delta_when_roles_match(self):
-        secret_roles = {'user@example.com': 'viewer'}
-        folder_roles = {'user@example.com': 'viewer'}
+    def test_inherit_on_folder_view_secret_owner_gets_full_manager_share(self):
+        rows = [{'userId': 2, 'folderAccessRoleName': 'View', 'secretAccessRoleName': 'Owner'}]
         shares = nsf_record_shares_for_secret_acl(
-            secret_roles, folder_roles, secret_inherits_folder_permissions=True)
+            record_roles_by_email(rows, USERS, GROUPS), folder_roles_by_email(rows, USERS, GROUPS))
+        self.assertEqual(shares, [('priya@example.com', 'full-manager')])
+
+    def test_inherit_on_matching_roles_no_share(self):
+        rows = [{'userId': 2, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'}]
+        shares = nsf_record_shares_for_secret_acl(
+            record_roles_by_email(rows, USERS, GROUPS), folder_roles_by_email(rows, USERS, GROUPS))
         self.assertEqual(shares, [])
+
+    def test_inherit_off_uses_secret_rows(self):
+        folder_rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+            {'userId': 3, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+        ]
+        secret_rows = [
+            {'userId': 2, 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'secretAccessRoleName': 'Edit'},
+        ]
+        shares = nsf_record_shares_for_secret_acl(
+            record_roles_by_email(secret_rows, USERS, GROUPS),
+            folder_roles_by_email(folder_rows, USERS, GROUPS))
+        self.assertEqual(shares, [('priya@example.com', 'full-manager')])
+
+    def test_user_not_on_folder_gets_share(self):
+        folder_rows = [{'userId': 3, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'List'}]
+        secret_rows = [{'userId': 2, 'secretAccessRoleName': 'Owner'}]
+        shares = nsf_record_shares_for_secret_acl(
+            record_roles_by_email(secret_rows, USERS, GROUPS),
+            folder_roles_by_email(folder_rows, USERS, GROUPS))
+        self.assertEqual(shares, [('priya@example.com', 'full-manager')])
+
+    def test_root_secret_shares_everyone(self):
+        secret_rows = [
+            {'userId': 2, 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'secretAccessRoleName': 'View'},
+        ]
+        shares = nsf_record_shares_for_secret_acl(record_roles_by_email(secret_rows, USERS, GROUPS), {})
+        self.assertEqual(sorted(shares), [('david@example.com', 'viewer'), ('priya@example.com', 'full-manager')])
+
+    def test_group_member_covered_by_team_no_duplicate(self):
+        rows = [{'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'}]
+        shares = nsf_record_shares_for_secret_acl(
+            record_roles_by_email(rows, USERS, GROUPS), folder_roles_by_email(rows, USERS, GROUPS))
+        self.assertEqual(shares, [])
+
+    def test_effective_folder_rows_walks_to_ancestor(self):
+        from keepercommander.importer.thycotic.thycotic import ThycoticImporter
+        parent_rows = [{'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'}]
+        sub_rows = [{'userId': 3, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'List'}]
+        folders = {
+            1: {'id': 1, 'inheritPermissions': True, 'parentFolderId': None},
+            2: {'id': 2, 'inheritPermissions': False, 'parentFolderId': 1, 'permissions': parent_rows},
+            3: {'id': 3, 'inheritPermissions': True, 'parentFolderId': 2},
+            4: {'id': 4, 'inheritPermissions': False, 'parentFolderId': 3, 'permissions': sub_rows},
+        }
+        self.assertIs(ThycoticImporter._effective_folder_rows(folders, 3), parent_rows)
+        self.assertIs(ThycoticImporter._effective_folder_rows(folders, 4), sub_rows)
+        self.assertEqual(ThycoticImporter._effective_folder_rows(folders, 1), [])
+        self.assertEqual(ThycoticImporter._effective_folder_rows(folders, None), [])
+
+    def test_import_user_excluded_before_diff(self):
+        record_roles = {'sarah@example.com': 'full-manager', 'priya@example.com': 'viewer'}
+        filtered = {e: r for e, r in record_roles.items() if e != 'sarah@example.com'}
+        shares = nsf_record_shares_for_secret_acl(filtered, {})
+        self.assertEqual(shares, [('priya@example.com', 'viewer')])
 
 
 class TestSecretAclOverrides(unittest.TestCase):

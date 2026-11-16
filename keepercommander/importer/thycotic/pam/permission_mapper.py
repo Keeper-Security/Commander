@@ -9,6 +9,7 @@
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from ....nested_share_folder.permissions import resolve_role_name
+from ..nsf_acl import parse_secret_inherit_permissions
 from .models import AccessGrant, FindingLog, Principal, PrincipalKind, _positive
 from .role_mapper import (
     CLASSIC_FOLDER_FLAGS, CLASSIC_RECORD_FLAGS, RoleResolver
@@ -104,10 +105,11 @@ class PermissionMapper:
     def is_override(secret: dict, secret_rows: List[dict], folder_rows: List[dict]) -> bool:
         """True when the secret's grants differ from its folder's.
 
-        ``inheritPermissions`` is unreliable on some Secret Server versions, so
-        compare the (principal, secretAccessRoleName) sets as well.
+        Prefer ``enableInheritPermissions`` from the secret detail API; also
+        compare the (principal, secretAccessRoleName) sets when the flag is
+        missing or unreliable.
         """
-        if isinstance(secret, dict) and secret.get('inheritPermissions') is False:
+        if isinstance(secret, dict) and not parse_secret_inherit_permissions(secret):
             return True
         return _role_pairs(secret_rows) != _role_pairs(folder_rows)
 
