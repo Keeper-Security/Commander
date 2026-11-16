@@ -47,6 +47,7 @@ from .base import (
     set_sftp_uid,
     set_user_record_uid,
     quartz_cron_to_keeper_schedule,
+    quartz_named_dow_to_numbers,
 )
 from ..base import Command
 from ..ksm import KSMCommand
@@ -1749,13 +1750,16 @@ class PAMProjectImportCommand(Command):
                     tdag.link_user_to_resource(user.uid, mach.uid, belongs_to=True)
                     pam_users.append(user)
             launch_uid = get_launch_credential(mach, True)
+            if not admin_uid:
+                admin_uid = get_admin_credential(mach, True)
+            if not admin_uid and pam_users:
+                admin_uid = pam_users[0].uid
 
             def _apply_launch_credentials():
                 if not (launch_uid or admin_uid) or isinstance(mach, PamRemoteBrowserObject):
                     return
                 tdag.set_launch_credentials(mach.uid, launch_uid=(launch_uid or None), admin_uid=(admin_uid or None))
-                # A separate admin's local edge lacks is_admin, so the next save drops it.
-                if not admin_uid or admin_uid == launch_uid:
+                if not admin_uid:
                     return
                 resource_vertex = tdag.linking_dag.get_vertex(mach.uid)
                 if resource_vertex is not None:
@@ -1779,7 +1783,7 @@ class PAMProjectImportCommand(Command):
                     if schedule_type_lc == "on-demand":
                         args["on_demand"] = True
                     elif schedule_type_lc == "cron":
-                        cron_expr = user.rotation_settings.schedule.cron
+                        cron_expr = quartz_named_dow_to_numbers(user.rotation_settings.schedule.cron)
                         # A raw cron leaves the vault schedule empty; send Keeper's schedule JSON.
                         keeper_schedule = quartz_cron_to_keeper_schedule(cron_expr)
                         if keeper_schedule:
@@ -1790,7 +1794,12 @@ class PAMProjectImportCommand(Command):
                             logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
                     if user.rotation_settings.password_complexity:
                         args["pwd_complexity"]=user.rotation_settings.password_complexity
-                    prc.execute(params, silent=True, **args)
+                    try:
+                        prc.execute(params, silent=True, **args)
+                    except CommandError as exc:
+                        logging.warning(
+                            'Rotation was not applied to %s: %s',
+                            getattr(user, 'title', None) or user.uid, exc)
             # Re-assert last so later meta writes cannot drop is_admin.
             _apply_launch_credentials()
         if resources: print(f"{len(resources)}/{len(resources)}\n")

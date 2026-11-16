@@ -46,6 +46,10 @@ CRON_WEEKDAYS = {
     'SUN': 'SUNDAY', 'MON': 'MONDAY', 'TUE': 'TUESDAY', 'WED': 'WEDNESDAY',
     'THU': 'THURSDAY', 'FRI': 'FRIDAY', 'SAT': 'SATURDAY',
 }
+CRON_WEEKDAY_NUMBERS = {
+    'SUN': '1', 'MON': '2', 'TUE': '3', 'WED': '4',
+    'THU': '5', 'FRI': '6', 'SAT': '7',
+}
 
 # Rotation schedule types
 SCHEDULE_TYPES = ("on-demand", "cron")
@@ -481,8 +485,21 @@ class PamAttachmentObject():
     # def to_json(self): pass  # File upload will create the JSON format
 
 
+def quartz_named_dow_to_numbers(cron):
+    """Replace Quartz weekday names with 1–7 so Keeper's rotation CRON validator accepts the field."""
+    parts = str(cron or '').split()
+    if len(parts) != 6:
+        return cron
+    tokens = [token.strip().upper()[:3] for token in parts[5].split(',') if token.strip()]
+    if not tokens or any(token not in CRON_WEEKDAY_NUMBERS for token in tokens):
+        return cron
+    parts[5] = ','.join(CRON_WEEKDAY_NUMBERS[token] for token in tokens)
+    return ' '.join(parts)
+
+
 def quartz_cron_to_keeper_schedule(cron):
     """Six-field Quartz cron to a Keeper ``DAILY`` / ``WEEKLY`` / ``MONTHLY_BY_DAY`` schedule, else ``None``."""
+    cron = quartz_named_dow_to_numbers(cron)
     parts = str(cron or '').split()
     if len(parts) != 6:
         return None
@@ -2263,6 +2280,9 @@ class BaseConnectionSettings:
         self.launch_credentials = launch_credentials  # title or login of pamUser for launch
         self.launchRecordUid = None  # resolved from launch_credentials
 
+    def to_record_dict(self):
+        return {}
+
     @classmethod
     def load(cls, data: Union[str, dict]):
         obj = cls()
@@ -3360,6 +3380,8 @@ class PamSettingsFieldData:
                     pr = getattr(con, "protocol", "")
                     if isinstance(pr, ConnectionProtocol) and pr.value.lower() == proto:  # pylint: disable=E1101
                         return con.load(cdata)
+            if cdata.get("administrative_credentials") or cdata.get("launch_credentials"):
+                return BaseConnectionSettings.load(cdata)
             logging.warning(f"""Connection skipped: unknown protocol "{str(proto)[:24]}" """)
         return None
 
