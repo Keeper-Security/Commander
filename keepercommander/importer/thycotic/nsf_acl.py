@@ -26,13 +26,15 @@ def thycotic_folder_role_to_nsf_role(folder_access_role_name):
     """Map a Delinea folder access role (folder permission only) to an NSF folder role."""
     if not folder_access_role_name:
         return None
-    return FOLDER_ROLE_MAP.get(folder_access_role_name.strip().lower(), 'viewer')
+    return FOLDER_ROLE_MAP.get(folder_access_role_name.strip().lower())
 
 
 def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=None,
                     old_domain=None, new_domain=None):
     # type: (List[Dict], Any, Dict[int, Dict], Dict[int, Dict], Any, Optional[str], Optional[str]) -> Dict[str, str]
     from ..importer import replace_email_domain
+
+    ROLE_WEIGHT = {'full-manager': 3, 'content-manager': 2, 'viewer': 1}
 
     users_by_id = users_by_id or {}
     groups_by_id = groups_by_id or {}
@@ -47,7 +49,9 @@ def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=
         if user_id > 0:
             email = (users_by_id.get(user_id) or {}).get('emailAddress')
             if email:
-                user_roles[replace_email_domain(email, old_domain, new_domain)] = role
+                email_normalized = replace_email_domain(email, old_domain, new_domain).lower()
+                if email_normalized not in user_roles or ROLE_WEIGHT.get(role, 0) > ROLE_WEIGHT.get(user_roles[email_normalized], 0):
+                    user_roles[email_normalized] = role
         elif group_id > 0 and group_id in groups_by_id:
             group = groups_by_id[group_id]
             if group_filter is not None and not group_filter(group):
@@ -55,7 +59,9 @@ def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=
             for member_id in group.get('users', []) or []:
                 email = (users_by_id.get(member_id) or {}).get('emailAddress')
                 if email:
-                    group_roles[replace_email_domain(email, old_domain, new_domain)] = role
+                    email_normalized = replace_email_domain(email, old_domain, new_domain).lower()
+                    if email_normalized not in group_roles or ROLE_WEIGHT.get(role, 0) > ROLE_WEIGHT.get(group_roles[email_normalized], 0):
+                        group_roles[email_normalized] = role
     # A direct user row wins over a role inherited through a group.
     group_roles.update(user_roles)
     return group_roles
