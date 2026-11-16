@@ -2285,7 +2285,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             seen.add(folder_id)
             folder = folders[folder_id]
             permissions = folder.get('permissions')
-            if folder.get('inheritPermissions') is False and isinstance(permissions, list) and permissions:
+            if folder.get('inheritPermissions') is False and isinstance(permissions, list):
                 return permissions
             folder_id = folder.get('parentFolderId')
         return []

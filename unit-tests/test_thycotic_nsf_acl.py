@@ -42,6 +42,25 @@ class TestThycoticSecretRoleMappings(unittest.TestCase):
         role = thycotic_secret_role_to_nsf_role(None)
         self.assertIsNone(role)
 
+    def test_unrecognized_folder_role_returns_none(self):
+        """Unrecognized folder role should return None, not default."""
+        role = thycotic_folder_role_to_nsf_role('UnknownRole')
+        self.assertIsNone(role)
+
+    def test_unrecognized_secret_role_returns_none(self):
+        """Unrecognized secret role should return None, not default."""
+        role = thycotic_secret_role_to_nsf_role('UnknownRole')
+        self.assertIsNone(role)
+
+    def test_folder_role_case_insensitive(self):
+        """Folder role mapping is case-insensitive."""
+        role1 = thycotic_folder_role_to_nsf_role('OWNER')
+        role2 = thycotic_folder_role_to_nsf_role('owner')
+        role3 = thycotic_folder_role_to_nsf_role('Owner')
+        self.assertEqual(role1, 'full-manager')
+        self.assertEqual(role2, 'full-manager')
+        self.assertEqual(role3, 'full-manager')
+
 
 class TestSecretAclDiff(unittest.TestCase):
     """Test ACL diffing for secret-only overrides."""
@@ -143,6 +162,70 @@ USERS = {
 GROUPS = {
     10: {'name': 'test_group', 'users': [3, 4]},
 }
+
+
+class TestEmailNormalization(unittest.TestCase):
+    """Test email normalization and role weight handling."""
+
+    def test_email_normalization_case_insensitive(self):
+        """Email addresses should be normalized to lowercase."""
+        perm_rows = [
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Owner'},
+        ]
+        roles = folder_roles_by_email(perm_rows, USERS, {})
+        # sarah@example.com should be stored as lowercase
+        self.assertIn('sarah@example.com', roles)
+        self.assertEqual(roles['sarah@example.com'], 'full-manager')
+
+    def test_role_weight_higher_role_not_overwritten(self):
+        """Higher-priority role should not be overwritten by lower-priority."""
+        perm_rows = [
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Owner'},  # full-manager (weight 3)
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'View'},   # viewer (weight 1)
+        ]
+        roles = folder_roles_by_email(perm_rows, USERS, {})
+        # full-manager should be kept, not overwritten to viewer
+        self.assertEqual(roles.get('sarah@example.com'), 'full-manager')
+
+    def test_role_weight_lower_to_higher_upgrade(self):
+        """Lower-priority role should be upgraded to higher-priority."""
+        perm_rows = [
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'View'},   # viewer (weight 1)
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Owner'},  # full-manager (weight 3)
+        ]
+        roles = folder_roles_by_email(perm_rows, USERS, {})
+        # Should upgrade to full-manager
+        self.assertEqual(roles.get('sarah@example.com'), 'full-manager')
+
+    def test_role_weight_edit_not_overwritten_by_view(self):
+        """Edit (content-manager) should not be overwritten by View (viewer)."""
+        perm_rows = [
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Edit'},   # content-manager
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'View'},   # viewer
+        ]
+        roles = folder_roles_by_email(perm_rows, USERS, {})
+        self.assertEqual(roles.get('sarah@example.com'), 'content-manager')
+
+    def test_role_weight_owner_not_overwritten_by_edit(self):
+        """Owner (full-manager) should not be overwritten by Edit (content-manager)."""
+        perm_rows = [
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Owner'},  # full-manager
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Edit'},   # content-manager
+        ]
+        roles = folder_roles_by_email(perm_rows, USERS, {})
+        self.assertEqual(roles.get('sarah@example.com'), 'full-manager')
+
+    def test_role_weight_multiple_users_correct_roles(self):
+        """Different users should have their own correct roles."""
+        perm_rows = [
+            {'userId': 1, 'groupId': 0, 'folderAccessRoleName': 'Owner'},   # sarah: full-manager
+            {'userId': 2, 'groupId': 0, 'folderAccessRoleName': 'Edit'},    # priya: content-manager
+            {'userId': 3, 'groupId': 0, 'folderAccessRoleName': 'View'},    # david: viewer
+        ]
+        roles = folder_roles_by_email(perm_rows, USERS, {})
+        self.assertEqual(roles.get('sarah@example.com'), 'full-manager')
+        self.assertEqual(roles.get('priya@example.com'), 'content-manager')
+        self.assertEqual(roles.get('david@example.com'), 'viewer')
 
 
 class TestFolderOnlyRoleMapping(unittest.TestCase):
