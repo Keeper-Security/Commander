@@ -225,7 +225,8 @@ ksm_parser.add_argument('--include-data-key', dest='include_data_key', action='s
                         help='Also store the user data key in the federated client config '
                              '(required for Commander Service Mode login)')
 ksm_parser.add_argument('--config-file', dest='config_file', action='store',
-                        help='File to save the federated client config to')
+                        help='File to save the federated client config to, default ksm-config.json, '
+                             'or federated-config.json for --access-type vault-session')
 # Application sharing options
 ksm_parser.add_argument('--email', action='store', type=str, dest='email', help='Email of user to grant / remove application access to / from')
 # Disable sharing apps w/ admin permissions for now
@@ -2500,7 +2501,9 @@ class KSMCommand(Command):
                                 'The client will be able to read records, but not create them.')
 
         if not config_file:
-            config_file = 'ksm-config.' + {'b64': 'b64', 'k8s': 'yaml'}.get(config_init, 'json')
+            # a vault-session config is for Commander, not for the KSM SDK
+            config_file = (('federated-config.' if vault_session else 'federated-ksm-config.')
+                           + {'b64': 'b64', 'k8s': 'yaml'}.get(config_init, 'json'))
         config_file = os.path.abspath(os.path.expanduser(config_file))
         if os.path.exists(config_file) and not force:
             raise Exception(f'{config_file} already exists. Use --force to overwrite it')
