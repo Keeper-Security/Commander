@@ -52,7 +52,7 @@ class RotationMapper:
           * complexity    template password field ``passwordRequirementId`` via
                           ``complexity_from_requirement``
           * site          ``secret.siteId`` vs ``generalItems.siteId``, named from ``client.sites()``
-          * admin secret  ``secret_rpc.privilegedAccountSecretId`` vs ``rpcItems.privilegedSecretId``
+          * admin secret  ``rpc-script-secrets.privilegedAccountSecretId``
 
         State: UNSUPPORTED when the changer is unmapped or its mapping has no
         ``rotation``; otherwise ENABLED / DISABLED from auto change. ``source``
@@ -106,9 +106,11 @@ class RotationMapper:
         if isinstance(site, dict):
             site_name = str(site.get('siteName') or site.get('name') or '')
 
+        secret_admin = _positive(rpc_script_secrets.get('privilegedAccountSecretId'))
+        if secret_admin is None:
+            secret_admin = _positive(rpc.get('privilegedAccountSecretId'))
         admin_raw, _source = SecretPolicyResolver.effective(
-            _positive(rpc.get('privilegedAccountSecretId')),
-            rpc_items.get('privilegedSecretId'))
+            secret_admin, rpc_items.get('privilegedSecretId'))
         admin_secret_id = _positive(admin_raw)
 
         return RotationPolicy(

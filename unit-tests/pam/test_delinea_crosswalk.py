@@ -134,6 +134,41 @@ class TestProjectConfigUids(unittest.TestCase):
             self.assertEqual(delinea_access.project_config_uids(mock.Mock(), 'Proj'), {'a', 'b'})
 
 
+class TestPrivilegedAccount(unittest.TestCase):
+    def resolve(self, rpc, script=None, policy=None):
+        client = mock.Mock()
+        client.secret_rpc.return_value = rpc
+        client.rpc_script_secrets.return_value = script
+        client.secret_template.return_value = None
+        client.password_type.return_value = None
+        client.sites.return_value = {}
+        resolver = mock.Mock(spec=SecretPolicyResolver)
+        resolver.policy_for.return_value = policy
+        found = RotationMapper(client, resolver, Crosswalk(), FindingLog()).resolve(
+            secret(4, 'acct', folderId=5), None)
+        return found, client
+
+    def test_admin_id_comes_from_rpc_script_secrets(self):
+        rpc = {'passwordTypeId': 9, 'passwordTypeName': 'Unix Account (SSH)', 'autoChangeEnabled': True}
+        found, client = self.resolve(rpc, {'privilegedAccountSecretId': 20})
+        self.assertEqual(found.admin_secret_id, 20)
+        client.rpc_script_secrets.assert_called_once_with(4)
+
+    def test_admin_id_is_read_from_rpc_when_a_policy_does_not_set_one(self):
+        rpc = {'passwordTypeId': 9, 'passwordTypeName': 'Unix Account (SSH)', 'autoChangeEnabled': True,
+               'privilegedAccountSecretId': '20'}
+        policy = {'rpcItems': {'privilegedSecretId': {'policyApplyType': 'NotSet', 'value': None}}}
+        found, client = self.resolve(rpc, {'privilegedAccountSecretId': '99'}, policy)
+        self.assertEqual(found.admin_secret_id, 20)
+        client.rpc_script_secrets.assert_not_called()
+
+    def test_enforced_policy_privileged_id_wins(self):
+        rpc = {'passwordTypeId': 9, 'passwordTypeName': 'Unix Account (SSH)'}
+        policy = {'rpcItems': {'privilegedSecretId': {'policyApplyType': 'Enforced', 'value': 30}}}
+        found, _client = self.resolve(rpc, {'privilegedAccountSecretId': 20}, policy)
+        self.assertEqual(found.admin_secret_id, 30)
+
+
 class TestUnmappedSchedule(unittest.TestCase):
     def test_schedule_type_without_cron_is_a_finding(self):
         client = mock.Mock()
