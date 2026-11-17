@@ -33,6 +33,10 @@ def _prepare_command_request():
     if validation_error:
         return None, [], validation_error
 
+    filedata_error = RequestValidator.validate_pam_filedata_paths(request.json, command)
+    if filedata_error:
+        return None, [], (jsonify({"status": "error", "error": filedata_error}), 403)
+
     processed_command, temp_files = RequestValidator.process_file_data(request.json, command)
     return processed_command, temp_files, None
 
