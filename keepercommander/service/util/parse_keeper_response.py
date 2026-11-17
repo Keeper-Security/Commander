@@ -950,9 +950,31 @@ class KeeperResponseParser:
             "command": base_command,
             "data": None
         }
+        is_saas_config_command = command.lower().startswith("pam action saas config")
+
+        def error_message(value: Any) -> str:
+            """Convert common JSON error shapes into a readable message."""
+            if isinstance(value, dict):
+                for key in ("message", "detail", "error"):
+                    if key in value:
+                        return error_message(value[key])
+                return json.dumps(value, ensure_ascii=False)
+            if isinstance(value, list):
+                messages = [error_message(item) for item in value]
+                return "\n".join(message for message in messages if message)
+            if value is None:
+                return ""
+            return KeeperResponseParser._clean_ansi_codes(str(value)).strip()
 
         try:
             parsed_data = json.loads(response)
+            # SaaS config error responses are emitted as {"error": ...}; expose
+            # them through the service's standard top-level error field.
+            if is_saas_config_command and isinstance(parsed_data, dict) and "error" in parsed_data:
+                result["status"] = "error"
+                result["error"] = error_message(parsed_data["error"]) or "SaaS configuration command failed"
+                result.pop("data", None)
+                return result
             result["data"] = parsed_data
         
         except TypeError:
@@ -960,7 +982,15 @@ class KeeperResponseParser:
             
         except json.JSONDecodeError:
             result["status"] = "error"
-            result["error"] = "Invalid JSON response"
+            if is_saas_config_command:
+                # Keep diagnostics from failure paths that still print plain text.
+                result["error"] = (
+                    KeeperResponseParser._clean_ansi_codes(response).strip()
+                    or "Invalid JSON response"
+                )
+                result.pop("data", None)
+            else:
+                result["error"] = "Invalid JSON response"
             
         except Exception as e:
             result["status"] = "error"
