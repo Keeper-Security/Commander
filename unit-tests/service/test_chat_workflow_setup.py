@@ -1,6 +1,7 @@
 import unittest
 from unittest import mock
 
+from keepercommander.service.commands.integrations.gchat_app_setup import GChatAppSetupCommand
 from keepercommander.service.commands.integrations.slack_app_setup import SlackAppSetupCommand
 from keepercommander.service.commands.integrations.teams_app_setup import TeamsAppSetupCommand
 from keepercommander.service.docker import (
@@ -80,21 +81,30 @@ class TestChatWorkflowSetup(unittest.TestCase):
         self.assertEqual(fields[WorkflowApprovalConstants.FIELD_POLLING_INTERVAL], '60')
 
     def test_pam_command_is_only_allowed_when_enabled(self):
-        for command in (SlackAppSetupCommand(), TeamsAppSetupCommand()):
+        for command in (
+            SlackAppSetupCommand(),
+            TeamsAppSetupCommand(),
+            GChatAppSetupCommand(),
+        ):
             with self.subTest(integration=command.get_integration_name()):
+                self.assertIn('whoami', command.get_service_commands().split(','))
                 self.assertNotIn('pam', command.get_allowed_service_commands().split(','))
                 self.assertIn('pam', command.get_allowed_service_commands(True).split(','))
+                self.assertIn(
+                    'whoami',
+                    command.get_allowed_service_commands(True).split(','),
+                )
                 self.assertNotIn(
                     'pam',
                     command.sanitize_service_commands('pam,search').split(','),
                 )
-                self.assertIn(
-                    'pam',
-                    command.sanitize_service_commands(
-                        'search',
-                        workflow_approval_enabled=True,
-                    ).split(','),
+                sanitized = command.sanitize_service_commands(
+                    'whoami,pam,search,malicious-command',
+                    workflow_approval_enabled=True,
                 )
+                self.assertIn('whoami', sanitized.split(','))
+                self.assertIn('pam', sanitized.split(','))
+                self.assertNotIn('malicious-command', sanitized.split(','))
 
 
 if __name__ == '__main__':

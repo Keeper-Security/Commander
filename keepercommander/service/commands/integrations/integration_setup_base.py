@@ -114,7 +114,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     def get_service_commands(self) -> str:
         commands = (
-            'search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,'
+            'whoami,search,share-record,nsf-share-record,share-folder,nsf-share-folder,share-report,'
             'record-add,nsf-record-add,one-time-share,epm,pedm,device-approve,get,tree,server,'
             'sync-down,list-sf,list-team'
         )
