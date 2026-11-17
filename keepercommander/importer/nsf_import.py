@@ -495,7 +495,7 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
     default_role = classic_perms_to_nsf_role(
         manage_users, manage_records, can_edit, can_share)
 
-    granted = 0
+    nsf_folders = []
     for fol in folders or []:
         if not fol.uid or not is_nsf_folder(params, fol.uid):
             if not fol.uid and fol.path:
@@ -508,8 +508,11 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
                 fol.uid = parent
             if not fol.uid or not is_nsf_folder(params, fol.uid):
                 continue
+        nsf_folders.append(fol)
 
-        # Break inheritance if needed (e.g., from Delinea custom folder ACL)
+    # Keeper keeps parent grants that already flowed into a subfolder when its
+    # inheritance is turned off later, so every break must land before any grant.
+    for fol in nsf_folders:
         if getattr(fol, 'break_inheritance', False) is True:
             try:
                 _call_with_throttle_retry(
@@ -524,6 +527,8 @@ def apply_nsf_folder_permissions(params, folders, manage_users=False, manage_rec
                     'Failed to break inheritance on NSF folder "%s": %s',
                     fol.path or fol.uid, exc)
 
+    granted = 0
+    for fol in nsf_folders:
         folder_role = classic_perms_to_nsf_role(
             fol.manage_users if fol.manage_users is not None else manage_users,
             fol.manage_records if fol.manage_records is not None else manage_records,
@@ -618,6 +623,9 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
         if not record.nsf_record_shares:
             continue
         records_with_shares += 1
+        logging.debug(
+            '[NSF-ACL] apply: record title=%r uid=%s has %d queued nsf_record_shares',
+            record.title, record.uid, len(record.nsf_record_shares))
 
         record_uid = record.uid
         if not record_uid:
@@ -630,6 +638,9 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
             recipient = nsr.uid
             role = nsr.role
             if not recipient or not role:
+                logging.debug(
+                    '[NSF-ACL] apply: skip incomplete share on "%s" recipient=%r role=%r',
+                    record.title, recipient, role)
                 continue
             if params.user and recipient.lower() == params.user.lower():
                 logging.debug(
@@ -643,6 +654,9 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
                 logging.warning('Invalid NSF role for record "%s": "%s"', record_uid, role)
                 continue
 
+            logging.debug(
+                '[NSF-ACL] apply: prepare grant email=%s role=%s (%s) record=%r uid=%s',
+                recipient, role, role_pb, record.title, record_uid)
             all_record_shares.append({
                 'record_uid': record_uid,
                 'email': recipient,
@@ -657,10 +671,15 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
         return
 
     logging.debug(
-        'apply_nsf_record_permissions: applying %d grant(s) across import batch',
-        len(all_record_shares))
+        'apply_nsf_record_permissions: applying %d grant(s) across import batch: %s',
+        len(all_record_shares),
+        ', '.join(
+            '%s→%s on %r' % (s.get('email'), s.get('access_role_type'), s.get('record_title'))
+            for s in all_record_shares))
 
     granted = 0
+    skipped = 0
+    failed = 0
     for start in range(0, len(all_record_shares), NSF_RECORD_BATCH):
         batch = all_record_shares[start:start + NSF_RECORD_BATCH]
 
@@ -672,6 +691,9 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
                     share.get('record_uid'), share.get('access_role_type'), share.get('email'))
         else:
             try:
+                logging.debug(
+                    '[NSF-ACL] apply: calling vault/records/v3/share for %d grant(s)',
+                    len(batch))
                 results = _call_with_throttle_retry(
                     f'NSF record permission batch ({len(batch)} items)',
                     batch_create_record_shares_v3,
@@ -682,17 +704,26 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
                     if result.get('success'):
                         granted += 1
                         logging.debug(
-                            'Granted NSF record share: %s → %s on "%s" (%s)',
+                            'Granted NSF record share: %s → %s on "%s" (%s) result=%s',
                             item.get('email'), item.get('access_role_type'),
                             item.get('record_title') or item.get('record_uid'),
-                            item.get('record_uid'))
-                    elif not result.get('skipped'):
+                            item.get('record_uid'), result)
+                    elif result.get('skipped'):
+                        skipped += 1
+                        logging.warning(
+                            '[NSF-ACL] NSF record share SKIPPED for "%s" on "%s" (%s): %s',
+                            item.get('email'), item.get('record_title') or item.get('record_uid'),
+                            item.get('record_uid'), result.get('message') or result)
+                    else:
+                        failed += 1
                         logging.warning(
                             'NSF record share failed for "%s" on "%s" (%s): %s',
                             item.get('email'), item.get('record_title') or item.get('record_uid'),
-                            item.get('record_uid'), result.get('message'))
+                            item.get('record_uid'), result.get('message') or result)
             except Exception as exc:
+                failed += len(batch)
                 logging.warning('NSF record permission batch failed: %s', exc)
 
-    if granted:
-        logging.info('Granted %d NSF record permission(s)', granted)
+    logging.info(
+        'NSF record permissions: granted=%d skipped=%d failed=%d (of %d prepared)',
+        granted, skipped, failed, len(all_record_shares))
