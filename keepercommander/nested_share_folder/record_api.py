@@ -804,11 +804,23 @@ def unshare_record_v3(params, record_uid, recipient_email, skip_sync=False):
     if state == 'inherited':
         return _send_deny_inherited_request(
             params, record_uid, recipient_email, (row or {}).get('access_role_type'))
-    return _send_revoke_share_request(params, record_uid, recipient_email)
+    try:
+        return _send_revoke_share_request(params, record_uid, recipient_email)
+    except KeeperApiError as exc:
+       
+        if state is not None or _NON_EXISTING_PERMISSION_ERROR not in str(exc).casefold():
+            raise
+        logger.debug("Revoke of '%s' on '%s' rejected as non-existing; "
+                     "denying inherited access instead.", recipient_email, record_uid)
+        return _send_deny_inherited_request(
+            params, record_uid, recipient_email, (row or {}).get('access_role_type'))
+
+
+_NON_EXISTING_PERMISSION_ERROR = 'non existing permissions'
 
 
 def _get_user_access_state(params, record_uid, email):
-    """Return ``(state, row)``; state is 'direct', 'inherited', 'denied' or None.
+    """Return ``(state, row)``; state is 'direct', 'inherited', 'denied' or 'none'.
 
     Direct access wins over inherited; a denial wins over an inherited row.
     Lookup failures return ``(None, None)`` (caller falls back to a revoke).
@@ -819,11 +831,20 @@ def _get_user_access_state(params, record_uid, email):
         logger.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
         return None, None
     email_cf = email.casefold()
-    rows = [a for a in result.get('record_accesses', [])
-            if a.get('record_uid') == record_uid
-            and not a.get('owner', False)
-            and a.get('access_type') in (None, '', 'AT_USER')
-            and (a.get('accessor_name') or '').casefold() == email_cf]
+    user_rows = [a for a in result.get('record_accesses', [])
+                 if a.get('record_uid') == record_uid
+                 and not a.get('owner', False)
+                 and a.get('access_type') in (None, '', 'AT_USER')]
+    rows = [a for a in user_rows if (a.get('accessor_name') or '').casefold() == email_cf]
+    if not rows and user_rows:
+        try:
+            _, _, uid_bytes, _ = get_user_public_key(params, email)
+        except Exception as exc:
+            logger.debug("Could not resolve user UID for '%s': %s", email, exc)
+            uid_bytes = None
+        if uid_bytes:
+            user_uid = utils.base64_url_encode(uid_bytes)
+            rows = [a for a in user_rows if a.get('access_type_uid') == user_uid]
     for a in rows:
         if not a.get('inherited') and not a.get('denied_access'):
             return 'direct', a
@@ -833,7 +854,7 @@ def _get_user_access_state(params, record_uid, email):
     for a in rows:
         if a.get('inherited'):
             return 'inherited', a
-    return None, None
+    return 'none', None
 
 
 def _send_deny_inherited_request(params, record_uid, recipient_email, access_role_type=None):

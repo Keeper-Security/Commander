@@ -3080,6 +3080,72 @@ class TestNestedShareFolderRecordApi(TestCase):
 
         self.assertEqual(mock_sync_down.call_count, 1)
 
+    def _run_unshare(self, accesses=None, revoke_error=None, lookup_error=None):
+        """Run unshare_record_v3 with mocked server calls; return (result, requests)."""
+        from keepercommander.nested_share_folder.record_api import unshare_record_v3
+
+        ruid, robj = _make_record()
+        uid_bytes = utils.base64_url_decode(utils.generate_uid())
+        rows = [dict({'record_uid': ruid, 'accessor_name': 'user@example.com',
+                      'access_type': 'AT_USER', 'access_type_uid': utils.base64_url_encode(uid_bytes),
+                      'access_role_type': folder_pb2.CONTENT_MANAGER}, **a) for a in accesses or []]
+        requests = []
+
+        def communicate(params, rq, endpoint, rs_type=None):
+            requests.append(rq)
+            if rq.revokeSharingPermissions and revoke_error:
+                raise revoke_error
+            return Mock(revokedSharingStatus=[_make_sharing_status(ruid, uid_bytes)],
+                        createdSharingStatus=[_make_sharing_status(ruid, uid_bytes)])
+
+        api_mod = 'keepercommander.nested_share_folder.record_api'
+        with patch(f'{api_mod}.get_record_from_cache', return_value=robj), \
+                patch(f'{api_mod}.get_user_public_key', return_value=(Mock(), False, uid_bytes, False)), \
+                patch(f'{api_mod}.encrypt_for_recipient', return_value=b'enc-key'), \
+                patch(f'{api_mod}.get_record_accesses_v3', side_effect=lookup_error,
+                      return_value={'record_accesses': rows}), \
+                patch(f'{api_mod}.api.communicate_rest', side_effect=communicate):
+            result = unshare_record_v3(_make_params(), ruid, 'user@example.com')
+        return result, requests
+
+    def _assert_denial(self, rq, role):
+        perm = rq.createSharingPermissions[0]
+        self.assertEqual(len(rq.revokeSharingPermissions), 0)
+        self.assertEqual(perm.recordKey, b'enc-key')
+        self.assertEqual(perm.rules.accessRoleType, role)
+        self.assertTrue(perm.rules.deniedAccess)
+
+    def test_unshare_record_v3_direct_share_sends_revoke(self):
+        _, requests = self._run_unshare(accesses=[{}])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(requests[0].revokeSharingPermissions), 1)
+        self.assertEqual(len(requests[0].createSharingPermissions), 0)
+
+    def test_unshare_record_v3_inherited_access_sends_denial(self):
+        for name in ('user@example.com', ''):  # matched by email, or by UID when name is missing
+            with self.subTest(accessor_name=name):
+                _, requests = self._run_unshare(accesses=[{'inherited': True, 'accessor_name': name}])
+                self.assertEqual(len(requests), 1)
+                self._assert_denial(requests[0], folder_pb2.CONTENT_MANAGER)
+
+    def test_unshare_record_v3_already_denied_sends_nothing(self):
+        result, requests = self._run_unshare(accesses=[{'inherited': True, 'denied_access': True}])
+        self.assertTrue(result['success'])
+        self.assertEqual(requests, [])
+
+    def test_unshare_record_v3_no_access_raises_without_denial(self):
+        from keepercommander.error import KeeperApiError
+        error = KeeperApiError('bad_request', 'trying to update or revoke non existing permissions')
+        with self.assertRaises(KeeperApiError):
+            self._run_unshare(accesses=[], revoke_error=error)
+
+    def test_unshare_record_v3_lookup_failure_falls_back_to_denial(self):
+        from keepercommander.error import KeeperApiError
+        error = KeeperApiError('bad_request', 'trying to update or revoke non existing permissions')
+        _, requests = self._run_unshare(lookup_error=Exception('lookup failed'), revoke_error=error)
+        self.assertEqual(len(requests), 2)
+        self._assert_denial(requests[1], folder_pb2.VIEWER)
+
     def test_is_record_share_update_noop(self):
         from keepercommander.nested_share_folder.record_api import is_record_share_update_noop
 
