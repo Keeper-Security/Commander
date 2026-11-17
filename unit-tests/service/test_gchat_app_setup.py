@@ -4,7 +4,9 @@ import tempfile
 import unittest
 
 from keepercommander.service.commands.integrations.gchat_app_setup import GChatAppSetupCommand
-from keepercommander.service.docker import GChatConfig, GChatConstants, ApprovalsConfig
+from keepercommander.service.docker import (
+    GChatConfig, GChatConstants, ApprovalsConfig, WorkflowApprovalConstants,
+)
 
 
 def _valid_service_account(**overrides):
@@ -198,6 +200,8 @@ class TestGChatAppSetupValidation(unittest.TestCase):
             chat_command_request_folder_id='2',
             chat_command_external_share_id='3',
             chat_command_create_secret_id='4',
+            workflow_approval_enabled=True,
+            workflow_approval_polling_interval=45,
             pedm_enabled=True,
             pedm_polling_interval=60,
             device_approval_enabled=False,
@@ -219,6 +223,8 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_REQUEST_FOLDER_ID], '2')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_EXTERNAL_SHARE_ID], '3')
         self.assertEqual(fields[GChatConstants.FIELD_COMMAND_CREATE_SECRET_ID], '4')
+        self.assertEqual(fields[WorkflowApprovalConstants.FIELD_ENABLED], 'true')
+        self.assertEqual(fields[WorkflowApprovalConstants.FIELD_POLLING_INTERVAL], '45')
         self.assertEqual(fields[GChatConstants.FIELD_PEDM_ENABLED], 'true')
         self.assertEqual(fields[GChatConstants.FIELD_PEDM_POLLING_INTERVAL], '60')
         self.assertEqual(fields[GChatConstants.FIELD_DEVICE_APPROVAL_ENABLED], 'false')
@@ -250,6 +256,18 @@ class TestGChatAppSetupValidation(unittest.TestCase):
         self.assertEqual(fields['multi_channel_approvers_enabled'], 'false')
         self.assertEqual(fields['chat_approvals_space_id'], 'spaces/AAAA')
         self.assertEqual(fields['approvals_teams'], '')
+
+    def test_workflow_approval_commands_are_optional_in_allowlist(self):
+        self.assertNotIn('pam', self.cmd.get_allowed_service_commands().split(','))
+        self.assertIn('pam', self.cmd.get_allowed_service_commands(True).split(','))
+        self.assertNotIn(
+            'pam',
+            self.cmd.sanitize_service_commands('pam,search').split(','),
+        )
+        self.assertIn(
+            'pam',
+            self.cmd.sanitize_service_commands('search', workflow_approval_enabled=True).split(','),
+        )
 
 
 if __name__ == '__main__':

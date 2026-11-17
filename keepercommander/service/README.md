@@ -522,6 +522,7 @@ This automates the complete setup for Slack App integration:
 - **Phase 1**: Runs Docker setup (same as `service-docker-setup`)
 - **Phase 2**: Configures Slack App integration
   - Collects Slack tokens (App Token, Bot Token, Signing Secret)
+  - Optionally enables PAM Workflow approval and its polling interval
   - Creates Slack configuration record
   - Updates `docker-compose.yml` with Slack App service
   - Supports optional EPM and Device Approval integrations
@@ -533,6 +534,7 @@ This automates the complete setup for Slack App integration:
 - Approvals channel ID
 - Optional EPM integration
 - Optional SSO Cloud Device Approval
+- Optional PAM Workflow approval (adds `pam` to the Service Mode command list only when enabled)
 
 The command generates a complete `docker-compose.yml` with both Commander service and Slack App service configured.
 
@@ -560,6 +562,7 @@ This automates the complete setup for Google Chat App integration:
   - Collects service account JSON (Pub/Sub + Chat API worker credentials)
   - Collects Google Project ID (defaults from the service account JSON when omitted)
   - Collects Pub/Sub Topic ID, Subscription ID, Approvals Space ID, and slash command IDs
+  - Optionally enables PAM Workflow approval and its polling interval
   - Creates Google Chat configuration record
   - Updates `docker-compose.yml` with Google Chat App service
   - Supports optional EPM and Device Approval integrations
@@ -570,6 +573,7 @@ This automates the complete setup for Google Chat App integration:
 - Google Chat service account / Pub/Sub / space credentials
 - Optional EPM integration
 - Optional SSO Cloud Device Approval
+- Optional PAM Workflow approval (adds `pam` to the Service Mode command list only when enabled)
 
 The command generates a complete `docker-compose.yml` with both Commander service and Google Chat App service configured.
 
@@ -590,6 +594,8 @@ The command generates a complete `docker-compose.yml` with both Commander servic
 | `pedm_polling_interval` | text | Seconds |
 | `device_approval_enabled` | text | `true` / `false` |
 | `device_approval_polling_interval` | text | Seconds |
+| `workflow_approval_enabled` | text | `true` / `false` |
+| `workflow_approval_polling_interval` | text | Seconds |
 
 **Generated compose environment for the Google Chat service:**
 
@@ -600,6 +606,36 @@ The command generates a complete `docker-compose.yml` with both Commander servic
 | `GCHAT_RECORD` | Google Chat config record UID |
 
 Image name used in compose: `keeper/gchat-app:latest`.
+
+### Teams App Integration Setup
+
+For integrating Commander Service Mode with Microsoft Teams, run:
+
+```bash
+My Vault> teams-app-setup
+```
+
+This automates the Teams App integration setup:
+- **Phase 1**: Runs Docker setup (same as `service-docker-setup`)
+- **Phase 2**: Collects Azure AD credentials, tenant/team/channel IDs, and the bot port (default: 3978)
+- Optionally enables EPM, SSO Cloud Device Approval, and PAM Workflow approval
+- Creates the Teams config record and updates `docker-compose.yml` with the Teams App service
+
+PAM Workflow approval adds `pam` to the Service Mode command list only when enabled.
+
+**Generated compose environment for the Teams service:**
+
+| Env var | Value |
+|---------|-------|
+| `KSM_CONFIG` | Base64 KSM config |
+| `COMMANDER_RECORD` | Commander Docker config record UID |
+| `TEAMS_RECORD` | Teams config record UID |
+
+Image name used in compose: `keeper/teams-app:latest`.
+
+### PAM Workflow Pending Requests
+
+Use `pam workflow pending --format json --include-approvers` to include approvers in pending-request JSON. Team approvers include member email addresses from the enterprise directory; treat this output as sensitive directory data.
 
 ---
 

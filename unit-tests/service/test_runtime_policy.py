@@ -19,6 +19,7 @@ from keepercommander.service.commands.integrations.gchat_app_setup import GChatA
 from keepercommander.service.commands.integrations.runtime_policy import apply_runtime_command_policy
 from keepercommander.service.commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
 from keepercommander.service.commands.integrations.slack_app_setup import SlackAppSetupCommand
+from keepercommander.service.commands.integrations.teams_app_setup import TeamsAppSetupCommand
 from keepercommander.service.commands.terraform_app_setup import TerraformSetupConstants
 from keepercommander.service.decorators.min_commander_version import TERRAFORM_DOCKER_ENV, TERRAFORM_DOCKER_ENV_LEGACY
 from keepercommander.service.util.exceptions import ValidationError
@@ -59,6 +60,66 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         self.assertEqual(set(args.commands.split(',')), allowed)
         self.assertNotIn('malicious-command', args.commands.split(','))
         self.assertNotIn('rm', args.commands.split(','))
+
+    def test_chat_commands_survive_runtime_policy_when_workflow_approval_enabled(self):
+        from types import SimpleNamespace
+        from keepercommander.service.commands.integrations import runtime_policy
+
+        for integration in (
+            SlackAppSetupCommand(),
+            TeamsAppSetupCommand(),
+            GChatAppSetupCommand(),
+        ):
+            with self.subTest(integration=integration.get_integration_name()):
+                field = mock.Mock()
+                field.label = 'workflow_approval_enabled'
+                field.get_default_value.return_value = 'true'
+                record = SimpleNamespace(custom=[field])
+                args = _Args(commands='whoami,pam,search,malicious-command')
+                with mock.patch.dict(
+                    os.environ,
+                    {integration.get_record_env_key(): 'integration-record'},
+                    clear=True,
+                ), mock.patch.object(
+                    runtime_policy.vault.KeeperRecord,
+                    'load',
+                    return_value=record,
+                ):
+                    apply_runtime_command_policy(args, params=object())
+
+                self.assertIn('whoami', args.commands.split(','))
+                self.assertIn('pam', args.commands.split(','))
+                self.assertNotIn('malicious-command', args.commands.split(','))
+
+    def test_chat_pam_command_is_removed_when_workflow_approval_disabled(self):
+        from types import SimpleNamespace
+        from keepercommander.service.commands.integrations import runtime_policy
+
+        for integration in (
+            SlackAppSetupCommand(),
+            TeamsAppSetupCommand(),
+            GChatAppSetupCommand(),
+        ):
+            for value in ('false', '1', 'yes', 'y', 'on'):
+                with self.subTest(integration=integration.get_integration_name(), value=value):
+                    field = mock.Mock()
+                    field.label = 'workflow_approval_enabled'
+                    field.get_default_value.return_value = value
+                    record = SimpleNamespace(custom=[field])
+                    args = _Args(commands='whoami,pam,search')
+                    with mock.patch.dict(
+                        os.environ,
+                        {integration.get_record_env_key(): 'integration-record'},
+                        clear=True,
+                    ), mock.patch.object(
+                        runtime_policy.vault.KeeperRecord,
+                        'load',
+                        return_value=record,
+                    ):
+                        apply_runtime_command_policy(args, params=object())
+
+                    self.assertIn('whoami', args.commands.split(','))
+                    self.assertNotIn('pam', args.commands.split(','))
 
     def test_gchat_record_env_confines_to_gchat_allowlist(self):
         allowed = set(GChatAppSetupCommand().get_service_commands().split(','))
