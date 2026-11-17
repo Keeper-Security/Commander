@@ -477,6 +477,21 @@ FF_WATCH: ClientFormFactor
 LOGOUT_USER: LogoutType
 LOGOUT_TIMEOUT: LogoutType
 
+class AppClientAuthType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    APP_CLIENT_AUTH_SIGNATURE: _ClassVar[AppClientAuthType]
+    APP_CLIENT_AUTH_OAUTH: _ClassVar[AppClientAuthType]
+
+class AppClientAccessType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    APP_CLIENT_ACCESS_SECRETS_MANAGER: _ClassVar[AppClientAccessType]
+    APP_CLIENT_ACCESS_VAULT_SESSION: _ClassVar[AppClientAccessType]
+
+APP_CLIENT_AUTH_SIGNATURE: AppClientAuthType
+APP_CLIENT_AUTH_OAUTH: AppClientAuthType
+APP_CLIENT_ACCESS_SECRETS_MANAGER: AppClientAccessType
+APP_CLIENT_ACCESS_VAULT_SESSION: AppClientAccessType
+
 class QrcMessageKey(_message.Message):
     __slots__ = ("clientEcPublicKey", "mlKemEncapsulatedKey", "data", "msgVersion", "ecKeyId")
     CLIENTECPUBLICKEY_FIELD_NUMBER: _ClassVar[int]
@@ -1971,8 +1986,28 @@ class AppShare(_message.Message):
     data: bytes
     def __init__(self, secretUid: _Optional[bytes] = ..., shareType: _Optional[_Union[ApplicationShareType, str]] = ..., editable: _Optional[bool] = ..., createdOn: _Optional[int] = ..., data: _Optional[bytes] = ...) -> None: ...
 
+class OAuthClaimBinding(_message.Message):
+    __slots__ = ("issuer", "subject", "jwksUri")
+    ISSUER_FIELD_NUMBER: _ClassVar[int]
+    SUBJECT_FIELD_NUMBER: _ClassVar[int]
+    JWKSURI_FIELD_NUMBER: _ClassVar[int]
+    issuer: str
+    subject: str
+    jwksUri: str
+    def __init__(self, issuer: _Optional[str] = ..., subject: _Optional[str] = ..., jwksUri: _Optional[str] = ...) -> None: ...
+
+class UpdateAppClientAuthRequest(_message.Message):
+    __slots__ = ("appRecordUid", "clientId", "oauthBinding")
+    APPRECORDUID_FIELD_NUMBER: _ClassVar[int]
+    CLIENTID_FIELD_NUMBER: _ClassVar[int]
+    OAUTHBINDING_FIELD_NUMBER: _ClassVar[int]
+    appRecordUid: bytes
+    clientId: bytes
+    oauthBinding: OAuthClaimBinding
+    def __init__(self, appRecordUid: _Optional[bytes] = ..., clientId: _Optional[bytes] = ..., oauthBinding: _Optional[_Union[OAuthClaimBinding, _Mapping]] = ...) -> None: ...
+
 class AddAppClientRequest(_message.Message):
-    __slots__ = ("appRecordUid", "encryptedAppKey", "clientId", "lockIp", "firstAccessExpireOn", "accessExpireOn", "id", "appClientType")
+    __slots__ = ("appRecordUid", "encryptedAppKey", "clientId", "lockIp", "firstAccessExpireOn", "accessExpireOn", "id", "appClientType", "authType", "oauthBinding", "allowedAccessType")
     APPRECORDUID_FIELD_NUMBER: _ClassVar[int]
     ENCRYPTEDAPPKEY_FIELD_NUMBER: _ClassVar[int]
     CLIENTID_FIELD_NUMBER: _ClassVar[int]
@@ -1981,6 +2016,9 @@ class AddAppClientRequest(_message.Message):
     ACCESSEXPIREON_FIELD_NUMBER: _ClassVar[int]
     ID_FIELD_NUMBER: _ClassVar[int]
     APPCLIENTTYPE_FIELD_NUMBER: _ClassVar[int]
+    AUTHTYPE_FIELD_NUMBER: _ClassVar[int]
+    OAUTHBINDING_FIELD_NUMBER: _ClassVar[int]
+    ALLOWEDACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
     appRecordUid: bytes
     encryptedAppKey: bytes
     clientId: bytes
@@ -1989,7 +2027,10 @@ class AddAppClientRequest(_message.Message):
     accessExpireOn: int
     id: str
     appClientType: _enterprise_pb2.AppClientType
-    def __init__(self, appRecordUid: _Optional[bytes] = ..., encryptedAppKey: _Optional[bytes] = ..., clientId: _Optional[bytes] = ..., lockIp: _Optional[bool] = ..., firstAccessExpireOn: _Optional[int] = ..., accessExpireOn: _Optional[int] = ..., id: _Optional[str] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ...) -> None: ...
+    authType: AppClientAuthType
+    oauthBinding: OAuthClaimBinding
+    allowedAccessType: AppClientAccessType
+    def __init__(self, appRecordUid: _Optional[bytes] = ..., encryptedAppKey: _Optional[bytes] = ..., clientId: _Optional[bytes] = ..., lockIp: _Optional[bool] = ..., firstAccessExpireOn: _Optional[int] = ..., accessExpireOn: _Optional[int] = ..., id: _Optional[str] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., authType: _Optional[_Union[AppClientAuthType, str]] = ..., oauthBinding: _Optional[_Union[OAuthClaimBinding, _Mapping]] = ..., allowedAccessType: _Optional[_Union[AppClientAccessType, str]] = ...) -> None: ...
 
 class RemoveAppClientsRequest(_message.Message):
     __slots__ = ("appRecordUid", "clients")
@@ -2018,7 +2059,7 @@ class AddExternalShareRequest(_message.Message):
     def __init__(self, recordUid: _Optional[bytes] = ..., encryptedRecordKey: _Optional[bytes] = ..., clientId: _Optional[bytes] = ..., accessExpireOn: _Optional[int] = ..., id: _Optional[str] = ..., isSelfDestruct: _Optional[bool] = ..., isEditable: _Optional[bool] = ...) -> None: ...
 
 class AppClient(_message.Message):
-    __slots__ = ("id", "clientId", "createdOn", "firstAccess", "lastAccess", "publicKey", "lockIp", "ipAddress", "firstAccessExpireOn", "accessExpireOn", "appClientType", "canEdit")
+    __slots__ = ("id", "clientId", "createdOn", "firstAccess", "lastAccess", "publicKey", "lockIp", "ipAddress", "firstAccessExpireOn", "accessExpireOn", "appClientType", "canEdit", "authType", "oauthBinding", "allowedAccessType")
     ID_FIELD_NUMBER: _ClassVar[int]
     CLIENTID_FIELD_NUMBER: _ClassVar[int]
     CREATEDON_FIELD_NUMBER: _ClassVar[int]
@@ -2031,6 +2072,9 @@ class AppClient(_message.Message):
     ACCESSEXPIREON_FIELD_NUMBER: _ClassVar[int]
     APPCLIENTTYPE_FIELD_NUMBER: _ClassVar[int]
     CANEDIT_FIELD_NUMBER: _ClassVar[int]
+    AUTHTYPE_FIELD_NUMBER: _ClassVar[int]
+    OAUTHBINDING_FIELD_NUMBER: _ClassVar[int]
+    ALLOWEDACCESSTYPE_FIELD_NUMBER: _ClassVar[int]
     id: str
     clientId: bytes
     createdOn: int
@@ -2043,7 +2087,10 @@ class AppClient(_message.Message):
     accessExpireOn: int
     appClientType: _enterprise_pb2.AppClientType
     canEdit: bool
-    def __init__(self, id: _Optional[str] = ..., clientId: _Optional[bytes] = ..., createdOn: _Optional[int] = ..., firstAccess: _Optional[int] = ..., lastAccess: _Optional[int] = ..., publicKey: _Optional[bytes] = ..., lockIp: _Optional[bool] = ..., ipAddress: _Optional[str] = ..., firstAccessExpireOn: _Optional[int] = ..., accessExpireOn: _Optional[int] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., canEdit: _Optional[bool] = ...) -> None: ...
+    authType: AppClientAuthType
+    oauthBinding: OAuthClaimBinding
+    allowedAccessType: AppClientAccessType
+    def __init__(self, id: _Optional[str] = ..., clientId: _Optional[bytes] = ..., createdOn: _Optional[int] = ..., firstAccess: _Optional[int] = ..., lastAccess: _Optional[int] = ..., publicKey: _Optional[bytes] = ..., lockIp: _Optional[bool] = ..., ipAddress: _Optional[str] = ..., firstAccessExpireOn: _Optional[int] = ..., accessExpireOn: _Optional[int] = ..., appClientType: _Optional[_Union[_enterprise_pb2.AppClientType, str]] = ..., canEdit: _Optional[bool] = ..., authType: _Optional[_Union[AppClientAuthType, str]] = ..., oauthBinding: _Optional[_Union[OAuthClaimBinding, _Mapping]] = ..., allowedAccessType: _Optional[_Union[AppClientAccessType, str]] = ...) -> None: ...
 
 class GetAppInfoRequest(_message.Message):
     __slots__ = ("appRecordUid",)
