@@ -796,7 +796,64 @@ def unshare_record_v3(params, record_uid, recipient_email, skip_sync=False):
     if not rec:
         raise ValueError(f"Record {record_uid} not found in cache")
 
+    state, row = _get_user_access_state(params, record_uid, recipient_email)
+    if state == 'denied':
+        return {'results': [{'record_uid': record_uid, 'success': True,
+                             'message': 'Access already denied'}],
+                'success': True}
+    if state == 'inherited':
+        return _send_deny_inherited_request(
+            params, record_uid, recipient_email, (row or {}).get('access_role_type'))
     return _send_revoke_share_request(params, record_uid, recipient_email)
+
+
+def _get_user_access_state(params, record_uid, email):
+    """Return ``(state, row)``; state is 'direct', 'inherited', 'denied' or None.
+
+    Direct access wins over inherited; a denial wins over an inherited row.
+    Lookup failures return ``(None, None)`` (caller falls back to a revoke).
+    """
+    try:
+        result = get_record_accesses_v3(params, [record_uid])
+    except Exception as exc:
+        logger.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
+        return None, None
+    email_cf = email.casefold()
+    rows = [a for a in result.get('record_accesses', [])
+            if a.get('record_uid') == record_uid
+            and not a.get('owner', False)
+            and a.get('access_type') in (None, '', 'AT_USER')
+            and (a.get('accessor_name') or '').casefold() == email_cf]
+    for a in rows:
+        if not a.get('inherited') and not a.get('denied_access'):
+            return 'direct', a
+    for a in rows:
+        if a.get('denied_access'):
+            return 'denied', a
+    for a in rows:
+        if a.get('inherited'):
+            return 'inherited', a
+    return None, None
+
+
+def _send_deny_inherited_request(params, record_uid, recipient_email, access_role_type=None):
+    """Revoke inherited (folder-delivered) access by creating a denial.
+
+    A plain revoke is rejected for inherited access ("trying to update or
+    revoke non existing permissions").  Like the web UI, send a
+    ``createSharingPermissions`` entry carrying the record key and role with
+    ``rules.deniedAccess = True``.
+    """
+    role = access_role_type or folder_pb2.VIEWER
+    perm = _build_share_permissions(params, record_uid, recipient_email, role,
+                                     None, include_role=True, skip_sync=True)
+    perm.rules.deniedAccess = True
+    rq = record_sharing_pb2.Request()
+    rq.createSharingPermissions.append(perm)
+    rs = api.communicate_rest(params, rq, 'vault/records/v3/share',
+                              rs_type=record_sharing_pb2.Response)
+    results = [parse_sharing_status(s) for s in rs.createdSharingStatus]
+    return {'results': results, 'success': all(r['success'] for r in results)}
 
 
 # ══════════════════════════════════════════════════════════════════════════
