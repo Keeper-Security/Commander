@@ -19,6 +19,7 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 | `service-status` | Display current service status |
 | `service-config-add` | Add new API configuration and command access settings |
 | `service-docker-setup` | Automated Docker service mode setup with KSM configuration |
+| `service-now-app-setup` | Docker service mode setup for the ServiceNow MID Server |
 | `slack-app-setup` | Automated Slack App integration setup with Commander Service Mode |
 | `teams-app-setup` | Automated Teams App integration setup with Commander Service Mode |
 | `gchat-app-setup` | Automated Google Chat App integration setup with Commander Service Mode |
@@ -509,6 +510,32 @@ Resources Created:
 ```
 
 The generated `docker-compose.yml` includes all your configuration and can be customized before deployment.
+
+### ServiceNow MID Server Setup
+
+Use `service-now-app-setup` to prepare a Commander Docker service for a ServiceNow MID Server:
+
+```bash
+My Vault> service-now-app-setup
+```
+
+The command follows the Docker setup flow and creates the KSM-backed Commander
+configuration and `docker-compose.yml`. Queue mode (API v2) is always enabled.
+Unlike the general Docker setup, this flow does not prompt for or configure
+Ngrok, Cloudflare, or Tailscale tunneling.
+
+The service command allowlist is fixed and enforced during setup and when the container starts:
+
+```text
+ls, get, search, sync-down, list-sf, record-add, record-update,
+nsf-record-add, nsf-record-update, nsf-share-record, nsf-share-folder,
+share-folder, share-record, one-time-share, epm
+```
+
+The folder, KSM app, and config record names can be customized with
+`--folder-name`, `--app-name`, and `--record-name`. `--config-path`, `--timeout`,
+and `--skip-device-setup` are also available; run `help service-now-app-setup`
+for the full syntax.
 
 ### Slack App Integration Setup
 

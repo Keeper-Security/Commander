@@ -4,6 +4,8 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from keepercommander.commands.ksm import KSMCommand, KSM_EVENT_TYPES, KSM_USAGE_EVENT_TYPE
+from keepercommander.error import CommandError
+from keepercommander.nested_share_folder.removal_api import RecordIdentifierAmbiguousError
 
 
 class TestKSMSecretResolution(unittest.TestCase):
@@ -36,6 +38,20 @@ class TestKSMSecretResolution(unittest.TestCase):
         params = self._make_params()
         mock_resolve_record.return_value = 'resolved_record_uid'
         self.assertEqual(KSMCommand.resolve_secret_uid(params, 'My Record'), 'resolved_record_uid')
+
+    @patch(
+        'keepercommander.commands.ksm.resolve_nested_share_record_uid',
+        side_effect=RecordIdentifierAmbiguousError('Duplicate record'),
+    )
+    def test_resolve_secret_uid_converts_ambiguity_even_if_command_is_none(self, mock_resolve):
+        params = self._make_params()
+
+        with self.assertRaises(CommandError) as ctx:
+            KSMCommand.resolve_secret_uid(params, 'Duplicate record', command=None)
+
+        self.assertEqual(ctx.exception.command, 'secrets-manager')
+        mock_resolve.assert_called_once_with(
+            params, 'Duplicate record', raise_on_ambiguous=True)
 
     @patch('keepercommander.commands.ksm.resolve_folder_uid')
     @patch('keepercommander.commands.ksm.resolve_nested_share_record_uid', return_value=None)

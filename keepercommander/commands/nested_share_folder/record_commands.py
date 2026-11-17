@@ -27,6 +27,7 @@ from ...enforcement import PasswordComplexityEnforcer, RecordTypeEnforcer
 from ...error import CommandError
 from ... import nested_share_folder as _nsf, vault, vault_extensions
 from ...nested_share_folder.folder_api import FolderIdentifierAmbiguousError
+from ...subfolder import ambiguous_identifier_message
 from .helpers import (
     resolve_folder_uid, resolve_record_uid, command_error_handler, check_result,
     check_record_edit_permission, check_record_delete_permission,
@@ -541,7 +542,8 @@ class NestedShareRecordShortcutKeepCommand(Command):
         nsf_folders = getattr(params, 'nested_share_folders', {})
 
         nsf_record_data = getattr(params, 'nested_share_record_data', {})
-        record_uid = self._resolve_record(params, target, nsf_records, nsf_record_data)
+        record_uid = self._resolve_record(
+            target, nsf_records, nsf_record_data, params=params)
         keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), nsf_folders)
 
         records = NestedShareRecordShortcutCommand.get_record_shortcuts(params)
@@ -586,12 +588,37 @@ class NestedShareRecordShortcutKeepCommand(Command):
                      target, keep_name, len(folders_to_remove))
 
     @staticmethod
-    def _resolve_record(params, target, nsf_records, nsf_record_data=None):
+    def _resolve_record(target, nsf_records, nsf_record_data=None, params=None):
         if target in nsf_records:
             return target
-        resolved_record = resolve_record_uid(params, target, 'nsf-shortcut keep')
-        if resolved_record in nsf_records:
-            return resolved_record
+
+        if params is not None:
+            resolved_record = resolve_record_uid(params, target, 'nsf-shortcut keep')
+            if resolved_record in nsf_records:
+                return resolved_record
+        else:
+            # Preserve the original helper signature for external callers that
+            # only have the already-filtered NSF record caches. Reject duplicate
+            # titles instead of choosing whichever record happens to appear first.
+            target_title = str(target).casefold()
+            matches = set()
+            for uid in nsf_records:
+                record_data = nsf_record_data.get(uid) if nsf_record_data else None
+                data_json = (record_data or {}).get('data_json') or {}
+                record = nsf_records.get(uid) or {}
+                title = data_json.get('title') or record.get('title') or ''
+                if title.casefold() == target_title:
+                    matches.add(uid)
+
+            if len(matches) == 1:
+                return next(iter(matches))
+            if len(matches) > 1:
+                raise CommandError(
+                    'nsf-shortcut keep',
+                    ambiguous_identifier_message(
+                        target, namespace='nsf', object_type='record'),
+                )
+
         raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in Nested Share Folder')
 
     @staticmethod

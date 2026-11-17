@@ -45,6 +45,7 @@ def apply_runtime_command_policy(args) -> None:
 def _integration_sanitizers():
     """Maps each integration's env var to its own sanitize_service_commands(); SailPoint is included too as a fallback in case SailPointService.maybe_enable() skipped sanitizing."""
     from ..terraform_app_setup import TerraformSetupConstants
+    from ..service_now_app_setup import ServiceNowSetupConstants
     from .command_policy import sanitize_commands
     from .gchat_app_setup import GChatAppSetupCommand
     from .sailpoint_app_setup import SailPointAppSetupCommand
@@ -59,6 +60,9 @@ def _integration_sanitizers():
     terraform_sanitizer = lambda commands: sanitize_commands(
         commands, TerraformSetupConstants.SERVICE_COMMANDS_LIST
     )
+    service_now_sanitizer = lambda commands: sanitize_commands(
+        commands, ServiceNowSetupConstants.SERVICE_COMMANDS_LIST
+    )
 
     return {
         slack.get_record_env_key(): slack.sanitize_service_commands,
@@ -67,4 +71,5 @@ def _integration_sanitizers():
         sailpoint.get_record_env_key(): sailpoint.sanitize_service_commands,
         TERRAFORM_DOCKER_ENV: terraform_sanitizer,
         TERRAFORM_DOCKER_ENV_LEGACY: terraform_sanitizer,
+        ServiceNowSetupConstants.SERVICENOW_RECORD_ENV: service_now_sanitizer,
     }
