@@ -1770,6 +1770,21 @@ class LoginCommand(Command):
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
 
+        if params.federated_login:
+            try:
+                params.federated_login.login(params)
+            except Exception as exc:
+                params.session_token = None
+                logging.warning('Federated login failed: %s', exc)
+                return
+            if not kwargs.get('skip_sync'):
+                params.enterprise = None
+                params._pedm_plugin = None
+                SyncDownCommand().execute(params, force=True)
+                if params.is_enterprise_admin:
+                    api.query_enterprise(params, True)
+            return
+
         # Handle --server option to change data center (or point at a
         # custom/self-hosted Keeper server address).
         server = kwargs.get('server')
@@ -1996,6 +2011,8 @@ class LogoutCommand(Command):
         if msp.current_mc_id:
             msp.current_mc_id = None
             msp.mc_params_dict.clear()
+
+        params.federated_login = None
 
         if params.session_token:
             try:
