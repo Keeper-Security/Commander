@@ -47,9 +47,10 @@ class SecretMapper:
     """Builds ``pam project import`` records from Delinea secrets.
 
     A mapped secret becomes a resource with one nested ``pamUser``, or a
-    top-level ``login`` when the changer is unmapped. Privileged and connect-as
-    secrets are referenced by title and emitted once by ``map_reference`` as
-    top-level ``pamUser`` records without ``folder_path`` (admin-only Config folder).
+    top-level ``login`` when the changer is unmapped. A privileged account is
+    fetched and nested on every resource that uses it for rotation. Connect-as
+    secrets that are not themselves imported are referenced by title and emitted
+    once by ``map_reference`` as top-level ``pamUser`` records.
     """
 
     def __init__(self, client: DelineaPamClient, resolver: SecretPolicyResolver, crosswalk: Crosswalk,
@@ -78,7 +79,9 @@ class SecretMapper:
         ``RotationMapper.to_rotation_settings`` and ``folder_path`` = ``users_path``].
         ``launch_credentials`` / ``administrative_credentials`` default to the
         user's own title and are replaced by ``title_for`` of the connect-as /
-        privileged secret, whose ids go to ``references``.
+        privileged secret. The privileged account is appended to this resource's
+        ``users``. Connect-as ids go to ``references``; a privileged secret that
+        could not be read is reported once in ``findings`` and is not referenced.
         """
         secret_id = _positive(secret.get('id')) or 0
         name = str(secret.get('name') or secret_id)
@@ -115,14 +118,14 @@ class SecretMapper:
 
         launch_title = user_title
         admin_title = user_title
+        admin_user = None
         references: Set[int] = set()
         connect_as = self.launcher.connect_as_secret_id(secret, settings, policy)
         if connect_as and connect_as != secret_id:
             references.add(connect_as)
             launch_title = self.title_for(connect_as, self._secret_name(connect_as))
         if rotation.admin_secret_id and rotation.admin_secret_id != secret_id:
-            references.add(rotation.admin_secret_id)
-            admin_title = self.title_for(rotation.admin_secret_id, self._secret_name(rotation.admin_secret_id))
+            admin_title, admin_user = self._admin_user(rotation.admin_secret_id, folder_name)
 
         pam_user = {
             'type': 'pamUser',
@@ -154,6 +157,8 @@ class SecretMapper:
         domain = self.item_value(secret, DOMAIN_SLUGS)
         if domain:
             resource['domain_name'] = domain
+        if admin_user is not None and all(user.get('title') != admin_user['title'] for user in resource['users']):
+            resource['users'].append(admin_user)
         pam_settings = self.launcher.pam_settings(
             secret, settings, policy, mapping,
             rotation.state is RotationState.ENABLED, launch_title, admin_title)
@@ -161,6 +166,29 @@ class SecretMapper:
             resource['pam_settings'] = pam_settings
         return MappedSecret(secret_id=secret_id, title=user_title, rotation=rotation,
                             mapping=mapping, resource=resource, references=references)
+
+    def _admin_user(self, secret_id: int, folder_name: str):
+        """Fetch the privileged secret and return ``(title, pamUser)`` for this resource.
+
+        ``pamUser`` is ``None`` when the secret cannot be read. The title still
+        names that secret so ``administrative_credentials`` stays stable.
+        """
+        secret = self._call(self.client.secret, secret_id)
+        if not isinstance(secret, dict):
+            self.findings.add('Administrative credentials', str(secret_id), 'Could not be read')
+            return self.title_for(secret_id, f'Secret {secret_id}'), None
+        title = self.title_for(secret_id, str(secret.get('name') or secret_id))
+        user = {
+            'type': 'pamUser',
+            'title': title,
+            'login': self.item_value(secret, LOGIN_SLUGS),
+            'password': self.item_value(secret, PASSWORD_SLUGS),
+            'folder_path': users_path(folder_name),
+        }
+        private_key = self.item_value(secret, PRIVATE_KEY_SLUGS)
+        if private_key:
+            user['private_pem_key'] = private_key
+        return title, user
 
     def map_reference(self, secret: dict) -> dict:
         """Top-level ``pamUser`` for a privileged or connect-as secret (no rotation, no ``folder_path``)."""

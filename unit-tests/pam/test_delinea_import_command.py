@@ -135,6 +135,37 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         with open(path, encoding='utf-8') as fh:
             return json.load(fh)
 
+    def test_privileged_account_is_added_to_the_resource_users(self):
+        self.client.secrets[3] = secret(
+            3, 'monthly', 6007, folderId=5, autoChangeEnabled=True,
+            items=items(machine='monthlyRPC', username='svc', password='pw'))
+        self.client.secrets[20] = secret(
+            20, 'AdminUserRPC', 6007, folderId=99,
+            items=items(machine='admin-host', username='domadm', password='admin-pw'))
+        original = self.client.secret_rpc
+
+        def secret_rpc(secret_id):
+            rpc = dict(original(secret_id))
+            if secret_id in (1, 3):
+                rpc['privilegedAccountSecretId'] = 20
+            return rpc
+
+        self.client.secret_rpc = secret_rpc
+        mapped = self.orchestrator(folders=['Servers']).map(Crosswalk())
+        by_host = {resource['title']: resource for resource in mapped.resources}
+        self.assertEqual(set(by_host), {'web01', 'monthlyRPC'})
+        self.assertEqual(mapped.users, [])
+        for host, account in (('web01', 'root'), ('monthlyRPC', 'monthly')):
+            users = by_host[host]['users']
+            self.assertEqual([user['title'] for user in users], [account, 'AdminUserRPC'])
+            admin = users[1]
+            self.assertEqual((admin['login'], admin['password'], admin['folder_path']),
+                             ('domadm', 'admin-pw', 'Servers/Servers - Users'))
+            connection = by_host[host]['pam_settings']['connection']
+            self.assertEqual(connection['launch_credentials'], account)
+            self.assertEqual(connection['administrative_credentials'], 'AdminUserRPC')
+        self.assertIsNot(by_host['web01']['users'][1], by_host['monthlyRPC']['users'][1])
+
     def test_map(self):
         orchestrator = self.orchestrator(project_name='Proj', gateway='GW1', folders=['Servers'])
         mapped = orchestrator.map(Crosswalk())
