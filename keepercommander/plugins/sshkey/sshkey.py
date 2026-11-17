@@ -13,7 +13,6 @@
 import logging
 import os
 import re
-import stat
 import subprocess
 import tempfile
 
@@ -26,7 +25,7 @@ from ... import crypto, vault
 from ...commands.base import RecordMixin
 from ...commands.ssh_agent import load_private_key
 
-LOGIN_NAME_PATTERN = re.compile(r'^[a-zA-Z0-9_][a-zA-Z0-9_.@\\-]*$')
+SSH_TARGET_PATTERN = re.compile(r'(?!-)[^\s\x00-\x1f\x7f]+')
 
 
 def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
@@ -114,28 +113,36 @@ def rotate(record, new_password):   # type: (vault.KeeperRecord, str) -> bool
                     hosts.append(hostname)
 
     login = RecordMixin.get_record_field(record, 'login')
-    if login and not LOGIN_NAME_PATTERN.match(login):
-        logging.info('SSH key plugin: invalid login %r', login)
-        return False
     if len(hosts) > 0 and old_pk and login:
+        if not SSH_TARGET_PATTERN.fullmatch(login):
+            logging.warning('SSH key plugin: invalid login %r', login)
+            return False
+
         old_public_ssh_key = old_pk.public_key().public_bytes(
             encoding=serialization.Encoding.OpenSSH, format=serialization.PublicFormat.OpenSSH).decode()
 
         key_unencrypted = old_pk.private_bytes(
             encoding=serialization.Encoding.PEM, format=serialization.PrivateFormat.OpenSSH,
             encryption_algorithm=serialization.NoEncryption())
-        key_file_name = tempfile.mktemp()
-        keyFile = os.open(key_file_name, os.O_WRONLY | os.O_CREAT, stat.S_IRUSR | stat.S_IWUSR)
-        os.write(keyFile, key_unencrypted)
-        os.close(keyFile)
+        keyFile, key_file_name = tempfile.mkstemp()
+        try:
+            os.write(keyFile, key_unencrypted)
+        finally:
+            os.close(keyFile)
 
         try:
             for host in hosts:
                 try:
+                    if host.count(':') > 1:
+                        logging.warning('SSH key plugin: IPv6 literal host %s is not supported', host)
+                        return False
                     host, _, dst_port = host.partition(':')
+                    if not SSH_TARGET_PATTERN.fullmatch(host):
+                        logging.warning('SSH key plugin: invalid host %r', host)
+                        return False
                     if not dst_port and port:
                         dst_port = str(port)
-                    if dst_port and not dst_port.isdigit():
+                    if dst_port and not (dst_port.isascii() and dst_port.isdigit()):
                         logging.warning('SSH key plugin: invalid port %r for host %s', dst_port, host)
                         return False
 
