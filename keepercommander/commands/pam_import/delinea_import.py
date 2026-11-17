@@ -250,6 +250,7 @@ class DelineaImportOrchestrator:
             if folder_id not in folder_names:
                 folder = folders.get(folder_id) or {}
                 raw_name = str(folder.get('folderName') or folder.get('folderPath') or folder_id)
+                names._cache.pop(raw_name, None)
                 folder_names[folder_id] = names.map_safe(raw_name, self.options.project_name)
                 rows = [] if self.options.skip_permissions else self.client.folder_permissions(folder_id)
                 folder_rows[folder_id] = rows

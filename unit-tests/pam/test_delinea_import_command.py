@@ -196,6 +196,28 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         self.assertEqual(sorted(mapped.folder_grants), ['Level3', 'Level5'])
         self.assertEqual(sorted(c.args[0] for c in self.client.folder_permissions.call_args_list), [3, 5])
 
+    def test_same_name_folders_with_different_ids_stay_separate(self):
+        """Two folders named alike under different parents get distinct shared folders and grants."""
+        self.client.folders_by_id = {
+            1: {'id': 1, 'folderName': 'Prod', 'folderPath': '\\TeamA\\Prod'},
+            2: {'id': 2, 'folderName': 'Prod', 'folderPath': '\\TeamB\\Prod'},
+        }
+        self.client.secrets = {
+            1: secret(1, 'Account1', 6007, folderId=1, autoChangeEnabled=False,
+                      items=items(machine='res1', username='user1', password='p1')),
+            2: secret(2, 'Account2', 6007, folderId=2, autoChangeEnabled=False,
+                      items=items(machine='res2', username='user2', password='p2')),
+            3: secret(3, 'Account3', 6007, folderId=1, autoChangeEnabled=False,
+                      items=items(machine='res3', username='user3', password='p3')),
+        }
+        mapped = self.orchestrator().map(Crosswalk())
+        paths = {r['title']: r['folder_path'] for r in mapped.resources}
+        self.assertEqual(paths['res1'], 'Prod/Prod - Resources')
+        self.assertEqual(paths['res3'], 'Prod/Prod - Resources')
+        self.assertEqual(paths['res2'], 'Prod #2/Prod #2 - Resources')
+        self.assertEqual(sorted(mapped.folder_grants), ['Prod', 'Prod #2'])
+        self.assertEqual(sorted(c.args[0] for c in self.client.folder_permissions.call_args_list), [1, 2])
+
     def test_folder_permissions_read_once_per_folder(self):
         self.client.secrets[3] = secret(3, 'root2', 6007, folderId=5, autoChangeEnabled=False,
                                         items=items(machine='web03', username='r', password='p'))

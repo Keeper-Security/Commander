@@ -3364,6 +3364,8 @@ class PamSettingsFieldData:
                     if isinstance(pr, ConnectionProtocol) and pr.value.lower() == proto:  # pylint: disable=E1101
                         return con.load(cdata)
             if cdata.get("administrative_credentials") or cdata.get("launch_credentials"):
+                if proto:
+                    logging.warning(f"""Unrecognized protocol "{str(proto)[:24]}" - connection settings ignored, keeping credentials only""")
                 return BaseConnectionSettings.load(cdata)
             logging.warning(f"""Connection skipped: unknown protocol "{str(proto)[:24]}" """)
         return None
