@@ -2285,7 +2285,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             seen.add(folder_id)
             folder = folders[folder_id]
             permissions = folder.get('permissions')
-            if folder.get('inheritPermissions') is False and isinstance(permissions, list):
+            if folder.get('inheritPermissions') is False and isinstance(permissions, list) and permissions:
                 return permissions
             folder_id = folder.get('parentFolderId')
         return []
@@ -2401,10 +2401,16 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         shares = nsf_record_shares_for_secret_acl(record_roles, folder_baseline)
         shared_emails = {email for email, _ in shares}
         for email, role in record_roles.items():
+            folder_role = folder_baseline.get(email)
+            if email not in shared_emails:
+                action = 'skip (roles match)'
+            elif not folder_role:
+                action = 'share (no folder role → direct share)'
+            else:
+                action = 'share (record role differs from folder)'
             nsf_acl_log(
                 'secret id=%s: %s folder=%s record=%s -> %s',
-                secret_id, email, folder_baseline.get(email) or '-', role,
-                'share' if email in shared_emails else 'skip')
+                secret_id, email, folder_role or '-', role, action)
         if not shares:
             nsf_acl_log(
                 'secret id=%s title=%r: no record shares (record roles match folder roles)',
@@ -2417,9 +2423,12 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             nsr.uid = email
             nsr.role = nsf_role
             record.nsf_record_shares.append(nsr)
+            nsf_acl_log(
+                'secret id=%s title=%r: ATTACH direct share email=%s role=%s',
+                secret_id, record.title, email, nsf_role)
 
         nsf_acl_log(
-            'secret id=%s title=%r: queued %d record share(s): %s',
+            'secret id=%s title=%r: queued %d record share(s) on record.nsf_record_shares: %s',
             secret_id, record.title, len(shares),
             ', '.join(f'{e}={r}' for e, r in shares))
 
