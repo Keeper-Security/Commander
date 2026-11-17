@@ -69,9 +69,11 @@ class Connection(ConnectionBase):
     def dag_server_url(self) -> str:
 
         # Allow override of the URL. If not set, get the hostname from the config.
-        hostname = os.environ.get("KROUTER_URL", self.hostname)
-        if hostname.startswith('ws') or hostname.startswith('http'):
-            return hostname
+        from ...constants import get_router_override
+        override = get_router_override()
+        if override and override[0]:
+            return f'{override[0]}://{override[1]}'
+        hostname = override[1] if override else self.hostname
 
         use_ssl = value_to_boolean(os.environ.get("USE_SSL", True))
         if self.is_ws:

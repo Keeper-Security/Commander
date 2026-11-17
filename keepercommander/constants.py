@@ -502,12 +502,39 @@ def get_keeper_host_for_services(server_hostname):
         return 'keepersecurity.us'
     return server_hostname
 
+def get_router_override():
+    """Read the one Router override, KROUTER_URL.
+
+    Accepts a bare host with an optional port ('router.example:8443') or a full URL
+    ('https://router.example:8443'). Returns (scheme, host), or None when unset.
+    The scheme is None when a bare host was given. Any path is dropped.
+    """
+    value = (os.getenv('KROUTER_URL') or '').strip()
+    if not value:
+        return None
+    scheme = None
+    if '://' in value:
+        scheme, value = value.split('://', 1)
+        scheme = scheme.lower()
+    host = value.split('/', 1)[0]
+    if not host:
+        return None
+    return scheme, host
+
+
 def get_router_host(server_hostname):
-    krouter_url = os.getenv('KROUTER_URL')
-    if krouter_url:
-        return krouter_url
+    override = get_router_override()
+    if override:
+        return override[1]
 
     return f'connect.{get_keeper_host_for_services(server_hostname)}'
+
+
+def get_router_base_url(server_hostname):
+    """Router base URL: '<scheme>://<host>'. A bare-host override (or none) uses https."""
+    override = get_router_override()
+    scheme = (override[0] if override else None) or 'https'
+    return f'{scheme}://{get_router_host(server_hostname)}'
 
 
 def get_relay_host(server_hostname):
