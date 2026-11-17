@@ -2548,6 +2548,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         accessor.accessTypeUid = utils.base64_url_decode(team_uid)
         accessor.accessType = folder_pb2.AT_TEAM
         accessor.accessRoleType = folder_pb2.VIEWER
+        accessor.tlaProperties.expiration = 1_900_000_000_000
 
         response = folder_access_pb2.GetFolderAccessResponse()
         response.folderAccessResults.append(access_result)
@@ -2562,6 +2563,7 @@ class TestNestedShareFolderFolderApi(TestCase):
         self.assertEqual(team_accessor['username'], 'Engineering Team')
         self.assertEqual(team_accessor['accessor_uid'], team_uid)
         self.assertEqual(team_accessor['access_type'], 'AT_TEAM')
+        self.assertEqual(team_accessor['tla_expiration'], 1_900_000_000_000)
 
 
 class TestNestedShareFolderRecordApi(TestCase):
@@ -3257,6 +3259,7 @@ class TestCommandRegistration(TestCase):
             'nsf-list', 'nsf-share-folder', 'nsf-record-details',
             'nsf-share-record', 'nsf-record-permission', 'nsf-transfer-record',
             'nsf-ln', 'nsf-rm', 'nsf-rmdir', 'nsf-shortcut', 'nsf-get',
+            'nsf-convert-record', 'nsf-convert-folder',
         ]
         for name in expected:
             self.assertIn(name, commands)
