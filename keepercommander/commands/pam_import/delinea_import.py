@@ -24,8 +24,7 @@ from ...importer.cyberark.pam.safe_folder_mapper import SafeFolderMapper
 from ...importer.cyberark.pam.user_team_matcher import UserTeamMatcher
 from ...importer.thycotic.pam import (
     AccessGrant, Crosswalk, DelineaPamClient, FindingLog, LauncherMapper, PermissionMapper, Principal,
-    PrincipalKind, RotationMapper, RotationPolicy, SecretGrantTarget, SecretMapper, SecretPolicyResolver,
-    permission_boundaries,
+    PrincipalKind, RotationMapper, RotationPolicy, SecretGrantTarget,     SecretMapper, SecretPolicyResolver,
 )
 from .cyberark_import import SecureTempFileStore
 from .delinea_access import COMMAND, apply_secret_grants, choose_nsf, run_with_classic_fallback
@@ -195,13 +194,14 @@ class DelineaImportOrchestrator:
     def map(self, crosswalk: Crosswalk) -> DelineaMappedImport:
         """Read Secret Server and map everything; no vault writes.
 
-        1. ``permission_boundaries(client.folders())`` limited to ``options.folders``
-           (folder path prefixes; empty means all); each boundary is named by
+        1. Folders from ``client.folders()`` limited to ``options.folders``
+           (folder path prefixes; empty means all). Each secret is placed in
+           the shared folder for its own ``folderId``, named by
            ``SafeFolderMapper('safe')``. ``self.permissions`` is built from
            ``client.users()`` / ``client.groups()``.
-        2. ``folder_grants`` has a key for every boundary that receives records;
-           unless ``skip_permissions`` its value is
-           ``self.permissions.folder_grants(client.folder_permissions(boundary))``
+        2. ``folder_grants`` has a key for every secret folder that receives
+           records; unless ``skip_permissions`` its value is
+           ``self.permissions.folder_grants(client.folder_permissions(folder_id))``
            and ``self.matcher`` comes from ``build_matcher``.
         3. Per secret in ``client.secret_ids``: ``SecretMapper.map_secret``; then
            ``client.secret_permissions`` and ``PermissionMapper.is_override`` give
@@ -212,7 +212,6 @@ class DelineaImportOrchestrator:
            gateway per PAM configuration).
         """
         folders = self.client.folders() or {}
-        boundaries = permission_boundaries(folders)
         selected = self._selected_folders(folders)
         self.permissions = PermissionMapper(
             self.client.users() or {}, self.client.groups() or {}, self.findings)
@@ -226,7 +225,7 @@ class DelineaImportOrchestrator:
             LauncherMapper(self.findings), self.findings)
         names = SafeFolderMapper('safe')
         folder_names: Dict[int, str] = {}
-        boundary_rows: Dict[int, List[dict]] = {}
+        folder_rows: Dict[int, List[dict]] = {}
         resources: List[dict] = []
         users: List[dict] = []
         folder_grants: Dict[str, List[AccessGrant]] = {}
@@ -248,15 +247,15 @@ class DelineaImportOrchestrator:
             folder_id = secret.get('folderId')
             if not isinstance(folder_id, int) or folder_id not in selected:
                 continue
-            boundary_id = boundaries.get(folder_id, folder_id)
-            if boundary_id not in folder_names:
-                boundary = folders.get(boundary_id) or {}
-                raw_name = str(boundary.get('folderName') or boundary.get('folderPath') or boundary_id)
-                folder_names[boundary_id] = names.map_safe(raw_name, self.options.project_name)
-                rows = [] if self.options.skip_permissions else self.client.folder_permissions(boundary_id)
-                boundary_rows[boundary_id] = rows
-                folder_grants[folder_names[boundary_id]] = self.permissions.folder_grants(rows)
-            folder_name = folder_names[boundary_id]
+            if folder_id not in folder_names:
+                folder = folders.get(folder_id) or {}
+                raw_name = str(folder.get('folderName') or folder.get('folderPath') or folder_id)
+                names._cache.pop(raw_name, None)
+                folder_names[folder_id] = names.map_safe(raw_name, self.options.project_name)
+                rows = [] if self.options.skip_permissions else self.client.folder_permissions(folder_id)
+                folder_rows[folder_id] = rows
+                folder_grants[folder_names[folder_id]] = self.permissions.folder_grants(rows)
+            folder_name = folder_names[folder_id]
             mapped = secret_mapper.map_secret(secret, folder_name)
             mapped_ids.add(secret_id)
             rotations.append(mapped.rotation)
@@ -272,7 +271,7 @@ class DelineaImportOrchestrator:
             except Exception as exc:
                 self.findings.add('Secret permission', str(secret_id), f'Could not be read: {exc}')
                 continue
-            if not PermissionMapper.is_override(secret, secret_rows, boundary_rows[boundary_id]):
+            if not PermissionMapper.is_override(secret, secret_rows, folder_rows[folder_id]):
                 continue
             grants = self.permissions.secret_grants(secret_rows)
             if not grants:

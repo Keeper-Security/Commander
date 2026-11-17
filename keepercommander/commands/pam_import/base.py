@@ -2263,6 +2263,9 @@ class BaseConnectionSettings:
         self.launch_credentials = launch_credentials  # title or login of pamUser for launch
         self.launchRecordUid = None  # resolved from launch_credentials
 
+    def to_record_dict(self):
+        return {}
+
     @classmethod
     def load(cls, data: Union[str, dict]):
         obj = cls()
@@ -3360,6 +3363,10 @@ class PamSettingsFieldData:
                     pr = getattr(con, "protocol", "")
                     if isinstance(pr, ConnectionProtocol) and pr.value.lower() == proto:  # pylint: disable=E1101
                         return con.load(cdata)
+            if cdata.get("administrative_credentials") or cdata.get("launch_credentials"):
+                if proto:
+                    logging.warning(f"""Unrecognized protocol "{str(proto)[:24]}" - connection settings ignored, keeping credentials only""")
+                return BaseConnectionSettings.load(cdata)
             logging.warning(f"""Connection skipped: unknown protocol "{str(proto)[:24]}" """)
         return None
 
