@@ -427,6 +427,13 @@ class LoginV3Flow:
                 if bw_audit:
                     params.breach_watch.send_audit_events = True
 
+        try:
+            from .biometric import sync_biometric_passkey_status
+            sync_biometric_passkey_status(params)
+        except ImportError:
+            # Biometric dependencies are optional on unsupported Python/platforms.
+            pass
+
         if not params.batch_mode:
             print(bcolors.OKGREEN + "Successfully authenticated with " + login_type_message + "" + bcolors.ENDC, file=sys.stderr)
         return True
