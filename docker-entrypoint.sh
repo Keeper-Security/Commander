@@ -24,7 +24,7 @@ readonly MONITOR_INTERVAL="30"   # Config monitoring interval in seconds
 
 # Function to log messages with timestamp
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >&2
 }
 
 # Function to run keeper service with intelligent lifecycle management.
@@ -143,7 +143,7 @@ filter_args() {
 process_ksm_config() {
     local ksm_config_input="$1"
     
-    log "Processing KSM config..." >&2
+    log "Processing KSM config..."
     
     # Use docker_ksm_utility.py to process the config
     local result_output
@@ -156,13 +156,13 @@ process_ksm_config() {
         local file_path
         file_path=$(echo "${result_output}" | tail -n1)
         if [[ -f "${file_path}" ]]; then
-            log "Successfully processed KSM config: ${file_path}" >&2
+            log "Successfully processed KSM config: ${file_path}"
             echo "${file_path}"  # Only output the file path to stdout
             return 0
         fi
     fi
     
-    log "ERROR: Failed to process KSM config" >&2
+    log "ERROR: Failed to process KSM config"
     return 1
 }
 
@@ -189,7 +189,7 @@ this-device timeout ${DEVICE_TIMEOUT}
 CMDS
 
     if ! python3 keeper.py --user "${user}" --password "${password}" \
-        --server "${server}" "${setup_script}"; then
+        --server "${server}" "${setup_script}" >&2; then
         log "ERROR: Device setup failed"
         rm -f "${setup_script}"
         exit 1
@@ -225,7 +225,7 @@ download_config_from_ksm() {
         exit 1
     fi
     
-    if ! python3 docker_ksm_utility.py "${helper_args[@]}"; then
+    if ! python3 docker_ksm_utility.py "${helper_args[@]}" >&2; then
         log "ERROR: Failed to download config from KSM"
         exit 1
     fi
@@ -258,7 +258,7 @@ upload_config_to_ksm() {
     fi
 
     log "Syncing config.json back to KSM record: ${record_uid}"
-    if ! python3 docker_ksm_utility.py "${helper_args[@]}"; then
+    if ! python3 docker_ksm_utility.py "${helper_args[@]}" >&2; then
         log "WARNING: Failed to sync config back to KSM record"
     fi
 }
