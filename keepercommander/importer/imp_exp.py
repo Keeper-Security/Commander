@@ -2996,7 +2996,17 @@ def prepare_folder_permission(params, folders, full_sync, unsafe=False):
                             if manage_users != perm.manage_users or manage_records != perm.manage_records:
                                 update_users.append(sfu)
                         else:
-                            if username in params.key_cache:
+                            if username == params.user.casefold():
+                                # Self-share
+                                if params.forbid_rsa:
+                                    sfu.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(shared_folder_key, params.data_key)
+                                    sfu.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+                                else:
+                                    sfu.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(shared_folder_key, params.data_key)
+                                    sfu.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                                keep_users.add(username)
+                                add_users.append(sfu)
+                            elif username in params.key_cache:
                                 public_keys = params.key_cache[username]
                                 if params.forbid_rsa and public_keys.ec:
                                     ec_key = crypto.load_ec_public_key(public_keys.ec)
@@ -3010,7 +3020,6 @@ def prepare_folder_permission(params, folders, full_sync, unsafe=False):
                                     sfu.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_public_key
                                     keep_users.add(username)
                                     add_users.append(sfu)
-
                         continue
                 except Exception as e:
                     logging.debug(e)
