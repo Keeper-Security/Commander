@@ -162,7 +162,7 @@ class FolderConversionTree:
 
     @staticmethod
     def _delete_classic_source(params, source_uid):
-        """Delete only a freshly verified empty subtree; return None if outcome is unknown."""
+        """Delete only after sync confirms no unconverted placements remain."""
         from ...folder import FolderRemoveCommand
 
         try:
@@ -172,11 +172,18 @@ class FolderConversionTree:
                 return True
             _, _, _, records_by_folder = (
                 FolderConversionPlanner._collect_classic_subtree(params, source_uid))
-            remaining = {
-                folder_uid: record_uids
-                for folder_uid, record_uids in records_by_folder.items()
-                if record_uids
-            }
+            converted_record_uids = set(
+                (getattr(params, 'nested_share_records', {}) or {}).keys())
+            # Conversion preserves record UIDs, so converted records can still
+            # appear in Classic placement caches until their source folders are removed.
+            remaining = {}
+            for folder_uid, record_uids in records_by_folder.items():
+                unconverted_uids = [
+                    record_uid for record_uid in record_uids
+                    if record_uid not in converted_record_uids
+                ]
+                if unconverted_uids:
+                    remaining[folder_uid] = unconverted_uids
             if remaining:
                 details = '; '.join(
                     f'{folder_uid}: {", ".join(record_uids[:5])}'

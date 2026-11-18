@@ -1649,6 +1649,47 @@ class TestClassicFolderConversionExecution(TestCase):
         self.assertFalse(deleted)
         remove.assert_not_called()
 
+    def test_delete_removes_converted_records_still_cached_in_classic_placements(self):
+        params, folder_uid, record_uid, _ = self._params()
+        params.nested_share_records[record_uid] = {}
+
+        sync_calls = []
+
+        def refresh(_params):
+            sync_calls.append(True)
+            if len(sync_calls) == 2:
+                params.folder_cache.pop(folder_uid, None)
+
+        remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion.conversion_tree.'
+                'sync_down.sync_down', side_effect=refresh), \
+             patch(remove_path) as remove:
+            deleted = FolderConversionTree._delete_classic_source(
+                params, folder_uid)
+
+        self.assertTrue(deleted)
+        self.assertEqual(len(sync_calls), 2)
+        remove.assert_called_once_with(
+            params, pattern=[folder_uid], force=True, quiet=True)
+
+    def test_delete_still_refuses_unconverted_records_in_mixed_source_tree(self):
+        params, folder_uid, converted_uid, _ = self._params()
+        unconverted_uid = _uid()
+        params.subfolder_record_cache[folder_uid].add(unconverted_uid)
+        params.nested_share_records[converted_uid] = {}
+        remove_path = 'keepercommander.commands.folder.FolderRemoveCommand.execute'
+
+        with patch(
+                'keepercommander.commands.nested_share_folder.conversion.conversion_tree.'
+                'sync_down.sync_down'), \
+             patch(remove_path) as remove:
+            deleted = FolderConversionTree._delete_classic_source(
+                params, folder_uid)
+
+        self.assertFalse(deleted)
+        remove.assert_not_called()
+
     def test_delete_refreshes_and_removes_only_an_empty_source_tree(self):
         params, folder_uid, _, _ = self._params()
         params.subfolder_record_cache[folder_uid] = set()
