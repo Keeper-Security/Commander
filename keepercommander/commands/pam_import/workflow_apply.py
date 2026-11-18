@@ -11,7 +11,7 @@
 
 import logging
 import time
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..pam.router_helper import _post_request_to_router
 from ..workflow.helpers import (
@@ -256,12 +256,58 @@ def apply_workflow(
         raise CommandError('', f'workflow apply failed for "{record_title}": {sanitize_router_error(e)}')
 
 
-def validate_workflow_principals(params: KeeperParams, resources) -> None:
-    """Pre-flight: validate team UIDs in workflow approvers for all resources.
-    Uses RecordResolver.validate_team which checks both team_cache and enterprise.teams,
-    matching the lookup path used by `pam workflow add-approver`. Raises CommandError
-    on the first unknown UID, with the resource title in the message for context.
+NOT_REACHABLE_CODE = 'no_active_share_exist'
+
+
+def lookup_users(params: KeeperParams, emails) -> Tuple[List[str], Dict[str, str], str]:
+    """Ask the server once about *emails* (``vault/get_public_keys``).
+
+    Returns (not_found, unverified, failure):
+    * ``not_found`` - answered ``no_active_share_exist`` (see ``unknown_users`` for what that means);
+    * ``unverified`` - {email: error code} for every other answer that is not ``success``
+      (for example ``not_allowed_to_share_to_group`` when sharing is restricted): the answer says nothing;
+    * ``failure`` - '' or the code of the failed call (``result_code`` of a Keeper API error, else the exception
+      class name); then nothing could be verified.
     """
+    wanted = sorted({str(e).strip().lower() for e in emails if str(e or '').strip()})
+    if not wanted:
+        return [], {}, ''
+    try:
+        from ...proto import APIRequest_pb2
+        from ... import api
+        rq = APIRequest_pb2.GetPublicKeysRequest()
+        rq.usernames.extend(wanted)
+        rs = api.communicate_rest(params, rq, 'vault/get_public_keys', rs_type=APIRequest_pb2.GetPublicKeysResponse)
+    except Exception as err:   # pylint: disable=broad-except
+        logging.debug('Approver lookup failed (not checked): %s', err, exc_info=True)
+        return [], {}, str(getattr(err, 'result_code', '') or err.__class__.__name__)
+    not_found = sorted(pk.username for pk in rs.keyResponses if pk.errorCode == NOT_REACHABLE_CODE)
+    unverified = {pk.username: pk.errorCode for pk in rs.keyResponses
+                  if pk.errorCode not in ('', 'success', NOT_REACHABLE_CODE)}
+    return not_found, unverified, ''
+
+
+def unknown_users(params: KeeperParams, emails) -> List[str]:
+    """The emails (of *emails*) that are not users of the caller's enterprise (or do not exist), asked in ONE
+    ``vault/get_public_keys`` call; [] when all are known or when the question cannot be answered.
+
+    What the server answers (keeperapp ``PublicKeyController`` / ``SharingKeyPairDAO.getPublicKeysWithASharingRelationship``,
+    read 2026-11-18): a public key (``success``) only for a user of the SAME enterprise (or an MSP / managed company
+    relation, the same group, or an accepted share). For every other name - a user that does not exist AND a user that
+    exists elsewhere - the answer is the SAME code, ``no_active_share_exist``; the server does not say which. With
+    restricted sharing the answer is ``not_allowed_to_share_to_group`` for everybody, which tells nothing. So only
+    ``no_active_share_exist`` is reported, and it means "not found among the users you can reach".
+
+    The workflow API itself is more lenient: it only checks that the username exists anywhere
+    (``SELECT id FROM keeper.user WHERE username=?`` in krouter ``SqlLookupRepo.getUserId``), so an existing user of
+    another enterprise is accepted there. This check can therefore warn about a name the workflow would accept; it
+    is a warning, never an error."""
+    return lookup_users(params, emails)[0]
+
+
+def workflow_resources_options(resources):
+    """(title, PamWorkflowOptions) of every resource that has a workflow section."""
+    found = []
     for mach in resources or []:
         opts = None
         ps = getattr(mach, 'pam_settings', None)
@@ -271,9 +317,43 @@ def validate_workflow_principals(params: KeeperParams, resources) -> None:
             rbi = getattr(mach, 'rbi_settings', None)
             if rbi:
                 opts = getattr(rbi, 'workflow', None)
-        if opts is None:
-            continue
-        title = getattr(mach, 'title', '') or ''
+        if opts is not None:
+            found.append((getattr(mach, 'title', '') or '', opts))
+    return found
+
+
+def approver_warnings(params: KeeperParams, resources) -> List[str]:
+    """Pre-flight warnings (dry-run too): a workflow approver who is not a user of the enterprise (or does not exist)
+    may make that resource's workflow fail when it is written (see ``unknown_users`` for what is known)."""
+    entries = workflow_resources_options(resources)
+    emails = [a['email'] for _title, opts in entries for a in opts.approvers if a['principal_type'] == 'user']
+    if not emails:
+        return []
+    missing, unverified, failure = lookup_users(params, emails)
+    if failure:
+        return [f'NOTE: workflow approvers could not be verified (lookup failed: {failure})']
+    lines = []
+    for title, opts in entries:
+        for a in opts.approvers:
+            if a['principal_type'] != 'user':
+                continue
+            key = str(a['email']).strip().lower()
+            if key in missing:
+                lines.append(f'Resource "{title}": workflow approver "{a["email"]}" was not found among the users of '
+                             'your enterprise - if this user does not exist at all, the workflow of this resource will fail')
+            elif key in unverified:
+                lines.append(f'NOTE: Resource "{title}": workflow approver "{a["email"]}" could not be verified '
+                             f'(server answered "{unverified[key]}")')
+    return lines
+
+
+def validate_workflow_principals(params: KeeperParams, resources) -> None:
+    """Pre-flight: validate team UIDs in workflow approvers for all resources.
+    Uses RecordResolver.validate_team which checks both team_cache and enterprise.teams,
+    matching the lookup path used by `pam workflow add-approver`. Raises CommandError
+    on the first unknown UID, with the resource title in the message for context.
+    """
+    for title, opts in workflow_resources_options(resources):
         for idx, a in enumerate(opts.approvers):
             if a['principal_type'] != 'team':
                 continue
@@ -282,3 +362,6 @@ def validate_workflow_principals(params: KeeperParams, resources) -> None:
             except CommandError as e:
                 prefix = f'Resource "{title}": ' if title else ''
                 raise CommandError('', f'{prefix}workflow approvers[{idx}]: {e.message or str(e)}')
+    # users: a warning only (the lookup finds users that do not exist; it cannot know the enterprise rule)
+    for line in approver_warnings(params, resources):
+        logging.warning(line)

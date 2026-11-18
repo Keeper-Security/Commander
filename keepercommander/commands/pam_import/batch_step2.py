@@ -73,8 +73,12 @@ def run_step2_full(
     *,
     rotation_throttle: Optional[RotationThrottle] = None,
     service_queue: Optional[list] = None,
+    errors_out: Optional[list] = None,
 ):
-    """Full Step 2 micro-order for a new resource (mirrors edit.py ~1692–1783)."""
+    """Full Step 2 micro-order for a new resource (mirrors edit.py ~1692–1783).
+
+    *errors_out*: a list that collects failures of OPTIONAL parts of the resource (today the workflow), so that
+    they do not stop the rest of the resource's setup. None = such a failure is raised, as before."""
     if getattr(mach, '_extend_tag', 'new') == 'existing':
         return
     admin_uid = get_admin_credential(mach, True)
@@ -82,9 +86,9 @@ def run_step2_full(
         tdag.link_resource_to_config(mach.uid)
 
     if isinstance(mach, PamRemoteBrowserObject):
-        _run_step2_rbi(params, tdag, mach, pam_cfg_uid)
+        _run_step2_rbi(params, tdag, mach, pam_cfg_uid, errors_out)
     else:
-        _run_step2_machine(params, tdag, mach, pam_cfg_uid, admin_uid)
+        _run_step2_machine(params, tdag, mach, pam_cfg_uid, admin_uid, errors_out)
 
     nested = getattr(mach, 'users', []) or []
     for user in nested:
@@ -213,7 +217,7 @@ def _apply_machine_allowed_settings(tdag, mach) -> None:
     tdag.set_resource_allowed(**args)
 
 
-def _run_step2_rbi(params, tdag, mach, pam_cfg_uid):
+def _run_step2_rbi(params, tdag, mach, pam_cfg_uid, errors_out=None):
     from .tunnel_setup import apply_tunnel_setup_batch
 
     apply_tunnel_setup_batch(params, tdag, mach, pam_cfg_uid)
@@ -255,7 +259,24 @@ def _run_step2_rbi(params, tdag, mach, pam_cfg_uid):
     tdag.set_resource_allowed(**args)
     rbi_wf = getattr(getattr(mach, 'rbi_settings', None), 'workflow', None)
     if rbi_wf:
-        apply_workflow(params, mach.uid, mach.title or '', rbi_wf)
+        _apply_workflow_safely(params, mach, rbi_wf, errors_out)
+
+
+def _apply_workflow_safely(params, mach, opts, errors_out) -> None:
+    """Apply the workflow of a resource. The workflow is optional data of the resource: when it fails (for
+    example an approver who is not a user of the enterprise) the rest of the resource's Step 2 must still run.
+    With *errors_out* the failure is recorded there (it counts as a configuration error and the user gets the
+    recovery hint) and logged as ONE line, the traceback only at debug level; without it the error is raised."""
+    try:
+        apply_workflow(params, mach.uid, mach.title or '', opts)
+    except Exception as err:   # pylint: disable=broad-except
+        if errors_out is None:
+            raise
+        title = mach.title or mach.uid
+        logging.debug('workflow of %s failed', title, exc_info=True)
+        message = str(err).strip().splitlines()[0] if str(err).strip() else err.__class__.__name__
+        errors_out.append(f'workflow of {title}: {message}')
+        logging.error(f'Batch Step 2: workflow of "{title}" was not applied: {message}')
 
 
 def _warn_settings_failed(label, mach):
@@ -265,7 +286,7 @@ def _warn_settings_failed(label, mach):
     )
 
 
-def _run_step2_machine(params, tdag, mach, pam_cfg_uid, admin_uid):
+def _run_step2_machine(params, tdag, mach, pam_cfg_uid, admin_uid, errors_out=None):
     from .tunnel_setup import apply_tunnel_setup_batch
 
     apply_tunnel_setup_batch(params, tdag, mach, pam_cfg_uid)
@@ -302,7 +323,7 @@ def _run_step2_machine(params, tdag, mach, pam_cfg_uid, admin_uid):
 
     ps_wf = getattr(getattr(mach, 'pam_settings', None), 'workflow', None)
     if ps_wf:
-        apply_workflow(params, mach.uid, mach.title or '', ps_wf)
+        _apply_workflow_safely(params, mach, ps_wf, errors_out)
 
 
 def _is_saas_rotation(user) -> bool:

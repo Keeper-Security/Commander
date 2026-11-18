@@ -186,12 +186,17 @@ class _Step2DotProgress:
             print('.', file=sys.stderr, end='', flush=True)
             self._ended_with_number = False
 
-    def finish(self, ok: bool = True) -> None:
+    def finish(self, ok: bool = True, errors: int = 0) -> None:
+        """End the line. With *errors* the work itself was done and only some parts failed: say so
+        ("done with 1 error(s) (7 resource(s) processed)") instead of "failed"."""
         if not self._started:
             return
         if self.count and not self._ended_with_number:
             print(str(self.count), file=sys.stderr, end='', flush=True)
             self._ended_with_number = True
+        if errors:
+            print(f' done with {errors} error(s) ({self.count} resource(s) processed)', file=sys.stderr, flush=True)
+            return
         suffix = ' done' if ok else ' failed'
         if self.total and self.count != self.total:
             print(
@@ -899,7 +904,8 @@ class BatchPamImportEngine:
         except Exception as err:
             # Setup failure (tokens / graph load); records are already in the vault.
             self.dag_errors.append(f'Step 2 setup: {err}')
-            logging.error(f'Batch Step 2 setup failed: {err}', exc_info=True)
+            logging.error(f'Batch Step 2 setup failed: {err}')
+            logging.debug('Batch Step 2 setup failed', exc_info=True)
         self._print_dag_error_summary()
         return True
 
@@ -1048,7 +1054,8 @@ class BatchPamImportEngine:
             )
         except Exception as err:
             self.vault_update_errors.append(f'Step 1b deferred ref updates: {err}')
-            logging.error(f'Batch Step 1b failed: {err}', exc_info=True)
+            logging.error(f'Batch Step 1b failed: {err}')
+            logging.debug('Batch Step 1b failed', exc_info=True)
             return False
         for uid, reason in summary.warnings:
             logging.warning(f'  SKIPPED  {uid}: {reason}')
@@ -1081,7 +1088,8 @@ class BatchPamImportEngine:
             )
         except Exception as err:
             self.vault_update_errors.append(f'Step 1c attachments/scripts: {err}')
-            logging.error(f'Batch Step 1c failed: {err}', exc_info=True)
+            logging.error(f'Batch Step 1c failed: {err}')
+            logging.debug('Batch Step 1c failed', exc_info=True)
             return False
         for uid, reason in summary.warnings:
             logging.warning(f'  Step 1c warning  {uid}: {reason}')
@@ -1137,7 +1145,9 @@ class BatchPamImportEngine:
         # tracked and counted instead of aborting; run() prints the recovery hint.
         def _dag_error(what: str, err: BaseException) -> None:
             self.dag_errors.append(f'{what}: {err}')
-            logging.error(f'Batch Step 2: {what} failed: {err}', exc_info=True)
+            # one line for the user; the traceback only with --debug
+            logging.error(f'Batch Step 2: {what} failed: {err}')
+            logging.debug('Batch Step 2: %s failed', what, exc_info=True)
 
         def _maybe_mid_flush() -> None:
             nonlocal processed
@@ -1160,6 +1170,7 @@ class BatchPamImportEngine:
                         self.users_folder_uid, self.resources_folder_uid,
                         rotation_throttle=rotation_throttle,
                         service_queue=service_queue,
+                        errors_out=self.dag_errors,
                     )
                 except Exception as err:
                     _dag_error(f'configuration of {getattr(mach, "title", "") or mach.uid}', err)
@@ -1218,7 +1229,7 @@ class BatchPamImportEngine:
             ok = not self.dag_errors
         finally:
             set_layer_b_force_legacy(False)
-            progress.finish(ok=ok)
+            progress.finish(ok=ok, errors=len(self.dag_errors))
 
         try:
             sync_down_after_batch(self.params, self.project)
