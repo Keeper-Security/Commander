@@ -56,6 +56,11 @@ class StorageHandler(ABC):
     """Abstract base class for biometric flag storage"""
 
     @abstractmethod
+    def store_biometric_flag(self, username: str) -> bool:
+        """Cache account passkey availability without claiming a local credential"""
+        pass
+
+    @abstractmethod
     def get_biometric_flag(self, username: str) -> bool:
         """Get biometric flag for user"""
         pass
