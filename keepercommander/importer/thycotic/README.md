@@ -271,6 +271,8 @@ Where the record role comes from:
 
 **Direct record shares** are created only when a user's record role differs from the role they get on the record's Keeper folder, or when the user has no folder role (not on the folder, or the secret has no folder). The record stays in its folder; Keeper applies the record-level role over the folder role. Group members covered by a team folder grant are compared at the team's role, and the importing user is never shared to.
 
+**Revocation gap (warned, not auto-fixed):** If a secret breaks inheritance and **removes** a user/group that still has the folder role, Keeper NSF has no deny/no-access record share. Import logs a warning and lists those principals in the end-of-import NSF ACL summary — remédiate manually (move the secret or adjust folder membership).
+
 Example: folder Owner + secret View gives full-manager on the folder and a viewer share on each record; folder Edit + secret Edit gives content-manager on the folder and no record share.
 
 **Note:** The Keeper web vault also lists a directly shared record at the root of the recipient's My Vault when they can see its folder too.

@@ -190,6 +190,24 @@ def diff_secret_acl(folder_roles_by_email, secret_roles_by_email):
     return deltas
 
 
+def revoked_folder_emails(folder_roles_by_email, secret_roles_by_email):
+    # type: (Dict[str, str], Dict[str, str]) -> List[str]
+    """Emails on the folder ACL omitted from a non-inheriting secret ACL.
+
+    Keeper NSF has no deny/no-access record share, so folder cascade would keep
+    these principals on the record. Callers must warn; they cannot revoke via share.
+    """
+    folder_roles = folder_roles_by_email or {}
+    secret_roles = secret_roles_by_email or {}
+    return sorted(email for email in folder_roles if email not in secret_roles)
+
+
+REVOKED_ACCESS_ACTION = (
+    'Removed from this secret in Delinea, but Keeper NSF cannot deny access while the '
+    'user still has the folder role — remédiate manually (separate folder / remove folder grant)'
+)
+
+
 def secret_owner_emails_from_perm_rows(perm_rows, users_by_id, old_domain=None, new_domain=None):
     # type: (List[Dict], Dict[int, Dict], Optional[str], Optional[str]) -> set
     """Emails granted Delinea secretAccessRoleName Owner on a secret (any co-owner)."""
