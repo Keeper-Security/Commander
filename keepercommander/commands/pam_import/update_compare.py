@@ -389,6 +389,82 @@ def diff_workflow(opts: Optional[PamWorkflowOptions], raw_workflow: Any, current
     return changes, []
 
 
+_DAY_TOKEN = {v: k for k, v in _WF_DAYS.items()}
+
+
+def _hhmm_text(value: int) -> str:
+    return f'{int(value) // 100:02d}:{int(value) % 100:02d}'
+
+
+def workflow_options_from_config(config: Dict[str, Any], user_email_of=None) -> PamWorkflowOptions:
+    """The stored workflow as the options object the apply step sends (every field filled from the config).
+
+    Raises ValueError for an approver that has only a user id and cannot be resolved to an email: such an approver
+    could not be written back, and the apply step would delete it."""
+    params = (config or {}).get('parameters') or {}
+    allowed = params.get('allowedTimes') or {}
+    opts = PamWorkflowOptions()
+    opts.approvals_needed = int(params.get('approvalsNeeded') or 0)
+    opts.checkout_needed = bool(params.get('checkoutNeeded'))
+    opts.start_access_on_approval = bool(params.get('startAccessOnApproval'))
+    opts.require_reason = bool(params.get('requireReason'))
+    opts.require_ticket = bool(params.get('requireTicket'))
+    opts.require_mfa = bool(params.get('requireMFA'))
+    opts.access_duration_ms = int(params.get('accessLength') or opts.access_duration_ms)
+    opts.allowed_days = [_DAY_TOKEN[d] for d in allowed.get('allowedDays') or [] if d in _DAY_TOKEN]
+    opts.time_ranges = [{'start': _hhmm_text(r.get('startTime') or 0), 'end': _hhmm_text(r.get('endTime') or 0)}
+                        for r in allowed.get('timeRanges') or []]
+    opts.timezone = allowed.get('timeZone') or ''
+    for item in (config or {}).get('approvers') or []:
+        escalation = {'escalation': bool(item.get('escalation')),
+                      'escalation_after_ms': int(item.get('escalationAfterMs') or 0)}
+        if item.get('user'):
+            opts.approvers.append({'principal_type': 'user', 'email': str(item['user']), 'team_uid_b64': None,
+                                   **escalation})
+        elif item.get('teamUid'):
+            opts.approvers.append({'principal_type': 'team', 'email': None,
+                                   'team_uid_b64': _team_key(item['teamUid']), **escalation})
+        elif item.get('userId') is not None and user_email_of and user_email_of(item['userId']):
+            opts.approvers.append({'principal_type': 'user', 'email': str(user_email_of(item['userId'])),
+                                   'team_uid_b64': None, **escalation})
+        else:
+            raise ValueError(f'an approver with the user id {item.get("userId")} cannot be resolved to an email')
+    return opts
+
+
+def merged_workflow_options(opts: PamWorkflowOptions, raw_workflow: Dict[str, Any], current: Optional[Dict[str, Any]], *,
+                            mode: str = 'merge', graph_overwrite: bool = False, user_email_of=None) -> PamWorkflowOptions:
+    """The options to send: ``apply_workflow`` replaces ALL parameters, so for an existing workflow start from the
+    stored one and overlay only the keys the JSON wrote. Approvers: the union (JSON wins on escalation); exactly the
+    JSON's in overwrite with ``graph_overwrite``. A new workflow is the JSON's options as they are."""
+    if current is None:
+        return opts
+    merged = workflow_options_from_config(current, user_email_of)
+    for raw_key, _stored, _default in _WF_FLAGS:
+        if raw_key in raw_workflow:
+            setattr(merged, raw_key, getattr(opts, raw_key))
+    if 'access_duration' in raw_workflow:
+        merged.access_duration_ms = opts.access_duration_ms
+    times = raw_workflow.get('allowed_times') if isinstance(raw_workflow.get('allowed_times'), dict) else {}
+    if 'allowed_days' in times:
+        merged.allowed_days = list(opts.allowed_days)
+    if 'time_ranges' in times:
+        merged.time_ranges = list(opts.time_ranges)
+    if 'timezone' in times:
+        merged.timezone = opts.timezone
+    if 'approvers' in raw_workflow:
+        def key(a):
+            return f'user:{a["email"].strip().lower()}' if a['principal_type'] == 'user' else f'team:{_team_key(a["team_uid_b64"])}'
+        if mode == MODE_OVERWRITE and graph_overwrite:
+            merged.approvers = list(opts.approvers)
+        else:
+            by_key = {key(a): a for a in merged.approvers}
+            for a in opts.approvers:
+                by_key[key(a)] = a
+            merged.approvers = list(by_key.values())
+    return merged
+
+
 # --------------------------------------------------------------------------------------------------------------
 # credential references
 # --------------------------------------------------------------------------------------------------------------

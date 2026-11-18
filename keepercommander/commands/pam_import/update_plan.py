@@ -46,6 +46,10 @@ class ItemResult:
     passwords_to_write: int = 0
     passwords_on_rotating: int = 0
     new_ai_blob: Optional[Dict[str, Any]] = None     # for the apply step: the AI blob built from the stored one
+    new_jit_blob: Optional[Dict[str, Any]] = None    # the whole jit_settings blob: stored one + the changed keys
+    acl_holders: Dict[str, List[str]] = field(default_factory=dict)   # {'admin': [uids], 'launch': [uids]} now
+    workflow_options: Any = None                     # PamWorkflowOptions to send (stored + written keys)
+    meta_version: int = 0                            # version of the stored meta edge
 
     @property
     def record_changes(self) -> int:
@@ -245,15 +249,28 @@ def _resource_graph_changes(item: ImportItem, result: ItemResult, state, config_
     connection = settings.get('connection') if isinstance(settings.get('connection'), dict) else {}
     loaded = getattr(obj, 'pam_settings', None) or getattr(obj, 'rbi_settings', None)
 
-    changes, warnings = ud.diff_meta(options, connection, graph.data(uid, 'meta'), mode=mode,
+    stored_meta = graph.data(uid, 'meta')
+    result.meta_version = int((stored_meta or {}).get('version') or 0) if isinstance(stored_meta, dict) else 0
+    result.acl_holders = uc.acl_holders(graph.edges_of_type(uid, 'acl'), uid)
+    changes, warnings = ud.diff_meta(options, connection, stored_meta, mode=mode,
                                      graph_overwrite=graph_overwrite)
     result.changes.extend(changes)
     result.warnings.extend(f'{item.ident}: {w}' for w in warnings)
 
     jit = getattr(loaded, 'jit_settings', None)
     if jit is not None and isinstance(options.get('jit_settings'), dict):
-        changes, warnings = ud.diff_jit(options['jit_settings'], jit.to_dag_dict(), graph.data(uid, 'jit_settings'),
+        stored_jit = graph.data(uid, 'jit_settings')
+        changes, warnings = ud.diff_jit(options['jit_settings'], jit.to_dag_dict(), stored_jit,
                                         mode=mode, graph_overwrite=graph_overwrite)
+        if changes:
+            blob = dict(stored_jit) if isinstance(stored_jit, dict) else {}
+            for change in changes:
+                key = change.path.split('.', 1)[1]
+                if change.op == ud.OP_REMOVE:
+                    blob.pop(key, None)
+                else:
+                    blob[key] = change.new
+            result.new_jit_blob = blob
         result.changes.extend(changes)
         result.warnings.extend(f'{item.ident}: {w}' for w in warnings)
 
@@ -266,11 +283,19 @@ def _resource_graph_changes(item: ImportItem, result: ItemResult, state, config_
 
     if isinstance(options.get('workflow'), dict):
         if uid in state.workflows:
+            current_wf = state.workflows.get(uid)
             changes, warnings = uc.diff_workflow(getattr(loaded, 'workflow', None), options['workflow'],
-                                                 state.workflows.get(uid), mode=mode, graph_overwrite=graph_overwrite,
+                                                 current_wf, mode=mode, graph_overwrite=graph_overwrite,
                                                  title=item.title)
             result.changes.extend(changes)
             result.warnings.extend(warnings)
+            if changes and getattr(loaded, 'workflow', None) is not None:
+                try:
+                    result.workflow_options = uc.merged_workflow_options(
+                        loaded.workflow, options['workflow'], current_wf, mode=mode, graph_overwrite=graph_overwrite)
+                except ValueError as err:
+                    result.warnings.append(f'{item.ident}: the workflow cannot be updated safely: {err}')
+                    result.changes = [c for c in result.changes if not c.path.startswith('workflow')]
         else:
             result.warnings.append(f'{item.ident}: the workflow could not be read; it is not compared')
 
