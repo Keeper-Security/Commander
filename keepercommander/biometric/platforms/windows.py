@@ -58,11 +58,35 @@ class WindowsStorageHandler(StorageHandler):
                 winreg.CloseKey(key)
 
     def get_biometric_flag(self, username: str) -> bool:
-        """Get biometric flag from Windows registry - True if credential ID exists"""
-        return self.get_credential_id(username) is not None
+        """Read the account flag or a legacy locally registered credential ID"""
+        try:
+            import winreg
+            with self.registry_key() as key:
+                try:
+                    value, reg_type = winreg.QueryValueEx(key, username)
+                    return ((reg_type == winreg.REG_DWORD and value == 1)
+                            or (reg_type == winreg.REG_SZ and bool(value)))
+                except FileNotFoundError:
+                    return False
+        except Exception as e:
+            logging.debug("Failed to retrieve biometric flag for %s: %s", username, e)
+            return False
+
+    def store_biometric_flag(self, username: str) -> bool:
+        """Store a boolean flag, preserving any locally registered credential ID"""
+        if self.get_biometric_flag(username):
+            return True
+        try:
+            import winreg
+            with self.registry_key() as key:
+                winreg.SetValueEx(key, username, 0, winreg.REG_DWORD, 1)
+            return True
+        except Exception as e:
+            logging.debug("Failed to store biometric flag for %s: %s", username, e)
+            return False
 
     def delete_biometric_flag(self, username: str) -> bool:
-        """Delete biometric flag from Windows registry - removes credential ID"""
+        """Delete the cached flag or legacy credential ID from Windows registry"""
         return self.delete_credential_id(username)
 
     def store_credential_id(self, username: str, credential_id: str) -> bool:

@@ -55,9 +55,35 @@ For Touch ID on macOS, also install `cbor2` and `pyobjc-framework-LocalAuthentic
 
 ### Initial Setup Process
 
+#### Existing account passkeys (automatic activation)
+
+If your account already has an active biometric-login passkey, sign in to
+Commander once with your Master Password or SSO. On supported macOS and Windows
+installations, Commander automatically checks the account's active passkeys,
+registers the device-encrypted data key, and remembers that passkey login is
+available for subsequent sessions. You do not need to run `biometric register`
+again or register your security key separately in Commander.
+
+Connect your existing FIDO2 security key before the next login, or use an
+available platform passkey. A security key registered only for two-factor
+authentication is not a biometric-login passkey. Server-side enterprise
+restrictions still apply. Cancelling or failing passkey authentication falls
+back to the normal login flow.
+
+Commander clears the cached flag when a successful login confirms that no
+active passkeys remain. Temporary sync failures preserve the cached state and
+are retried after the next successful login. This does not enable persistent
+login or change the account's "Stay Logged In" setting.
+
+`biometric unregister` removes the local flag and disables the credential
+registered by this Commander installation, if one is stored. It does not
+disable passkeys created in other clients. If active account passkeys remain,
+automatic activation will run again after the next successful login.
+
 #### 1. Biometric Registration
 
-Register your biometric credentials with Keeper (requires initial login with your Master password):
+To add a **new** passkey, register your biometric credentials with Keeper
+(requires an initial authenticated session):
 
 ```bash
 # First, log in to Keeper Commander
@@ -94,12 +120,15 @@ On Windows, choose the security key in the native WebAuthn dialog. **For registr
 
 You can add a security key alongside an existing platform credential. Registration and authentication request all supported authenticator types; enterprise restrictions are applied by the server. `RESTRICT_PLATFORM_PASSKEY_LOGIN` excludes platform credentials, and `RESTRICT_CROSS_PLATFORM_PASSKEY_LOGIN` excludes roaming credentials.
 
-#### 2. Device Registration (Mandatory)
+#### 2. Device Registration
 
-**Device registration is required before biometric authentication can be used:**
+The device-encrypted data key is required for passkey login. Commander registers
+it automatically after a successful login when the account has active passkeys.
+If you just added your first passkey in the current session, you can register
+the device immediately rather than waiting for the next successful login:
 
 ```bash
-# Register your device with Keeper (mandatory step)
+# Register your device with Keeper if needed
 this-device register
 ```
 
