@@ -277,6 +277,8 @@ class DelineaImportOrchestrator:
                 continue
             if not PermissionMapper.is_override(secret, secret_rows, folder_rows[folder_id]):
                 continue
+            self.permissions.record_revoked_override(
+                boundary_rows[boundary_id], secret_rows, mapped.title)
             grants = self.permissions.secret_grants(secret_rows)
             if not grants:
                 continue

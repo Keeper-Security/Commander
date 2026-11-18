@@ -2,16 +2,22 @@
 # -*- coding: utf-8 -*-
 
 import unittest
+from unittest.mock import MagicMock, patch
+
+from keepercommander.importer.importer import Record
 from keepercommander.importer.thycotic.nsf_acl import (
+    REVOKED_ACCESS_ACTION,
     thycotic_secret_role_to_nsf_role,
     diff_secret_acl,
     nsf_record_shares_for_secret_acl,
     parse_secret_inherit_permissions,
+    revoked_folder_emails,
     secret_acl_differs_from_folder_rows,
     thycotic_folder_role_to_nsf_role,
     folder_roles_by_email,
     record_roles_by_email,
 )
+from keepercommander.importer.thycotic.thycotic import ThycoticImporter
 
 
 class TestThycoticSecretRoleMappings(unittest.TestCase):
@@ -443,6 +449,196 @@ class TestSecretAclOverrides(unittest.TestCase):
         self.assertEqual(len(deltas), 2)
         self.assertIn(('user2@example.com', 'full-manager'), deltas)
         self.assertIn(('user3@example.com', 'viewer'), deltas)
+
+
+class TestRevokedFolderEmails(unittest.TestCase):
+    """Folder principals omitted from a non-inheriting secret ACL."""
+
+    def test_revoked_when_user_removed_from_secret(self):
+        folder = {'alice@example.com': 'full-manager', 'bob@example.com': 'viewer'}
+        secret = {'bob@example.com': 'viewer'}
+        self.assertEqual(revoked_folder_emails(folder, secret), ['alice@example.com'])
+
+    def test_no_revocation_when_all_folder_members_present(self):
+        folder = {'alice@example.com': 'full-manager'}
+        secret = {'alice@example.com': 'viewer', 'bob@example.com': 'viewer'}
+        self.assertEqual(revoked_folder_emails(folder, secret), [])
+
+    def test_empty_secret_revokes_everyone_on_folder(self):
+        folder = {'alice@example.com': 'full-manager', 'bob@example.com': 'viewer'}
+        self.assertEqual(
+            revoked_folder_emails(folder, {}),
+            ['alice@example.com', 'bob@example.com'])
+
+    def test_diff_secret_acl_does_not_emit_revocations(self):
+        """Positive deltas only — removals are tracked separately."""
+        folder = {'alice@example.com': 'full-manager'}
+        secret = {}
+        self.assertEqual(diff_secret_acl(folder, secret), [])
+        self.assertEqual(revoked_folder_emails(folder, secret), ['alice@example.com'])
+
+
+class TestApplyNsfSecretAclOrchestration(unittest.TestCase):
+    """End-to-end ThycoticImporter._apply_nsf_secret_acl behavior."""
+
+    def setUp(self):
+        self.importer = ThycoticImporter()
+        self.auth = MagicMock()
+
+    def _apply(self, secret, folder_id, folders, secret_rows, users=None, groups=None, params=None):
+        record = Record()
+        record.title = secret.get('name') or 'secret'
+        users = users or USERS
+        groups = groups or GROUPS
+        with patch.object(ThycoticImporter, 'get_user_lookup', return_value=users), \
+                patch.object(ThycoticImporter, 'get_group_lookup', return_value=groups), \
+                patch.object(self.importer, '_permission_rows_for_secret', return_value=secret_rows):
+            self.importer._apply_nsf_secret_acl(
+                record, secret, secret.get('id') or 1, folder_id, folders, users, self.auth,
+                params=params)
+        return record
+
+    def test_revocation_warns_when_folder_owner_omitted_from_secret(self):
+        """Alice Owner on folder; secret inherit OFF omits Alice → warn, no deny share."""
+        parent_rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+        ]
+        folders = {
+            10: {
+                'id': 10, 'folderPath': 'Finance', 'inheritPermissions': False,
+                'parentFolderId': None, 'permissions': parent_rows,
+            },
+        }
+        secret = {'id': 99, 'name': 'Executive Comp', 'enableInheritPermissions': False}
+        secret_rows = [{'userId': 3, 'secretAccessRoleName': 'Edit'}]
+
+        with self.assertLogs(level='WARNING') as logs:
+            record = self._apply(secret, 10, folders, secret_rows)
+
+        self.assertFalse(getattr(record, 'nsf_record_shares', None))
+        self.assertEqual(len(self.importer._nsf_revoked_access), 1)
+        secret_id, title, email, folder_role = self.importer._nsf_revoked_access[0]
+        self.assertEqual((secret_id, title, email, folder_role),
+                         (99, 'Executive Comp', 'priya@example.com', 'full-manager'))
+        self.assertTrue(any('priya@example.com' in line for line in logs.output))
+        self.assertIn(REVOKED_ACCESS_ACTION, ' '.join(logs.output))
+
+    def test_implicit_inherit_break_uses_secret_rows_and_no_group_filter(self):
+        """enableInheritPermissions True/omitted but ACL differs → secret_rows, expand groups."""
+        folder_rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+            {'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+        ]
+        folders = {
+            10: {
+                'id': 10, 'folderPath': 'Finance', 'inheritPermissions': False,
+                'parentFolderId': None, 'permissions': folder_rows,
+            },
+        }
+        # Flag says inherit ON (or omitted); secret ACL adds Owner for priya and omits group.
+        secret = {'id': 50, 'name': 'Override', 'enableInheritPermissions': True}
+        secret_rows = [
+            {'userId': 2, 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'secretAccessRoleName': 'View'},
+        ]
+        params = MagicMock()
+        params.user = 'importer@example.com'
+        # Missing Keeper team → group excluded from folder_baseline only.
+        self.importer._nsf_team_granted = lambda group, p: False
+
+        record = self._apply(secret, 10, folders, secret_rows, params=params)
+        shares = {(s.uid, s.role) for s in (record.nsf_record_shares or [])}
+        # secret_rows used (Owner share for priya); group_filter=None so david from
+        # secret user row is shared even though team is missing from folder baseline.
+        self.assertIn(('priya@example.com', 'full-manager'), shares)
+        self.assertIn(('david@example.com', 'viewer'), shares)
+        # Team not on folder baseline → no revocation for group members via team.
+        self.assertEqual(self.importer._nsf_revoked_access, [])
+
+    def test_subfolder_missing_team_inherit_on_and_off(self):
+        """Child inherits parent ACL; missing Keeper team filtered on inherit ON only."""
+        parent_rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'},
+            {'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+        ]
+        folders = {
+            1: {
+                'id': 1, 'folderPath': 'Parent', 'inheritPermissions': False,
+                'parentFolderId': None, 'permissions': parent_rows,
+            },
+            2: {
+                'id': 2, 'folderPath': 'Parent\\Child', 'inheritPermissions': True,
+                'parentFolderId': 1,
+            },
+        }
+        params = MagicMock()
+        params.user = ''
+        self.importer._nsf_team_granted = lambda group, p: False
+
+        # Inherit ON: record roles from folder rows with team filter → group members omitted.
+        inherit_on = {'id': 1, 'name': 'Inherits', 'enableInheritPermissions': True}
+        record_on = self._apply(inherit_on, 2, folders, secret_rows=[], params=params)
+        # Folder Owner + secret Owner match → no share; group filtered out of both sides.
+        self.assertFalse(getattr(record_on, 'nsf_record_shares', None))
+        self.assertEqual(self.importer._nsf_revoked_access, [])
+
+        # Inherit OFF: secret grants group member directly; group_filter=None.
+        self.importer._nsf_revoked_access = []
+        inherit_off = {'id': 2, 'name': 'Own ACL', 'enableInheritPermissions': False}
+        secret_rows = [
+            {'userId': 2, 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'secretAccessRoleName': 'Edit'},
+        ]
+        record_off = self._apply(inherit_off, 2, folders, secret_rows, params=params)
+        shares = {(s.uid, s.role) for s in (record_off.nsf_record_shares or [])}
+        # david has folder role only via missing team → baseline lacks david → direct share.
+        self.assertIn(('david@example.com', 'content-manager'), shares)
+        self.assertEqual(self.importer._nsf_revoked_access, [])
+
+    def test_root_inherit_true_with_permissions_matches_yield_grants(self):
+        """Root inheritPermissions=True is skipped by yield; baseline must also be empty."""
+        rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'},
+        ]
+        folders = {
+            1: {
+                'id': 1, 'folderPath': 'Rootish', 'inheritPermissions': True,
+                'parentFolderId': None, 'permissions': rows,
+            },
+        }
+        yielded = list(self.importer._yield_nsf_shared_folders(
+            self.auth, folders, USERS, GROUPS))
+        self.assertEqual(yielded, [])
+
+        secret = {'id': 7, 'name': 'In root', 'enableInheritPermissions': True}
+        # Secret inherits; folder_rows empty (no custom-ACL ancestor) → uses secret_rows.
+        secret_rows = [{'userId': 2, 'secretAccessRoleName': 'Owner'}]
+        record = self._apply(secret, 1, folders, secret_rows)
+        shares = {(s.uid, s.role) for s in (record.nsf_record_shares or [])}
+        # No folder baseline (matches yield) → every secret principal gets a direct share.
+        self.assertEqual(shares, {('priya@example.com', 'full-manager')})
+        self.assertEqual(self.importer._nsf_revoked_access, [])
+
+
+class TestPamRevokedOverride(unittest.TestCase):
+    def test_record_revoked_override_finding(self):
+        from keepercommander.importer.thycotic.pam.models import FindingLog
+        from keepercommander.importer.thycotic.pam.permission_mapper import PermissionMapper
+
+        findings = FindingLog()
+        mapper = PermissionMapper(USERS, GROUPS, findings)
+        folder_rows = [
+            {'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+        ]
+        secret_rows = [{'userId': 3, 'secretAccessRoleName': 'Edit'}]
+        mapper.record_revoked_override(folder_rows, secret_rows, 'Executive Comp')
+        items = list(findings)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].category, 'Secret permission')
+        self.assertIn('priya@example.com', items[0].item)
+        self.assertEqual(items[0].action, REVOKED_ACCESS_ACTION)
 
 
 if __name__ == '__main__':

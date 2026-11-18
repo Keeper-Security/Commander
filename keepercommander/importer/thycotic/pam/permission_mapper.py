@@ -9,7 +9,7 @@
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from ....nested_share_folder.permissions import resolve_role_name
-from ..nsf_acl import parse_secret_inherit_permissions
+from ..nsf_acl import REVOKED_ACCESS_ACTION, parse_secret_inherit_permissions
 from .models import AccessGrant, FindingLog, Principal, PrincipalKind, _positive
 from .role_mapper import (
     CLASSIC_FOLDER_FLAGS, CLASSIC_RECORD_FLAGS, RoleResolver
@@ -112,6 +112,37 @@ class PermissionMapper:
         if isinstance(secret, dict) and not parse_secret_inherit_permissions(secret):
             return True
         return _role_pairs(secret_rows) != _role_pairs(folder_rows)
+
+    def revoked_from_override(self, folder_rows: List[dict], secret_rows: List[dict]) -> List[Principal]:
+        """Folder principals omitted from a secret that uses its own ACL (no Keeper deny)."""
+        secret_keys = set()
+        for row in secret_rows or []:
+            if not isinstance(row, dict):
+                continue
+            principal = self.principal(row)
+            if principal is not None:
+                secret_keys.add((principal.kind, principal.source_id))
+        revoked: List[Principal] = []
+        seen = set()
+        for row in folder_rows or []:
+            if not isinstance(row, dict):
+                continue
+            principal = self.principal(row)
+            if principal is None:
+                continue
+            key = (principal.kind, principal.source_id)
+            if key in secret_keys or key in seen:
+                continue
+            seen.add(key)
+            revoked.append(principal)
+        return revoked
+
+    def record_revoked_override(self, folder_rows: List[dict], secret_rows: List[dict],
+                                secret_label: str) -> None:
+        """Add Findings for folder principals removed from an override secret."""
+        for principal in self.revoked_from_override(folder_rows, secret_rows):
+            label = f'{secret_label}/{principal.name or principal.source_id}'
+            self.findings.add('Secret permission', label, REVOKED_ACCESS_ACTION)
 
     @staticmethod
     def to_permission_entry(grant: AccessGrant, keeper_name: str, use_nsf: bool) -> Optional[dict]:

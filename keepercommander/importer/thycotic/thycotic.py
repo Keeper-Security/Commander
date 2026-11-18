@@ -44,11 +44,13 @@ from ...constants import EMAIL_PATTERN
 from ...params import KeeperParams
 from ... import record_types, vault, api
 from .nsf_acl import (
+    REVOKED_ACCESS_ACTION,
     folder_roles_by_email,
     nsf_acl_log,
     nsf_record_shares_for_secret_acl,
     parse_secret_inherit_permissions,
     record_roles_by_email,
+    revoked_folder_emails,
     secret_acl_differs_from_folder_rows,
     thycotic_folder_role_to_nsf_role,
 )
@@ -979,6 +981,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         super().__init__()
         self._last_keep_alive = int(datetime.datetime.utcnow().timestamp())
         self._keep_alive_period = 30 * 60
+        # {(secret_id, title, email, folder_role), ...} for non-inheriting secrets that
+        # omit a folder principal — NSF cannot express a deny share.
+        self._nsf_revoked_access = []
 
     def support_folder_filter(self):
         return True
@@ -2183,6 +2188,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             yield record
         print(' Done', flush=True)
         ThycoticImporter.print_skipped(skipped_secrets, skipped_fields)
+        self.print_nsf_revoked_access()
 
 
     @staticmethod
@@ -2194,6 +2200,20 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         if skipped_fields:
             print(f'\nSkipped {len(skipped_fields)} Fields:')
             print(tabulate(skipped_fields, headers='keys', maxcolwidths=[None, 40, None, None, 80]), end='\n\n')
+
+    def print_nsf_revoked_access(self):
+        """Surface folder principals omitted from non-inheriting secret ACLs (no NSF deny)."""
+        rows = getattr(self, '_nsf_revoked_access', None) or []
+        if not rows:
+            return
+        table = [
+            {'Secret ID': secret_id, 'Title': title, 'Email': email, 'Folder role': folder_role}
+            for secret_id, title, email, folder_role in rows
+        ]
+        print(f'\nNSF ACL warning: {len(table)} principal(s) removed from a secret in Delinea '
+              f'but still have folder access in Keeper (NSF cannot deny record access):')
+        print(tabulate(table, headers='keys', maxcolwidths=[None, 40, None, None]), end='\n\n')
+        print(f'  {REVOKED_ACCESS_ACTION}\n')
 
     def _yield_nsf_shared_folders(self, auth, folders, users_by_id, groups_by_id=None, **kwargs):
         # type: (ThycoticAuth, Dict[int, Dict], Dict[int, Dict], Optional[Dict[int, Dict]], ...) -> Iterable[SharedFolder]
@@ -2358,6 +2378,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 secret_id)
 
         team_filter = (lambda g: self._nsf_team_granted(g, params))
+        check_revocations = False
         if secret_inherits and folder_rows:
             record_rows = folder_rows
             # Same team filter as folder grants: unresolved Keeper teams must not
@@ -2367,6 +2388,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         else:
             record_rows = secret_rows
             record_group_filter = None
+            # Only when the secret uses its own ACL — omitted folder members are revocations.
+            check_revocations = bool(in_folder)
             source = 'secret-permissions (inherit OFF)' if in_folder else 'secret-permissions (no folder)'
         nsf_acl_log('secret id=%s: record roles from %s', secret_id, source)
 
@@ -2377,17 +2400,42 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
 
         self._attach_secret_nsf_permissions(
             record, secret_id, record_rows, folder_baseline, users_lookup, groups_lookup,
-            group_filter=record_group_filter, **kwargs)
+            group_filter=record_group_filter, check_revocations=check_revocations, **kwargs)
+
+    def _warn_nsf_revoked_access(self, record, secret_id, folder_baseline, record_roles, import_user=''):
+        # type: (Record, int, Dict[str, str], Dict[str, str], str) -> None
+        """Warn when folder principals are omitted from a non-inheriting secret (no NSF deny)."""
+        revoked = revoked_folder_emails(folder_baseline, record_roles)
+        if import_user:
+            revoked = [email for email in revoked if email.strip().lower() != import_user]
+        if not revoked:
+            return
+        title = record.title or ''
+        tracked = getattr(self, '_nsf_revoked_access', None)
+        if tracked is None:
+            self._nsf_revoked_access = tracked = []
+        for email in revoked:
+            folder_role = folder_baseline.get(email) or '-'
+            logging.warning(
+                'NSF ACL: secret id=%s title=%r: %s has folder role %s but was removed from the '
+                'secret ACL — %s',
+                secret_id, title, email, folder_role, REVOKED_ACCESS_ACTION)
+            tracked.append((secret_id, title, email, folder_role))
 
     def _attach_secret_nsf_permissions(self, record, secret_id, record_rows, folder_baseline,
-                                       users_by_id, groups_by_id, group_filter=None, **kwargs):
-        # type: (Record, int, List[Dict], Dict[str, str], Dict[int, Dict], Dict[int, Dict], Any, ...) -> None
+                                       users_by_id, groups_by_id, group_filter=None,
+                                       check_revocations=False, **kwargs):
+        # type: (Record, int, List[Dict], Dict[str, str], Dict[int, Dict], Dict[int, Dict], Any, bool, ...) -> None
         """Attach NSF record shares for users whose record role differs from their folder role."""
         old_domain = kwargs.get('old_domain')
         new_domain = kwargs.get('new_domain')
+        params = kwargs.get('params')
+        import_user = (getattr(params, 'user', None) or '').strip().lower()
 
         if not record_rows:
             nsf_acl_log('secret id=%s: no permission rows — no record shares', secret_id)
+            if check_revocations:
+                self._warn_nsf_revoked_access(record, secret_id, folder_baseline or {}, {}, import_user)
             return
 
         record_roles = record_roles_by_email(
@@ -2397,15 +2445,18 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             nsf_acl_log(
                 'secret id=%s: %d permission row(s) but no mappable user/group emails',
                 secret_id, len(record_rows))
+            if check_revocations:
+                self._warn_nsf_revoked_access(record, secret_id, folder_baseline or {}, {}, import_user)
             return
 
-        params = kwargs.get('params')
-        import_user = (getattr(params, 'user', None) or '').strip().lower()
         if import_user:
             record_roles = {
                 email: role for email, role in record_roles.items()
                 if email.strip().lower() != import_user
             }
+
+        if check_revocations:
+            self._warn_nsf_revoked_access(record, secret_id, folder_baseline or {}, record_roles, import_user)
 
         shares = nsf_record_shares_for_secret_acl(record_roles, folder_baseline)
         shared_emails = {email for email, _ in shares}
