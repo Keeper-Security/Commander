@@ -20,6 +20,20 @@ FOLDER_ROLE_MAP = {
     'view': 'viewer',
 }
 
+SECRET_ROLE_MAP = {
+    'list': 'viewer',
+    'view': 'viewer',
+    'edit': 'content-manager',
+    'owner': 'full-manager',
+}
+
+# Higher wins when the same email appears more than once (user rows and groups).
+ROLE_WEIGHT = {
+    'full-manager': 3,
+    'content-manager': 2,
+    'viewer': 1,
+}
+
 
 def thycotic_folder_role_to_nsf_role(folder_access_role_name):
     # type: (Optional[str]) -> Optional[str]
@@ -29,12 +43,30 @@ def thycotic_folder_role_to_nsf_role(folder_access_role_name):
     return FOLDER_ROLE_MAP.get(folder_access_role_name.strip().lower())
 
 
+def thycotic_secret_role_to_nsf_role(secret_access_role_name):
+    # type: (Optional[str]) -> Optional[str]
+    """Map Delinea secret access role to NSF role (secret-level overrides).
+
+    API returns Owner/Edit/View/List only; extended flags are separate fields.
+    List maps to viewer. Unknown roles return None (no viewer fallback).
+    """
+    if not secret_access_role_name:
+        return None
+    return SECRET_ROLE_MAP.get(secret_access_role_name.strip().lower())
+
+
+def _keep_highest_role(roles, email, role):
+    # type: (Dict[str, str], str, str) -> None
+    """Keep the higher-weight role for *email* (no downgrade)."""
+    current = roles.get(email)
+    if current is None or ROLE_WEIGHT.get(role, 0) > ROLE_WEIGHT.get(current, 0):
+        roles[email] = role
+
+
 def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=None,
                     old_domain=None, new_domain=None):
     # type: (List[Dict], Any, Dict[int, Dict], Dict[int, Dict], Any, Optional[str], Optional[str]) -> Dict[str, str]
     from ..importer import replace_email_domain
-
-    ROLE_WEIGHT = {'full-manager': 3, 'content-manager': 2, 'viewer': 1}
 
     users_by_id = users_by_id or {}
     groups_by_id = groups_by_id or {}
@@ -50,8 +82,7 @@ def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=
             email = (users_by_id.get(user_id) or {}).get('emailAddress')
             if email:
                 email_normalized = replace_email_domain(email, old_domain, new_domain).lower()
-                if email_normalized not in user_roles or ROLE_WEIGHT.get(role, 0) > ROLE_WEIGHT.get(user_roles[email_normalized], 0):
-                    user_roles[email_normalized] = role
+                _keep_highest_role(user_roles, email_normalized, role)
         elif group_id > 0 and group_id in groups_by_id:
             group = groups_by_id[group_id]
             if group_filter is not None and not group_filter(group):
@@ -60,10 +91,12 @@ def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=
                 email = (users_by_id.get(member_id) or {}).get('emailAddress')
                 if email:
                     email_normalized = replace_email_domain(email, old_domain, new_domain).lower()
-                    if email_normalized not in group_roles or ROLE_WEIGHT.get(role, 0) > ROLE_WEIGHT.get(group_roles[email_normalized], 0):
-                        group_roles[email_normalized] = role
-    # A direct user row wins over a role inherited through a group.
-    group_roles.update(user_roles)
+                    _keep_highest_role(group_roles, email_normalized, role)
+    # Merge: highest role wins; on a tie, a direct user row beats a group grant.
+    for email, role in user_roles.items():
+        current = group_roles.get(email)
+        if current is None or ROLE_WEIGHT.get(role, 0) >= ROLE_WEIGHT.get(current, 0):
+            group_roles[email] = role
     return group_roles
 
 
@@ -76,12 +109,13 @@ def folder_roles_by_email(perm_rows, users_by_id, groups_by_id, group_filter=Non
         users_by_id, groups_by_id, group_filter, old_domain, new_domain)
 
 
-def record_roles_by_email(perm_rows, users_by_id, groups_by_id, old_domain=None, new_domain=None):
-    # type: (List[Dict], Dict[int, Dict], Dict[int, Dict], Optional[str], Optional[str]) -> Dict[str, str]
+def record_roles_by_email(perm_rows, users_by_id, groups_by_id, old_domain=None, new_domain=None,
+                          group_filter=None):
+    # type: (List[Dict], Dict[int, Dict], Dict[int, Dict], Optional[str], Optional[str], Any) -> Dict[str, str]
     """{email: NSF record role} from Delinea permission rows (secretAccessRoleName only)."""
     return _roles_by_email(
         perm_rows, lambda r: thycotic_secret_role_to_nsf_role(r.get('secretAccessRoleName')),
-        users_by_id, groups_by_id, None, old_domain, new_domain)
+        users_by_id, groups_by_id, group_filter, old_domain, new_domain)
 
 
 def _permission_principal_key(perm_row):
@@ -146,57 +180,13 @@ def parse_secret_inherit_permissions(secret):
     return True
 
 
-def thycotic_secret_role_to_nsf_role(secret_access_role_name):
-    # type: (Optional[str]) -> Optional[str]
-    """
-    Map Delinea secret-only access role to NSF role (for secret-level overrides).
-
-    Targets Keeper documented NSF roles only. List maps to viewer (List has no
-    requestor UI equivalent in Keeper).
-
-    Args:
-        secret_access_role_name: Delinea secret access role
-
-    Returns:
-        NSF role name or None.
-    """
-    if not secret_access_role_name:
-        return None
-
-    role = secret_access_role_name.lower()
-
-    if role == 'list':
-        return 'viewer'
-    elif role == 'view':
-        return 'viewer'
-    elif role == 'edit':
-        return 'content-manager'
-    elif role == 'owner':
-        return 'full-manager'
-
-    return None
-
-
 def diff_secret_acl(folder_roles_by_email, secret_roles_by_email):
     # type: (Dict[str, str], Dict[str, str]) -> List[Tuple[str, str]]
-    """
-    Find secrets where the NSF role differs from the folder role.
-
-    Args:
-        folder_roles_by_email: {email: nsf_role} from folder grants
-        secret_roles_by_email: {email: nsf_role} from secret-only grants
-
-    Returns:
-        [(email, nsf_role), ...] where secret role differs from folder role (skip no-ops).
-    """
+    """Return [(email, nsf_role), ...] where the secret role differs from the folder role."""
     deltas = []
-
     for email, secret_role in secret_roles_by_email.items():
-        folder_role = folder_roles_by_email.get(email)
-
-        if secret_role != folder_role:
+        if secret_role != folder_roles_by_email.get(email):
             deltas.append((email, secret_role))
-
     return deltas
 
 
@@ -215,19 +205,13 @@ def secret_owner_emails_from_perm_rows(perm_rows, users_by_id, old_domain=None, 
             continue
         email = users_by_id[user_id].get('emailAddress')
         if email:
-            owners.add(replace_email_domain(email, old_domain, new_domain))
+            owners.add(replace_email_domain(email, old_domain, new_domain).lower())
     return owners
 
 
 def nsf_record_shares_for_secret_acl(record_roles_by_email, folder_roles_by_email):
     # type: (Dict[str, str], Dict[str, str]) -> List[Tuple[str, str]]
-    """
-    Build NSF direct record shares for one secret.
-
-    A share is returned only when the user's record role differs from the
-    role they already get on the record's Keeper folder, or when the user
-    has no folder role (not on the folder, or the secret has no folder).
-    """
+    """Direct shares where the record role differs from the folder role (or no folder role)."""
     return diff_secret_acl(folder_roles_by_email or {}, record_roles_by_email or {})
 
 
