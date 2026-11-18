@@ -2285,7 +2285,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             seen.add(folder_id)
             folder = folders[folder_id]
             permissions = folder.get('permissions')
-            if folder.get('inheritPermissions') is False and isinstance(permissions, list) and permissions:
+            # Stop at the custom-ACL folder even when its permission list is empty;
+            # do not walk past it to a parent (empty means no folder grants here).
+            if folder.get('inheritPermissions') is False and isinstance(permissions, list):
                 return permissions
             folder_id = folder.get('parentFolderId')
         return []
@@ -2355,25 +2357,31 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 'secret id=%s: secret-permissions differ from folder-permissions — treating as inherit OFF',
                 secret_id)
 
+        team_filter = (lambda g: self._nsf_team_granted(g, params))
         if secret_inherits and folder_rows:
             record_rows = folder_rows
+            # Same team filter as folder grants: unresolved Keeper teams must not
+            # expand into per-user record shares when the secret only inherits.
+            record_group_filter = team_filter
             source = 'folder secret roles (inherit ON)'
         else:
             record_rows = secret_rows
+            record_group_filter = None
             source = 'secret-permissions (inherit OFF)' if in_folder else 'secret-permissions (no folder)'
         nsf_acl_log('secret id=%s: record roles from %s', secret_id, source)
 
         folder_baseline = folder_roles_by_email(
             baseline_rows, users_lookup, groups_lookup,
-            group_filter=lambda g: self._nsf_team_granted(g, params),
+            group_filter=team_filter,
             old_domain=old_domain, new_domain=new_domain)
 
         self._attach_secret_nsf_permissions(
-            record, secret_id, record_rows, folder_baseline, users_lookup, groups_lookup, **kwargs)
+            record, secret_id, record_rows, folder_baseline, users_lookup, groups_lookup,
+            group_filter=record_group_filter, **kwargs)
 
     def _attach_secret_nsf_permissions(self, record, secret_id, record_rows, folder_baseline,
-                                       users_by_id, groups_by_id, **kwargs):
-        # type: (Record, int, List[Dict], Dict[str, str], Dict[int, Dict], Dict[int, Dict], ...) -> None
+                                       users_by_id, groups_by_id, group_filter=None, **kwargs):
+        # type: (Record, int, List[Dict], Dict[str, str], Dict[int, Dict], Dict[int, Dict], Any, ...) -> None
         """Attach NSF record shares for users whose record role differs from their folder role."""
         old_domain = kwargs.get('old_domain')
         new_domain = kwargs.get('new_domain')
@@ -2382,7 +2390,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             nsf_acl_log('secret id=%s: no permission rows — no record shares', secret_id)
             return
 
-        record_roles = record_roles_by_email(record_rows, users_by_id, groups_by_id, old_domain, new_domain)
+        record_roles = record_roles_by_email(
+            record_rows, users_by_id, groups_by_id, old_domain, new_domain,
+            group_filter=group_filter)
         if not record_roles:
             nsf_acl_log(
                 'secret id=%s: %d permission row(s) but no mappable user/group emails',

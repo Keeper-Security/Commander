@@ -61,6 +61,12 @@ class TestThycoticSecretRoleMappings(unittest.TestCase):
         self.assertEqual(role2, 'full-manager')
         self.assertEqual(role3, 'full-manager')
 
+    def test_broken_secret_role_returns_none(self):
+        """Empty / unknown secret roles do not grant viewer."""
+        self.assertIsNone(thycotic_secret_role_to_nsf_role(''))
+        self.assertIsNone(thycotic_secret_role_to_nsf_role('   '))
+        self.assertIsNone(thycotic_secret_role_to_nsf_role('NotARole'))
+
 
 class TestSecretAclDiff(unittest.TestCase):
     """Test ACL diffing for secret-only overrides."""
@@ -258,10 +264,39 @@ class TestFolderOnlyRoleMapping(unittest.TestCase):
         roles = folder_roles_by_email(rows, USERS, GROUPS)
         self.assertEqual(roles, {'david@example.com': 'content-manager', 'clint@example.com': 'full-manager'})
 
+    def test_group_higher_role_not_downgraded_by_direct_user(self):
+        """Direct user View must not overwrite a group Owner grant."""
+        rows = [
+            {'groupId': 10, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'},
+            {'userId': 3, 'folderAccessRoleName': 'View', 'secretAccessRoleName': 'View'},
+        ]
+        roles = folder_roles_by_email(rows, USERS, GROUPS)
+        self.assertEqual(roles.get('david@example.com'), 'full-manager')
+        self.assertEqual(roles.get('clint@example.com'), 'full-manager')
+
+    def test_direct_user_equal_weight_beats_group(self):
+        """On a tie, the direct user row wins over the group grant."""
+        rows = [
+            {'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+            {'userId': 3, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'},
+        ]
+        roles = folder_roles_by_email(rows, USERS, GROUPS)
+        self.assertEqual(roles.get('david@example.com'), 'content-manager')
+
     def test_folder_group_filtered_when_team_missing(self):
         rows = [{'groupId': 10, 'folderAccessRoleName': 'Edit', 'secretAccessRoleName': 'Edit'}]
         roles = folder_roles_by_email(rows, USERS, GROUPS, group_filter=lambda g: False)
         self.assertEqual(roles, {})
+
+    def test_broken_folder_permission_rows_skipped(self):
+        """Missing / unknown folder roles and empty principals are ignored."""
+        rows = [
+            {'userId': 2, 'folderAccessRoleName': 'NotARole'},
+            {'userId': 0, 'groupId': 0, 'folderAccessRoleName': 'Owner'},
+            {'userId': 2, 'folderAccessRoleName': 'Edit'},
+        ]
+        roles = folder_roles_by_email(rows, USERS, GROUPS)
+        self.assertEqual(roles, {'priya@example.com': 'content-manager'})
 
 
 class TestRecordRolesAndShares(unittest.TestCase):
@@ -343,6 +378,16 @@ class TestRecordRolesAndShares(unittest.TestCase):
         self.assertIs(ThycoticImporter._effective_folder_rows(folders, 4), sub_rows)
         self.assertEqual(ThycoticImporter._effective_folder_rows(folders, 1), [])
         self.assertEqual(ThycoticImporter._effective_folder_rows(folders, None), [])
+
+    def test_effective_folder_rows_stops_on_empty_custom_acl(self):
+        """inherit=False with an empty permissions list must not walk to the parent."""
+        from keepercommander.importer.thycotic.thycotic import ThycoticImporter
+        parent_rows = [{'userId': 2, 'folderAccessRoleName': 'Owner', 'secretAccessRoleName': 'Owner'}]
+        folders = {
+            2: {'id': 2, 'inheritPermissions': False, 'parentFolderId': 1, 'permissions': parent_rows},
+            5: {'id': 5, 'inheritPermissions': False, 'parentFolderId': 2, 'permissions': []},
+        }
+        self.assertEqual(ThycoticImporter._effective_folder_rows(folders, 5), [])
 
     def test_import_user_excluded_before_diff(self):
         record_roles = {'sarah@example.com': 'full-manager', 'priya@example.com': 'viewer'}
