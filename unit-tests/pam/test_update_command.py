@@ -311,6 +311,17 @@ class TestBuildPlanGlue(Quiet):
         hook.assert_called()
         self.assertTrue(any('belongs to configuration ' + 'OTHER' + 'A' * 17 in e for e in plan.errors))
 
+    def test_an_unknown_workflow_approver_is_a_plan_warning(self):
+        raw = tp.machine_json()
+        raw['pam_settings']['options']['workflow'] = {
+            'approvals_needed': 1, 'approvers': [{'principal': {'type': 'user', 'email': 'nobody@example.com'}}]}
+        with patch.object(upd, 'approver_warnings', return_value=['Resource "M1": workflow approver '
+                                                                  '"nobody@example.com" was not found among the users of your enterprise']) as check:
+            plan, _ = self.run_build({'pam_data': {'resources': [raw]}})
+        check.assert_called_once()
+        self.assertEqual(len(check.call_args.args[1]), 1)           # only the resource with a workflow section
+        self.assertTrue(any('was not found among the users of your enterprise' in w for w in plan.warnings))
+
     def test_the_configuration_must_exist(self):
         with self.assertRaises(CommandError) as ctx:
             self.run_build({'pam_data': {'resources': [tp.machine_json()]}}, config=False)

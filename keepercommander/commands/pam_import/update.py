@@ -37,6 +37,7 @@ from . import update_diff as ud
 from . import update_plan as up
 from . import update_report as report
 from .vault_reader import read_vault_state
+from .workflow_apply import approver_warnings
 from ..base import Command
 from ..pam import gateway_helper
 from ..pam.config_helper import configuration_controller_get
@@ -295,6 +296,9 @@ class PAMProjectUpdateCommand(Command):
                                 skip_files=bool(kwargs.get('skip_attachments')),
                                 service_mode=bool(getattr(params, 'service_mode', False)))
         plan.errors.extend(state.errors)
+        # a workflow approver who is not a Keeper user would make the workflow fail when it is written
+        plan.warnings.extend(approver_warnings(params, [i.obj for i in matched if i.kind == KIND_RESOURCE
+                                                        and _wants_workflow(i)]))
         for line in scope.nsf_warnings(ignored=False):
             plan.warnings.append(line)
         return plan
