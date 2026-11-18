@@ -13,7 +13,7 @@ import logging
 import os
 import platform
 import subprocess
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, Union
 
 from fido2.webauthn import PublicKeyCredentialCreationOptions, PublicKeyCredentialRequestOptions
 
@@ -41,15 +41,25 @@ class MacOSStorageHandler(StorageHandler):
         return os.path.join(home_dir, "Library", "Preferences", MACOS_PREFS_PATH)
 
     def get_biometric_flag(self, username: str) -> bool:
-        """Get biometric flag from macOS preferences - True if credential ID exists"""
-        return self.get_credential_id(username) is not None
+        """Read the account flag or a legacy locally registered credential ID"""
+        value = self._get_stored_value(username)
+        return value is True or (isinstance(value, str) and bool(value))
+
+    def store_biometric_flag(self, username: str) -> bool:
+        """Store a boolean flag, preserving any locally registered credential ID"""
+        if self.get_biometric_flag(username):
+            return True
+        return self._store_value(username, True)
 
     def delete_biometric_flag(self, username: str) -> bool:
-        """Delete biometric flag from macOS preferences - removes credential ID"""
+        """Delete the cached flag or legacy credential ID from macOS preferences"""
         return self.delete_credential_id(username)
 
     def store_credential_id(self, username: str, credential_id: str) -> bool:
         """Store credential ID for user in macOS preferences (also serves as biometric flag)"""
+        return self._store_value(username, credential_id)
+
+    def _store_value(self, username: str, value: Union[str, bool]) -> bool:
         try:
             import plistlib
             prefs = {}
@@ -61,21 +71,25 @@ class MacOSStorageHandler(StorageHandler):
                 except Exception:
                     prefs = {}
             
-            prefs[username] = credential_id
+            prefs[username] = value
             
             os.makedirs(os.path.dirname(self.prefs_path), exist_ok=True)
             with open(self.prefs_path, 'wb') as f:
                 plistlib.dump(prefs, f)
             
-            logging.debug("Stored credential ID for user: %s", username)
+            logging.debug("Stored biometric login state for user: %s", username)
             return True
         except Exception as e:
-            logging.warning("Failed to store credential ID for %s: %s", username, str(e))
-            BiometricErrorHandler.create_storage_error("store credential ID", "macOS", e)
+            logging.warning("Failed to store biometric login state for %s: %s", username, str(e))
+            BiometricErrorHandler.create_storage_error("store biometric login state", "macOS", e)
             return False
 
     def get_credential_id(self, username: str) -> Optional[str]:
         """Get stored credential ID for user from macOS preferences"""
+        value = self._get_stored_value(username)
+        return value if isinstance(value, str) and value else None
+
+    def _get_stored_value(self, username: str) -> Optional[Union[str, bool]]:
         try:
             import plistlib
             if not os.path.exists(self.prefs_path):
@@ -84,16 +98,10 @@ class MacOSStorageHandler(StorageHandler):
             with open(self.prefs_path, 'rb') as f:
                 prefs = plistlib.load(f)
             
-            value = prefs.get(username)
-            
-            if value:
-                if isinstance(value, str):
-                    return value
-            
-            return None
+            return prefs.get(username)
         except Exception as e:
-            logging.warning("Failed to retrieve credential ID for %s: %s", username, str(e))
-            BiometricErrorHandler.create_storage_error("get credential ID", "macOS", e)
+            logging.warning("Failed to retrieve biometric login state for %s: %s", username, str(e))
+            BiometricErrorHandler.create_storage_error("get biometric login state", "macOS", e)
             return None
 
     def delete_credential_id(self, username: str) -> bool:

@@ -762,10 +762,12 @@ class ShareFolderCommand(Command):
                 current_user = _folder_user_lookup(curr_sf, email)
                 if current_user:
                     email = current_user['username']
+                email_is_self = bool(params.user) and email.casefold() == params.user.casefold()
+
                 if _is_shared_folder_owner_email(curr_sf, email, params=params):
-                    # Allow the existing owner self-removal / succession flow in
-                    # _confirm_folder_user_removals; reject grant/update of owner perms.
-                    if action == 'grant':
+                    # For remmove requests, allow the existing owner self-removal / succession flow in _confirm_folder_user_removals
+                    # For grant requests, block when the owner already has a direct user row, but allow self-share if user has access through team
+                    if action == 'grant' and not (email_is_self and not current_user):
                         raise CommandError(
                             'share-folder',
                             _owner_share_target_message(email, entity='shared folder'))
@@ -784,6 +786,23 @@ class ShareFolderCommand(Command):
                         rq.sharedFolderUpdateUser.append(uo)
                     elif action == 'remove':
                         rq.sharedFolderRemoveUser.append(uo.username)
+                elif action == 'grant' and email_is_self:
+                    # Self-share
+                    current_mr = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_manage_records') is True else folder_pb2.BOOLEAN_FALSE
+                    uo.manageRecords = current_mr if mr is None else folder_pb2.BOOLEAN_TRUE if mr == 'on' else folder_pb2.BOOLEAN_FALSE
+                    current_mu = folder_pb2.BOOLEAN_TRUE if curr_sf.get('default_manage_users') is True else folder_pb2.BOOLEAN_FALSE
+                    uo.manageUsers = current_mu if mu is None else folder_pb2.BOOLEAN_TRUE if mu == 'on' else folder_pb2.BOOLEAN_FALSE
+                    sf_key = curr_sf.get('shared_folder_key_unencrypted')  # type: Optional[bytes]
+                    if sf_key:
+                        if params.forbid_rsa:
+                            uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v2(sf_key, params.data_key)
+                            uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key_gcm
+                        else:
+                            uo.typedSharedFolderKey.encryptedKey = crypto.encrypt_aes_v1(sf_key, params.data_key)
+                            uo.typedSharedFolderKey.encryptedKeyType = folder_pb2.encrypted_by_data_key
+                    else:
+                        logging.info('Shared folder key is not available.')
+                    rq.sharedFolderAddUser.append(uo)
                 elif action == 'grant':
                     invited = api.load_user_public_keys(params, [email], send_invites=True)
                     if invited:

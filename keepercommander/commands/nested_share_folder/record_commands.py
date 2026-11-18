@@ -33,6 +33,7 @@ from .helpers import (
     ensure_nested_share_record, ensure_nested_share_folder,
     ROOT_FOLDER_UID,
 )
+from ...nested_share_folder.common import NSF_RECORD_REMOVE_BATCH_SIZE
 from .parsers import (
     nested_share_record_add_parser,
     nested_share_record_update_parser,
@@ -649,8 +650,10 @@ class NestedShareRecordRemoveCommand(Command):
                                        identifier=folder_arg)
 
         removals = self._build_removals(params, record_args, folder_uid, operation)
-        if len(removals) > 500:
-            raise CommandError('nsf-rm', 'Maximum 500 records per invocation')
+        if len(removals) > NSF_RECORD_REMOVE_BATCH_SIZE:
+            raise CommandError(
+                'nsf-rm',
+                f'Maximum {NSF_RECORD_REMOVE_BATCH_SIZE} records per invocation')
 
         with command_error_handler('nsf-rm'):
             self._preview_and_confirm(params, removals, operation, force, dry_run)

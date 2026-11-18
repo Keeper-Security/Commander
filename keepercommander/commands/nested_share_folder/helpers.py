@@ -25,10 +25,15 @@ import datetime
 import logging
 from contextlib import contextmanager
 from datetime import timezone, timedelta
-from typing import Optional
 
 from ...error import CommandError
 from ... import nested_share_folder as _nsf
+from ...nested_share_folder.common import (
+    MAX_NESTED_SHARE_FOLDER_DEPTH,
+    ROOT_FOLDER_UID,
+    normalize_nsf_user_message,
+    normalize_parent_uid as _normalize_parent_uid,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,9 +41,6 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════
-
-ROOT_FOLDER_UID = 'AAAAAAAAAAAAAAAAAPmtNA'
-"""Sentinel UID the server uses for the Nested Share Folder root folder."""
 
 RECORD_PERM_LABELS = [
     ('can_view_title',       'View Title'),
@@ -104,15 +106,6 @@ def command_error_handler(cmd_name):
         raise CommandError(cmd_name, str(exc))
 
 
-def normalize_nsf_user_message(message):
-    """Replace legacy server terminology in user-facing error text."""
-    if not message:
-        return message
-    return (message
-            .replace('Keeper Drive', 'Nested Share Folder')
-            .replace('keeper drive', 'nested share folder'))
-
-
 def check_result(result, cmd_name):
     """Raise ``CommandError`` when *result['success']* is falsy.
 
@@ -144,12 +137,8 @@ def suppress_exit(self, status=0, message=None):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def normalize_parent_uid(uid):
-    """Normalize root folder UIDs to a consistent ``'root'`` or empty string."""
-    if not isinstance(uid, str):
-        uid = str(uid) if uid else ''
-    if uid == ROOT_FOLDER_UID or uid == 'root':
-        return 'root'
-    return uid or ''
+    """Preserve the legacy helper import path."""
+    return _normalize_parent_uid(uid)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -424,10 +413,6 @@ def collect_records_in_folder(params, folder_uid, recursive=False):
 # ═══════════════════════════════════════════════════════════════════════════
 # Move
 # ═══════════════════════════════════════════════════════════════════════════
-
-MAX_NESTED_SHARE_FOLDER_DEPTH = 5
-"""Maximum number of folder levels below the Nested Share Folder root."""
-
 
 def _folder_depth(params, folder_uid):
     """Return the nesting depth of *folder_uid* (root's direct children = 1)."""

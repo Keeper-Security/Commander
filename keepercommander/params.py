@@ -246,6 +246,7 @@ class KeeperParams:
         self.clone_code = None
         self.device_token = None
         self.device_private_key = None
+        self.skip_scan = False          # Skip login-time BreachWatch/security scans and device registration only.
         self.account_uid_bytes = None
         self.session_token_bytes = None
         self.record_type_cache = {}  # RT definitions only
@@ -254,6 +255,7 @@ class KeeperParams:
         self.breach_watch_security_data = {}
         self.security_score_data = {}
         self.sso_login_info = None
+        self.federated_login = None    # Service Mode only; survives clear_session, cleared by logout
         # Nested Share Folder caches for atomic sync objects
         self.nested_share_folders = {}                  # folder_uid -> FolderData
         self.nested_share_folder_keys = {}              # folder_uid -> list of FolderKey
