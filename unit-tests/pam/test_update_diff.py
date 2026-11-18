@@ -204,6 +204,14 @@ class TestOverwrite(unittest.TestCase):
         self.assertEqual(removed, ['pamSettings.connection.recordingIncludeKeys'])
         self.assertEqual(result.changes[0].old, True)
 
+    def test_an_empty_desired_object_is_not_a_change_only_its_extra_keys_are_removals(self):
+        current = vault_machine()
+        current['custom'][0]['value'][0]['portForward'] = {'port': '2222'}
+        raw = {'type': 'pamMachine', 'pam_settings': {'connection': {'protocol': 'ssh', 'port': '2222'}}}
+        changes = diff(raw, current, mode=ud.MODE_OVERWRITE).changes
+        self.assertEqual([(c.op, c.path) for c in changes if 'portForward' in c.path],
+                         [(ud.OP_REMOVE, 'pamSettings.portForward.port')])    # no "~ portForward: {...} -> {}"
+
     def test_a_key_added_by_a_newer_vault_is_removed(self):
         current = vault_machine()
         current['custom'][0]['value'][0]['connection']['futureKey'] = 'x'

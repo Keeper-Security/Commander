@@ -412,6 +412,8 @@ def _overwrite_record(result, classification, family, record_type, obj, current,
         exists, vault_object = current_value(current, base)
         vault_object = vault_object if exists and isinstance(vault_object, dict) else {}
         for sub, wanted in _flatten(container).items():
+            if isinstance(wanted, dict) and not wanted:
+                continue          # an empty object (no port_forward written): nothing to set, extras are removed below
             target = us.Target(us.KIND_RECORD, field=owner, sub=sub, scope=scope)
             if (owner, '', sub) in written or (sub.split('.')[0] == 'connection'
                                                and sub.split('.')[-1] in REF_OUTPUT_KEYS):
