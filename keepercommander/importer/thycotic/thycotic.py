@@ -2397,7 +2397,6 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             nsf_acl_log(
                 'secret id=%s: %d permission row(s) but no mappable user/group emails',
                 secret_id, len(record_rows))
-            logging.debug('[NSF-ACL] secret id=%s rows=%s', secret_id, record_rows)
             return
 
         params = kwargs.get('params')
