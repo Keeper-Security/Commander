@@ -94,7 +94,8 @@ class PAMUniversalSyncConfigListCommand(Command):
                     # Create DAG connection and load graph for this record
                     # history_level=1 means only load latest/active edges, not full history
                     conn = Connection(params=params)
-                    dag = DAG(conn=conn, record=record, graph_id=0, logger=logging, history_level=1)
+                    dag = DAG(conn=conn, record=record, graph_id=0, logger=logging, history_level=1,
+                      path_aware=True)
                     dag.load(sync_point=0)
 
                     # Get root vertex and check for universal_sync loop edge
@@ -318,7 +319,8 @@ class PAMUniversalSyncConfigListCommand(Command):
         try:
             # Create DAG connection and load graph
             conn = Connection(params=params)
-            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1)
+            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1,
+                      path_aware=True)
             dag.load(sync_point=0)
 
             # Get root vertex and check for universal_sync loop edge
@@ -787,7 +789,8 @@ class PAMUniversalSyncConfigEditCommand(Command):
         # history_level=1 means only load latest/active edges, not full history
         try:
             conn = Connection(params=params)
-            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1)
+            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1,
+                      path_aware=True)
             dag.load(sync_point=0)
             root = dag.get_root
 
@@ -1090,7 +1093,8 @@ class PAMUniversalSyncRunCommand(Command):
 
         try:
             conn = Connection(params=params)
-            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1)
+            dag = DAG(conn=conn, record=network, graph_id=0, logger=logging, history_level=1,
+                      path_aware=True)
             dag.load(sync_point=0)
             root = dag.get_root
             for edge in root.edges:
