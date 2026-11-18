@@ -623,9 +623,6 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
         if not record.nsf_record_shares:
             continue
         records_with_shares += 1
-        logging.debug(
-            '[NSF-ACL] apply: record title=%r uid=%s has %d queued nsf_record_shares',
-            record.title, record.uid, len(record.nsf_record_shares))
 
         record_uid = record.uid
         if not record_uid:
@@ -638,14 +635,8 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
             recipient = nsr.uid
             role = nsr.role
             if not recipient or not role:
-                logging.debug(
-                    '[NSF-ACL] apply: skip incomplete share on "%s" recipient=%r role=%r',
-                    record.title, recipient, role)
                 continue
             if params.user and recipient.lower() == params.user.lower():
-                logging.debug(
-                    '[NSF-ACL] skip record share for import user (record owner): %s on "%s"',
-                    recipient, record.title)
                 continue
 
             try:
@@ -654,9 +645,6 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
                 logging.warning('Invalid NSF role for record "%s": "%s"', record_uid, role)
                 continue
 
-            logging.debug(
-                '[NSF-ACL] apply: prepare grant email=%s role=%s (%s) record=%r uid=%s',
-                recipient, role, role_pb, record.title, record_uid)
             all_record_shares.append({
                 'record_uid': record_uid,
                 'email': recipient,
@@ -691,9 +679,6 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
                     share.get('record_uid'), share.get('access_role_type'), share.get('email'))
         else:
             try:
-                logging.debug(
-                    '[NSF-ACL] apply: calling vault/records/v3/share for %d grant(s)',
-                    len(batch))
                 results = _call_with_throttle_retry(
                     f'NSF record permission batch ({len(batch)} items)',
                     batch_create_record_shares_v3,
@@ -711,7 +696,7 @@ def apply_nsf_record_permissions(params, records, dry_run=False):
                     elif result.get('skipped'):
                         skipped += 1
                         logging.warning(
-                            '[NSF-ACL] NSF record share SKIPPED for "%s" on "%s" (%s): %s',
+                            'NSF record share SKIPPED for "%s" on "%s" (%s): %s',
                             item.get('email'), item.get('record_title') or item.get('record_uid'),
                             item.get('record_uid'), result.get('message') or result)
                     else:
