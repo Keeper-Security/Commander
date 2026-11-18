@@ -103,6 +103,7 @@ class NestedShareRecordShareCommand(Command):
                                 rotate_on_expiration)
             return
 
+        direct_share_revoked = False
         with command_error_handler('nsf-share-record'):
             for email in emails:
                 for record_uid in record_uids:
@@ -117,6 +118,10 @@ class NestedShareRecordShareCommand(Command):
                         logging.warning('nsf-share-record: %s', e)
                         continue
                     self._log_results(result, effective_action, email)
+                    direct_share_revoked |= bool(result.get('direct_share_revoked'))
+        if direct_share_revoked:
+            logging.info('Note: access inherited from a parent shared folder, if any, is not affected. '
+                         'Run the revoke again to deny it on the record.')
 
     # Strategy dispatch — returns (result, effective_action)
     @staticmethod

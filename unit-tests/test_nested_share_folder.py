@@ -1976,14 +1976,36 @@ class TestNestedShareFolderSharingCommands(TestCase):
         from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
         ruid, robj = _make_record()
         mock_unshare.return_value = {
-            'success': True, 'message': '',
+            'success': True, 'message': '', 'direct_share_revoked': True,
             'results': [{'record_uid': ruid, 'success': True, 'message': ''}],
         }
         cmd = NestedShareRecordShareCommand()
-        with mock.patch('builtins.print'):
+        with mock.patch('builtins.print'), self.assertLogs(level='INFO') as logs:
             cmd.execute(_make_params(nested_share_records={ruid: robj}),
                         record=ruid, email=['user@example.com'],
                         action='revoke')
+        self.assertTrue(any('inherited from a parent shared folder' in m for m in logs.output))
+
+    @patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3')
+    @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
+    def test_share_record_grant_after_denial_creates_share(self, mock_share, mock_accesses):
+        """A denial left by revoke is not a share: grant must create, not report a no-op."""
+        from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
+        from keepercommander import nested_share_folder as nsf
+        from keepercommander.proto import folder_pb2
+        nsf.__dict__.pop('share_record_v3', None)
+        ruid, robj = _make_record()
+        mock_accesses.return_value = {'record_accesses': [{
+            'record_uid': ruid, 'accessor_name': 'user@example.com', 'access_type': 'AT_USER',
+            'owner': False, 'inherited': False, 'denied_access': True,
+            'access_role_type': folder_pb2.VIEWER,
+        }]}
+        mock_share.return_value = {
+            'success': True, 'results': [{'record_uid': ruid, 'success': True, 'message': ''}]}
+        NestedShareRecordShareCommand().execute(
+            _make_params(nested_share_records={ruid: robj}),
+            record=ruid, email=['user@example.com'], action='grant', role='viewer')
+        mock_share.assert_called_once()
 
     @patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3')
     @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
@@ -3080,8 +3102,9 @@ class TestNestedShareFolderRecordApi(TestCase):
 
         self.assertEqual(mock_sync_down.call_count, 1)
 
-    def _run_unshare(self, accesses=None, revoke_error=None, lookup_error=None):
-        """Run unshare_record_v3 with mocked server calls; return (result, requests)."""
+    def _run_unshare(self, accesses=None, revoke_rejected=False, lookup_error=None):
+        """Run unshare_record_v3 with mocked server calls; return (result, requests, lookup)."""
+        from keepercommander.error import KeeperApiError
         from keepercommander.nested_share_folder.record_api import unshare_record_v3
 
         ruid, robj = _make_record()
@@ -3093,8 +3116,8 @@ class TestNestedShareFolderRecordApi(TestCase):
 
         def communicate(params, rq, endpoint, rs_type=None):
             requests.append(rq)
-            if rq.revokeSharingPermissions and revoke_error:
-                raise revoke_error
+            if rq.revokeSharingPermissions and revoke_rejected:
+                raise KeeperApiError('bad_request', 'trying to update or revoke non existing permissions')
             return Mock(revokedSharingStatus=[_make_sharing_status(ruid, uid_bytes)],
                         createdSharingStatus=[_make_sharing_status(ruid, uid_bytes)])
 
@@ -3103,10 +3126,10 @@ class TestNestedShareFolderRecordApi(TestCase):
                 patch(f'{api_mod}.get_user_public_key', return_value=(Mock(), False, uid_bytes, False)), \
                 patch(f'{api_mod}.encrypt_for_recipient', return_value=b'enc-key'), \
                 patch(f'{api_mod}.get_record_accesses_v3', side_effect=lookup_error,
-                      return_value={'record_accesses': rows}), \
+                      return_value={'record_accesses': rows}) as lookup, \
                 patch(f'{api_mod}.api.communicate_rest', side_effect=communicate):
             result = unshare_record_v3(_make_params(), ruid, 'user@example.com')
-        return result, requests
+        return result, requests, lookup
 
     def _assert_denial(self, rq, role):
         perm = rq.createSharingPermissions[0]
@@ -3115,36 +3138,45 @@ class TestNestedShareFolderRecordApi(TestCase):
         self.assertEqual(perm.rules.accessRoleType, role)
         self.assertTrue(perm.rules.deniedAccess)
 
-    def test_unshare_record_v3_direct_share_sends_revoke(self):
-        _, requests = self._run_unshare(accesses=[{}])
+    def test_unshare_record_v3_direct_share_revokes_without_lookup(self):
+        """Direct and direct+inherited: one revoke call, no access lookup."""
+        result, requests, lookup = self._run_unshare(accesses=[{}, {'inherited': True}])
+        self.assertTrue(result['direct_share_revoked'])
         self.assertEqual(len(requests), 1)
         self.assertEqual(len(requests[0].revokeSharingPermissions), 1)
-        self.assertEqual(len(requests[0].createSharingPermissions), 0)
+        lookup.assert_not_called()
 
     def test_unshare_record_v3_inherited_access_sends_denial(self):
         for name in ('user@example.com', ''):  # matched by email, or by UID when name is missing
             with self.subTest(accessor_name=name):
-                _, requests = self._run_unshare(accesses=[{'inherited': True, 'accessor_name': name}])
-                self.assertEqual(len(requests), 1)
-                self._assert_denial(requests[0], folder_pb2.CONTENT_MANAGER)
+                _, requests, _ = self._run_unshare(
+                    accesses=[{'inherited': True, 'accessor_name': name}], revoke_rejected=True)
+                self.assertEqual(len(requests), 2)
+                self._assert_denial(requests[1], folder_pb2.CONTENT_MANAGER)
 
-    def test_unshare_record_v3_already_denied_sends_nothing(self):
-        result, requests = self._run_unshare(accesses=[{'inherited': True, 'denied_access': True}])
+    def test_unshare_record_v3_already_denied_sends_no_denial(self):
+        result, requests, _ = self._run_unshare(
+            accesses=[{'inherited': True, 'denied_access': True}], revoke_rejected=True)
         self.assertTrue(result['success'])
-        self.assertEqual(requests, [])
+        self.assertEqual(set(result['results'][0]),
+                         {'record_uid', 'recipient_uid', 'status', 'message', 'success', 'pending'})
+        self.assertEqual(len(requests), 1)
 
-    def test_unshare_record_v3_no_access_raises_without_denial(self):
+    def test_unshare_record_v3_no_access_or_failed_lookup_raises(self):
+        """Never deny (which sends a record key) unless inherited access is confirmed."""
         from keepercommander.error import KeeperApiError
-        error = KeeperApiError('bad_request', 'trying to update or revoke non existing permissions')
-        with self.assertRaises(KeeperApiError):
-            self._run_unshare(accesses=[], revoke_error=error)
+        for kwargs in ({'accesses': []}, {'lookup_error': Exception('lookup failed')}):
+            with self.subTest(**{k: str(v) for k, v in kwargs.items()}):
+                with self.assertRaises(KeeperApiError):
+                    self._run_unshare(revoke_rejected=True, **kwargs)
 
-    def test_unshare_record_v3_lookup_failure_falls_back_to_denial(self):
+    def test_unshare_record_v3_team_inherited_access_explains(self):
         from keepercommander.error import KeeperApiError
-        error = KeeperApiError('bad_request', 'trying to update or revoke non existing permissions')
-        _, requests = self._run_unshare(lookup_error=Exception('lookup failed'), revoke_error=error)
-        self.assertEqual(len(requests), 2)
-        self._assert_denial(requests[1], folder_pb2.VIEWER)
+        team = {'access_type': 'AT_TEAM', 'accessor_name': 'Ops', 'inherited': True,
+                'access_type_uid': utils.generate_uid()}
+        with self.assertRaises(KeeperApiError) as ctx:
+            self._run_unshare(accesses=[team], revoke_rejected=True)
+        self.assertIn("team 'Ops'", str(ctx.exception))
 
     def test_is_record_share_update_noop(self):
         from keepercommander.nested_share_folder.record_api import is_record_share_update_noop

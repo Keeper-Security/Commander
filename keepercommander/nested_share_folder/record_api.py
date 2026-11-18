@@ -25,6 +25,9 @@ from .permissions import resolve_role_name
 
 logger = logging.getLogger(__name__)
 
+_NON_EXISTING_PERMISSION_ERROR = 'non existing permissions'
+_ACCESS_STATE_PRECEDENCE = ('direct', 'denied', 'inherited')
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # Low-level protobuf builder
@@ -504,14 +507,17 @@ def get_record_accesses_v3(params, record_uids):
 
 
 def find_direct_user_share_access(access_result, record_uid, email):
-    """Return the direct AT_USER share row for *email* on *record_uid*, or None."""
+    """Return the direct AT_USER share row for *email* on *record_uid*, or None.
+
+    Denied rows are not shares: a grant over a denial must create a new share.
+    """
     email_cf = email.casefold()
     for access in access_result.get('record_accesses', []):
         if access.get('record_uid') != record_uid or access.get('owner', False):
             continue
         if access.get('access_type') and access.get('access_type') != 'AT_USER':
             continue
-        if access.get('inherited'):
+        if access.get('inherited') or access.get('denied_access'):
             continue
         if access.get('accessor_name', '').casefold() == email_cf:
             return access
@@ -796,45 +802,53 @@ def unshare_record_v3(params, record_uid, recipient_email, skip_sync=False):
     if not rec:
         raise ValueError(f"Record {record_uid} not found in cache")
 
+    try:
+        result = _send_revoke_share_request(params, record_uid, recipient_email)
+        result['direct_share_revoked'] = True
+        return result
+    except KeeperApiError as exc:
+        if not _is_non_existing_permission_error(exc):
+            raise
+        revoke_error = exc
+
     state, row = _get_user_access_state(params, record_uid, recipient_email)
-    if state == 'denied':
-        return {'results': [{'record_uid': record_uid, 'success': True,
-                             'message': 'Access already denied'}],
-                'success': True}
     if state == 'inherited':
         return _send_deny_inherited_request(
-            params, record_uid, recipient_email, (row or {}).get('access_role_type'))
-    try:
-        return _send_revoke_share_request(params, record_uid, recipient_email)
-    except KeeperApiError as exc:
-       
-        if state is not None or _NON_EXISTING_PERMISSION_ERROR not in str(exc).casefold():
-            raise
-        logger.debug("Revoke of '%s' on '%s' rejected as non-existing; "
-                     "denying inherited access instead.", recipient_email, record_uid)
-        return _send_deny_inherited_request(
-            params, record_uid, recipient_email, (row or {}).get('access_role_type'))
+            params, record_uid, recipient_email, row.get('access_role_type'))
+    if state == 'denied':
+        return {'results': [{'record_uid': record_uid, 'recipient_uid': row.get('access_type_uid', ''),
+                             'status': 'SUCCESS', 'message': 'Access already denied',
+                             'success': True, 'pending': False}],
+                'success': True}
+    if state == 'team':
+        raise KeeperApiError(
+            revoke_error.result_code,
+            f"'{recipient_email}' has no direct or inherited user access on this record; "
+            f"access may come through team '{row.get('accessor_name') or row.get('access_type_uid')}'. "
+            "Remove the user from the team or revoke the team's access on the parent folder.")
+    raise revoke_error
 
 
-_NON_EXISTING_PERMISSION_ERROR = 'non existing permissions'
+def _is_non_existing_permission_error(exc):
+    return exc.result_code == 'bad_request' and _NON_EXISTING_PERMISSION_ERROR in str(exc).casefold()
 
 
 def _get_user_access_state(params, record_uid, email):
-    """Return ``(state, row)``; state is 'direct', 'inherited', 'denied' or 'none'.
+    """Return ``(state, row)`` for *email* on *record_uid*.
 
-    Direct access wins over inherited; a denial wins over an inherited row.
-    Lookup failures return ``(None, None)`` (caller falls back to a revoke).
+    *state* is 'direct', 'denied' or 'inherited' (in that precedence) for the
+    user's own rows; 'team' when the user has none but a team holds inherited
+    access; otherwise ``None`` (also when the lookup fails).
     """
     try:
         result = get_record_accesses_v3(params, [record_uid])
     except Exception as exc:
         logger.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
         return None, None
+    accesses = [a for a in result.get('record_accesses', [])
+                if a.get('record_uid') == record_uid and not a.get('owner', False)]
+    user_rows = [a for a in accesses if a.get('access_type') in (None, '', 'AT_USER')]
     email_cf = email.casefold()
-    user_rows = [a for a in result.get('record_accesses', [])
-                 if a.get('record_uid') == record_uid
-                 and not a.get('owner', False)
-                 and a.get('access_type') in (None, '', 'AT_USER')]
     rows = [a for a in user_rows if (a.get('accessor_name') or '').casefold() == email_cf]
     if not rows and user_rows:
         try:
@@ -845,16 +859,20 @@ def _get_user_access_state(params, record_uid, email):
         if uid_bytes:
             user_uid = utils.base64_url_encode(uid_bytes)
             rows = [a for a in user_rows if a.get('access_type_uid') == user_uid]
-    for a in rows:
-        if not a.get('inherited') and not a.get('denied_access'):
-            return 'direct', a
-    for a in rows:
+
+    def _row_state(a):
         if a.get('denied_access'):
-            return 'denied', a
-    for a in rows:
-        if a.get('inherited'):
-            return 'inherited', a
-    return 'none', None
+            return 'denied'
+        return 'inherited' if a.get('inherited') else 'direct'
+
+    if rows:
+        row = min(rows, key=lambda a: _ACCESS_STATE_PRECEDENCE.index(_row_state(a)))
+        return _row_state(row), row
+    team_row = next((a for a in accesses if a.get('access_type') == 'AT_TEAM'
+                     and a.get('inherited') and not a.get('denied_access')), None)
+    if team_row:
+        return 'team', team_row
+    return None, None
 
 
 def _send_deny_inherited_request(params, record_uid, recipient_email, access_role_type=None):
