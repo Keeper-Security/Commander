@@ -29,7 +29,7 @@ class PAMDebugKRouterCommand(Command):
     )
     parser.add_argument('--url', '-u', required=False, dest='url', action='store',
                         help='Override the krouter base URL. Defaults to the URL Commander would normally use '
-                             '(KROUTER_URL env var, else derived from params.rest_context.server_base).')
+                             '(KROUTER_URL env var, a bare host with optional port such as "router.example:8443" or a full URL, else derived from params.rest_context.server_base).')
     parser.add_argument('--timeout', '-t', required=False, dest='timeout', type=float, default=10.0,
                         help='HTTP timeout in seconds (default: 10).')
     parser.add_argument('--raw', '-r', required=False, dest='raw', action='store_true',

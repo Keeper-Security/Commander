@@ -108,6 +108,11 @@ class ConnectionBase:
         if server_hostname and '://' in server_hostname:
             server_hostname = server_hostname.split('://', 1)[1].split('/', 1)[0]
 
+        from ...constants import get_router_override
+        override = get_router_override()
+        if override:
+            return override[1]
+
         # Only PROD GovCloud strips the subdomain (workaround for prod infrastructure).
         # DEV/QA GOV (govcloud.dev.keepersecurity.us, govcloud.qa.keepersecurity.us) keep govcloud.
         if server_hostname == 'govcloud.keepersecurity.us':

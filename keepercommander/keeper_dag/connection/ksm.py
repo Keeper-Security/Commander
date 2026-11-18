@@ -141,13 +141,12 @@ class Connection(ConnectionBase):
 
     def http_router_url_from_ksm_config_or_env(self) -> str:
 
-        router_host_from_env = os.getenv("KROUTER_URL")
-        if router_host_from_env:
-            router_http_host = router_host_from_env
-        else:
-            router_http_host = self.ws_router_url_from_ksm_config()
+        from ...constants import get_router_override
+        override = get_router_override()
+        if override:
+            return f'{override[0] or "https"}://{override[1]}'
 
-        return router_http_host.replace('ws', 'http')
+        return self.ws_router_url_from_ksm_config().replace('ws', 'http', 1)
 
     def authenticate(self,
                      agent: str,
