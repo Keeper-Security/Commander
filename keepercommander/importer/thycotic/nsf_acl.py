@@ -218,4 +218,4 @@ def nsf_record_shares_for_secret_acl(record_roles_by_email, folder_roles_by_emai
 def nsf_acl_log(message, *args, **kwargs):
     # type: (str, Any, Any) -> None
     """NSF ACL trace (visible when logging level is DEBUG)."""
-    logging.debug('[NSF-ACL] ' + message, *args, **kwargs)
+    logging.debug(message, *args, **kwargs)
