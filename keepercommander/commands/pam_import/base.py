@@ -50,6 +50,9 @@ CRON_WEEKDAY_NUMBERS = {
     'SUN': '1', 'MON': '2', 'TUE': '3', 'WED': '4',
     'THU': '5', 'FRI': '6', 'SAT': '7',
 }
+CRON_WEEKDAY_FROM_NUMBER = {
+    number: CRON_WEEKDAYS[name] for name, number in CRON_WEEKDAY_NUMBERS.items()
+}
 
 # Rotation schedule types
 SCHEDULE_TYPES = ("on-demand", "cron")
@@ -485,16 +488,38 @@ class PamAttachmentObject():
     # def to_json(self): pass  # File upload will create the JSON format
 
 
+def _quartz_weekday_number(token):
+    """Quartz day-of-week token to ``1``–``7``, or ``None``.
+
+    Accepts ``1``–``7``, ``MON`` / ``mon``, and ``MONDAY`` / ``Monday``.
+    """
+    text = (token or '').strip()
+    if text in CRON_WEEKDAY_FROM_NUMBER:
+        return text
+    upper = text.upper()
+    short = upper[:3]
+    if short not in CRON_WEEKDAY_NUMBERS:
+        return None
+    if upper != short and upper != CRON_WEEKDAYS[short]:
+        return None
+    return CRON_WEEKDAY_NUMBERS[short]
+
+
 def quartz_named_dow_to_numbers(cron):
     """Replace Quartz weekday names with 1–7 so Keeper's rotation CRON validator accepts the field."""
     parts = str(cron or '').split()
     if len(parts) != 6:
         return cron
     tokens = [token.strip() for token in parts[5].split(',') if token.strip()]
-    tokens_upper = [t.upper() for t in tokens]
-    if not tokens or any(t[:3] not in CRON_WEEKDAY_NUMBERS or len(t) != 3 or t != t.upper() for t, tu in zip(tokens, tokens_upper)):
+    if not tokens:
         return cron
-    parts[5] = ','.join(CRON_WEEKDAY_NUMBERS[tu] for tu in tokens_upper)
+    numbers = []
+    for token in tokens:
+        number = _quartz_weekday_number(token)
+        if number is None:
+            return cron
+        numbers.append(number)
+    parts[5] = ','.join(numbers)
     return ' '.join(parts)
 
 
@@ -524,12 +549,13 @@ def quartz_cron_to_keeper_schedule(cron):
         if interval:
             return {'type': 'DAILY', 'utcTime': utc_time, 'intervalCount': interval, 'tz': 'Etc/UTC'}
     if dom in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and month == CRON_ANY_VALUE:
-        dow_num_to_name = {'1': 'SUNDAY', '2': 'MONDAY', '3': 'TUESDAY', '4': 'WEDNESDAY', '5': 'THURSDAY', '6': 'FRIDAY', '7': 'SATURDAY'}
-        if dow in dow_num_to_name:
-            return {
-                'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': dow_num_to_name[dow],
+        days = [part for part in dow.split(',') if part]
+        if days and all(day in CRON_WEEKDAY_FROM_NUMBER for day in days):
+            schedules = [{
+                'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': CRON_WEEKDAY_FROM_NUMBER[day],
                 'intervalCount': 1, 'tz': 'Etc/UTC',
-            }
+            } for day in days]
+            return schedules[0] if len(schedules) == 1 else schedules
     if dow in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and dom.isdigit():
         interval = _step(month)
         day = int(dom)
@@ -3384,6 +3410,9 @@ class PamSettingsFieldData:
                     if isinstance(pr, ConnectionProtocol) and pr.value.lower() == proto:  # pylint: disable=E1101
                         return con.load(cdata)
             if cdata.get("administrative_credentials") or cdata.get("launch_credentials"):
+                logging.warning(
+                    'Connection protocol "%s" is unknown; loading base connection settings',
+                    str(proto)[:24])
                 return BaseConnectionSettings.load(cdata)
             logging.warning(f"""Connection skipped: unknown protocol "{str(proto)[:24]}" """)
         return None

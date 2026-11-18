@@ -1752,8 +1752,6 @@ class PAMProjectImportCommand(Command):
             launch_uid = get_launch_credential(mach, True)
             if not admin_uid:
                 admin_uid = get_admin_credential(mach, True)
-            if not admin_uid and pam_users:
-                admin_uid = pam_users[0].uid
 
             def _apply_launch_credentials():
                 if not (launch_uid or admin_uid) or isinstance(mach, PamRemoteBrowserObject):
@@ -1787,8 +1785,12 @@ class PAMProjectImportCommand(Command):
                         # A raw cron leaves the vault schedule empty; send Keeper's schedule JSON.
                         keeper_schedule = quartz_cron_to_keeper_schedule(cron_expr)
                         if keeper_schedule:
-                            args["schedule_json_data"] = [json.dumps(keeper_schedule)]
+                            schedules = keeper_schedule if isinstance(keeper_schedule, list) else [keeper_schedule]
+                            args["schedule_json_data"] = [json.dumps(item) for item in schedules]
                         elif cron_expr:
+                            logging.warning(
+                                'Rotation schedule for %s could not be converted to a Keeper schedule (%s); sending the cron as-is',
+                                getattr(user, 'title', None) or user.uid, cron_expr)
                             args["schedule_cron_data"] = [cron_expr]
                         else:
                             logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
