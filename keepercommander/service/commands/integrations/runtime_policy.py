@@ -60,9 +60,22 @@ def _integration_sanitizers():
     terraform_sanitizer = lambda commands: sanitize_commands(
         commands, TerraformSetupConstants.SERVICE_COMMANDS_LIST
     )
-    service_now_sanitizer = lambda commands: sanitize_commands(
-        commands, ServiceNowSetupConstants.SERVICE_COMMANDS_LIST
-    )
+
+    def service_now_sanitizer(commands):
+
+        service_type = (
+            os.environ.get(ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV)
+            or ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW
+        ).strip().lower()
+        try:
+            allowed_commands = ServiceNowSetupConstants.get_commands_list(service_type)
+        except ValueError:
+            raise ValidationError(
+                f'Unknown ServiceNow service type "{service_type}". '
+                f'Set {ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV} to '
+                'workflow, cmdb, or both.'
+            )
+        return sanitize_commands(commands, allowed_commands)
 
     return {
         slack.get_record_env_key(): slack.sanitize_service_commands,

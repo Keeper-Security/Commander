@@ -22,12 +22,13 @@ import logging
 import os
 import sys
 import tempfile
+import uuid
 from typing import Dict, Any
 
 from ...commands.ksm import KSMCommand
 from ... import api, vault, utils, crypto, attachment, record_management, loginv3
 from ...display import bcolors
-from ...error import CommandError
+from ...error import CommandError, KeeperApiError
 
 from .models import SetupResult, SetupStep, DockerSetupConstants
 from .printer import DockerSetupPrinter
@@ -491,18 +492,33 @@ class DockerSetupBase:
         """Create client device and return b64 config"""
         try:
             client_name = DockerSetupConstants.DEFAULT_CLIENT_NAME
-            
-            tokens_and_devices = KSMCommand.add_client(
-                params=params,
-                app_name_or_uid=app_uid,
-                count=1,
-                unlock_ip=True,
-                first_access_expire_on=60,
-                access_expire_in_min=None,
-                client_name=client_name,
-                config_init='b64',
-                silent=True
-            )
+
+            def add_client(name):
+                return KSMCommand.add_client(
+                    params=params,
+                    app_name_or_uid=app_uid,
+                    count=1,
+                    unlock_ip=True,
+                    first_access_expire_on=60,
+                    access_expire_in_min=None,
+                    client_name=name,
+                    config_init='b64',
+                    silent=True
+                )
+
+            try:
+                tokens_and_devices = add_client(client_name)
+            except KeeperApiError as e:
+                if e.result_code != 'duplicate_app_client_name':
+                    raise
+
+                # Existing/reused KSM apps can already have the default client name.
+                # Retry with a unique name instead of failing the entire setup.
+                client_name = f'{client_name} {uuid.uuid4().hex[:8]}'
+                DockerSetupPrinter.print_warning(
+                    'A client with the default name already exists; retrying with a unique name'
+                )
+                tokens_and_devices = add_client(client_name)
             
             if not tokens_and_devices or len(tokens_and_devices) == 0:
                 raise CommandError('docker-setup', 'Failed to generate client device')

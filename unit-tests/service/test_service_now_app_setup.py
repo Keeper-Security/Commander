@@ -6,6 +6,7 @@ from keepercommander.commands.start_service import register_command_info, regist
 from keepercommander.error import CommandError
 from keepercommander.service.commands.service_now_app_setup import (
     ServiceNowAppSetupCommand,
+    ServiceNowDockerServiceConfig,
     ServiceNowSetupConstants,
 )
 from keepercommander.service.commands.integrations.runtime_policy import apply_runtime_command_policy
@@ -34,6 +35,10 @@ class TestServiceNowAppSetupCommand(TestCase):
         with ExitStack() as stack:
             stack.enter_context(mock.patch.object(cmd, '_get_port_config', return_value=8900))
             stack.enter_context(mock.patch.object(
+                cmd, '_get_service_type',
+                return_value=ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
+            ))
+            stack.enter_context(mock.patch.object(
                 cmd, '_get_commands_config', return_value=ServiceNowSetupConstants.SERVICE_COMMANDS
             ))
             ngrok_prompt = stack.enter_context(mock.patch.object(cmd, '_get_ngrok_config'))
@@ -47,6 +52,9 @@ class TestServiceNowAppSetupCommand(TestCase):
 
         self.assertEqual(config.port, 8900)
         self.assertEqual(config.commands, ServiceNowSetupConstants.SERVICE_COMMANDS)
+        self.assertEqual(
+            config.service_type, ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW
+        )
         self.assertTrue(config.queue_enabled)
         self.assertFalse(config.ngrok_enabled)
         self.assertFalse(config.cloudflare_enabled)
@@ -54,6 +62,49 @@ class TestServiceNowAppSetupCommand(TestCase):
         ngrok_prompt.assert_not_called()
         cloudflare_prompt.assert_not_called()
         tailscale_prompt.assert_not_called()
+
+    def test_service_configuration_uses_commands_for_selected_service(self):
+        params = mock.Mock()
+        for service_type, expected_commands in (
+            (ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
+             ServiceNowSetupConstants.SERVICE_COMMANDS),
+            (ServiceNowSetupConstants.SERVICE_TYPE_CMDB,
+             ServiceNowSetupConstants.CMDB_COMMANDS),
+            (ServiceNowSetupConstants.SERVICE_TYPE_BOTH,
+             ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS),
+        ):
+            with self.subTest(service_type=service_type):
+                cmd = ServiceNowAppSetupCommand()
+                events = []
+                with ExitStack() as stack:
+                    stack.enter_context(mock.patch.object(
+                        cmd, '_get_port_config',
+                        side_effect=lambda: events.append('port') or 8900,
+                    ))
+                    stack.enter_context(mock.patch.object(
+                        cmd, '_get_service_type',
+                        side_effect=lambda: events.append('service') or service_type,
+                    ))
+                    stack.enter_context(mock.patch.object(
+                        cmd, '_get_commands_config',
+                        side_effect=lambda _params, selected: (
+                            events.append(('commands', selected)) or expected_commands
+                        ),
+                    ))
+                    stack.enter_context(mock.patch.object(
+                        cmd, '_get_advanced_security_config', return_value={
+                            'allowed_ip': '0.0.0.0/0,::/0', 'denied_ip': '', 'rate_limit': '',
+                            'encryption_enabled': False, 'encryption_key': '',
+                            'token_expiration': '',
+                        }
+                    ))
+                    config = cmd.get_service_configuration(params)
+
+                self.assertEqual(events[:3], [
+                    'port', 'service', ('commands', service_type)
+                ])
+                self.assertEqual(config.commands, expected_commands)
+                self.assertEqual(config.service_type, service_type)
 
     @mock.patch('keepercommander.service.commands.service_now_app_setup.RuntimeServiceConfig')
     def test_commands_config_validates_and_sanitizes_against_fixed_allowlist(self, mock_config):
@@ -78,6 +129,41 @@ class TestServiceNowAppSetupCommand(TestCase):
 
         self.assertEqual(ctx.exception.command, 'service-now-app-setup')
         self.assertIn('bad command', ctx.exception.message)
+
+    @mock.patch('keepercommander.service.commands.service_now_app_setup.RuntimeServiceConfig')
+    def test_commands_config_uses_selection_specific_allowlist(self, mock_config):
+        for service_type, allowed in (
+            (ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
+             ServiceNowSetupConstants.SERVICE_COMMANDS_LIST),
+            (ServiceNowSetupConstants.SERVICE_TYPE_CMDB,
+             ServiceNowSetupConstants.CMDB_COMMANDS_LIST),
+            (ServiceNowSetupConstants.SERVICE_TYPE_BOTH,
+             ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS_LIST),
+        ):
+            with self.subTest(service_type=service_type):
+                mock_config.reset_mock()
+                mock_config.return_value.validate_command_list.return_value = (
+                    ','.join(allowed) + ',clipboard-copy'
+                )
+                params = mock.Mock()
+                result = ServiceNowAppSetupCommand()._get_commands_config(
+                    params, service_type
+                )
+                self.assertEqual(result, ','.join(allowed))
+                mock_config.return_value.validate_command_list.assert_called_once_with(
+                    ','.join(allowed), params
+                )
+
+    @mock.patch('builtins.input', side_effect=['invalid', '2'])
+    def test_service_type_prompt_retries_and_maps_selection(self, mock_input):
+        with mock.patch('builtins.print') as mock_print:
+            result = ServiceNowAppSetupCommand()._get_service_type()
+        self.assertEqual(result, ServiceNowSetupConstants.SERVICE_TYPE_CMDB)
+        self.assertEqual(mock_input.call_count, 2)
+        self.assertTrue(any(
+            'Please enter 1, 2, or 3.' in str(call)
+            for call in mock_print.call_args_list
+        ))
 
     @mock.patch('keepercommander.service.commands.service_now_app_setup.RuntimeServiceConfig')
     @mock.patch.object(ServiceNowAppSetupCommand, 'run_setup_steps')
@@ -115,6 +201,10 @@ class TestServiceNowAppSetupCommand(TestCase):
             f"{ServiceNowSetupConstants.SERVICENOW_RECORD_ENV}: {setup_result.record_uid}",
             yaml_content,
         )
+        self.assertIn(
+            f"{ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV}: workflow",
+            yaml_content,
+        )
         self.assertNotIn(TERRAFORM_DOCKER_ENV, yaml_content)
         self.assertNotIn(TERRAFORM_DOCKER_ENV_LEGACY, yaml_content)
         self.assertIn(f"-c '{ServiceNowSetupConstants.SERVICE_COMMANDS}'", yaml_content)
@@ -122,9 +212,73 @@ class TestServiceNowAppSetupCommand(TestCase):
         self.assertNotIn('-cf ', yaml_content)
         self.assertNotIn('tailscale:', yaml_content)
 
-    def test_runtime_policy_strips_commands_outside_servicenow_allowlist(self):
+    def test_compose_uses_selected_service_type_and_command_list(self):
+        setup_result = mock.Mock(
+            folder_uid='f', folder_name='folder', app_uid='a', app_name='app',
+            record_uid='record-uid', b64_config='cfg',
+        )
+        for service_type, allowed in (
+            (ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
+             ServiceNowSetupConstants.SERVICE_COMMANDS),
+            (ServiceNowSetupConstants.SERVICE_TYPE_CMDB,
+             ServiceNowSetupConstants.CMDB_COMMANDS),
+            (ServiceNowSetupConstants.SERVICE_TYPE_BOTH,
+             ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS),
+        ):
+            with self.subTest(service_type=service_type):
+                config = ServiceNowDockerServiceConfig(
+                    port=8900,
+                    commands=allowed,
+                    service_type=service_type,
+                    queue_enabled=True,
+                    ngrok_enabled=False,
+                    ngrok_auth_token='',
+                    ngrok_custom_domain='',
+                    cloudflare_enabled=False,
+                    cloudflare_tunnel_token='',
+                    cloudflare_custom_domain='',
+                )
+                yaml_content = ServiceNowAppSetupCommand().generate_docker_compose_yaml(
+                    setup_result, config
+                )
+                self.assertIn(
+                    f"{ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV}: {service_type}",
+                    yaml_content,
+                )
+                self.assertIn(f"-c '{allowed}'", yaml_content)
+
+    def test_runtime_policy_enforces_selected_servicenow_allowlist(self):
+        selections = (
+            (ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
+             ServiceNowSetupConstants.SERVICE_COMMANDS),
+            (ServiceNowSetupConstants.SERVICE_TYPE_CMDB,
+             ServiceNowSetupConstants.CMDB_COMMANDS),
+            (ServiceNowSetupConstants.SERVICE_TYPE_BOTH,
+             ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS),
+        )
+        for service_type, expected in selections:
+            with self.subTest(service_type=service_type):
+                class Args:
+                    commands = (
+                        ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS
+                        + ',clipboard-copy'
+                    )
+
+                with mock.patch.dict(
+                    'os.environ',
+                    {
+                        ServiceNowSetupConstants.SERVICENOW_RECORD_ENV: 'record-uid',
+                        ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV: service_type,
+                    },
+                    clear=True,
+                ):
+                    args = Args()
+                    apply_runtime_command_policy(args)
+                self.assertEqual(args.commands, expected)
+
+    def test_runtime_policy_defaults_legacy_compose_to_workflow(self):
         class Args:
-            commands = ServiceNowSetupConstants.SERVICE_COMMANDS + ',clipboard-copy'
+            commands = ServiceNowSetupConstants.CMDB_COMMANDS
 
         with mock.patch.dict(
             'os.environ',
@@ -135,6 +289,21 @@ class TestServiceNowAppSetupCommand(TestCase):
             apply_runtime_command_policy(args)
 
         self.assertEqual(args.commands, ServiceNowSetupConstants.SERVICE_COMMANDS)
+
+    def test_runtime_policy_rejects_unknown_servicenow_service_type(self):
+        class Args:
+            commands = 'ls'
+
+        with mock.patch.dict(
+            'os.environ',
+            {
+                ServiceNowSetupConstants.SERVICENOW_RECORD_ENV: 'record-uid',
+                ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV: 'unknown',
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ValidationError):
+                apply_runtime_command_policy(Args())
 
 
 class TestServiceNowSetupConstants(TestCase):
@@ -151,14 +320,33 @@ class TestServiceNowSetupConstants(TestCase):
     def test_allowlist_entries_are_registered_commands(self):
         known = set(commands) | set(enterprise_commands) | set(msp_commands) | set(aliases)
         missing = [
-            name for name in ServiceNowSetupConstants.SERVICE_COMMANDS_LIST if name not in known
+            name for name in ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS_LIST
+            if name not in known
         ]
         self.assertEqual(missing, [])
 
     def test_allowlist_has_no_duplicates(self):
-        allowed = ServiceNowSetupConstants.SERVICE_COMMANDS_LIST
-        self.assertEqual(len(allowed), len(set(allowed)))
-        self.assertEqual(ServiceNowSetupConstants.SERVICE_COMMANDS, ','.join(allowed))
+        for allowed in (
+            ServiceNowSetupConstants.SERVICE_COMMANDS_LIST,
+            ServiceNowSetupConstants.CMDB_COMMANDS_LIST,
+            ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS_LIST,
+        ):
+            self.assertEqual(len(allowed), len(set(allowed)))
+        self.assertEqual(
+            ServiceNowSetupConstants.SERVICE_COMMANDS,
+            ','.join(ServiceNowSetupConstants.SERVICE_COMMANDS_LIST),
+        )
+        self.assertEqual(
+            ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS,
+            ','.join(ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS_LIST),
+        )
+
+    def test_service_type_allowlists_are_exact(self):
+        self.assertEqual(ServiceNowSetupConstants.CMDB_COMMANDS_LIST, ('whoami', 'pam'))
+        self.assertEqual(
+            ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS_LIST,
+            ServiceNowSetupConstants.SERVICE_COMMANDS_LIST + ('whoami', 'pam'),
+        )
 
     def test_setup_command_is_registered_and_discoverable(self):
         registered = {}

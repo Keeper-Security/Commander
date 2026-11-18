@@ -12,9 +12,10 @@
 """ServiceNow MID Server Docker service mode setup command."""
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 
 from ...commands.base import raise_parse_exception, suppress_exit
+from ...display import bcolors
 from ...error import CommandError
 from ..config.service_config import ServiceConfig as RuntimeServiceConfig
 from ..docker import (
@@ -39,6 +40,11 @@ class ServiceNowSetupConstants:
     COMMANDER_CONTAINER_NAME = 'keeper-service-servicenow'
     # Identifies this integration for runtime command allowlist enforcement.
     SERVICENOW_RECORD_ENV = 'SERVICENOW_RECORD'
+    SERVICENOW_SERVICE_TYPE_ENV = 'SERVICENOW_SERVICE_TYPE'
+
+    SERVICE_TYPE_WORKFLOW = 'workflow'
+    SERVICE_TYPE_CMDB = 'cmdb'
+    SERVICE_TYPE_BOTH = 'both'
 
     SERVICE_COMMANDS_LIST = (
         'ls', 'get', 'search', 'sync-down', 'list-sf', 'record-add', 'record-update',
@@ -46,6 +52,27 @@ class ServiceNowSetupConstants:
         'share-folder', 'share-record', 'one-time-share', 'epm',
     )
     SERVICE_COMMANDS = ','.join(SERVICE_COMMANDS_LIST)
+    CMDB_COMMANDS_LIST = ('whoami', 'pam')
+    CMDB_COMMANDS = ','.join(CMDB_COMMANDS_LIST)
+    BOTH_SERVICE_COMMANDS_LIST = SERVICE_COMMANDS_LIST + CMDB_COMMANDS_LIST
+    BOTH_SERVICE_COMMANDS = ','.join(BOTH_SERVICE_COMMANDS_LIST)
+
+    @classmethod
+    def get_commands_list(cls, service_type: str):
+        if service_type == cls.SERVICE_TYPE_WORKFLOW:
+            return cls.SERVICE_COMMANDS_LIST
+        if service_type == cls.SERVICE_TYPE_CMDB:
+            return cls.CMDB_COMMANDS_LIST
+        if service_type == cls.SERVICE_TYPE_BOTH:
+            return cls.BOTH_SERVICE_COMMANDS_LIST
+        raise ValueError(f'Unknown ServiceNow service type: {service_type}')
+
+
+@dataclass
+class ServiceNowDockerServiceConfig(DockerServiceConfig):
+    """Docker configuration with the selected ServiceNow integration type."""
+
+    service_type: str = ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW
 
 
 service_now_app_setup_parser = argparse.ArgumentParser(
@@ -103,24 +130,52 @@ class ServiceNowAppSetupCommand(ServiceDockerSetupCommand):
         kwargs.setdefault('app_name', ServiceNowSetupConstants.DEFAULT_APP_NAME)
         kwargs.setdefault('record_name', ServiceNowSetupConstants.DEFAULT_RECORD_NAME)
         kwargs.setdefault('timeout', ServiceNowSetupConstants.DEFAULT_TIMEOUT)
-        # Fail closed before any setup; _get_commands_config re-validates locally.
-        self._validate_service_now_commands(params)
+        # Validate every command that may be selected before provisioning resources.
+        # The selected service's narrower list is validated again after the prompt.
+        self._validate_service_now_commands(
+            params, ServiceNowSetupConstants.SERVICE_TYPE_BOTH
+        )
         return super().execute(params, **kwargs)
 
-    def _validate_service_now_commands(self, params) -> str:
+    def _validate_service_now_commands(self, params, service_type: str) -> str:
+        allowed_commands = ServiceNowSetupConstants.get_commands_list(service_type)
+        command_list = ','.join(allowed_commands)
         try:
             validated = RuntimeServiceConfig().validate_command_list(
-                ServiceNowSetupConstants.SERVICE_COMMANDS, params
+                command_list, params
             )
         except ValidationError as e:
             raise CommandError(
                 self.get_parser().prog,
                 f'ServiceNow command allowlist validation failed: {e}',
             )
-        return sanitize_commands(validated, ServiceNowSetupConstants.SERVICE_COMMANDS_LIST)
+        return sanitize_commands(validated, allowed_commands)
 
-    def _get_commands_config(self, params) -> str:
-        return self._validate_service_now_commands(params)
+    def _get_commands_config(
+        self, params, service_type: str = ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW
+    ) -> str:
+        return self._validate_service_now_commands(params, service_type)
+
+    def _get_service_type(self) -> str:
+        """Prompt for the ServiceNow service(s) this MID Server will support."""
+        print(f"\n{bcolors.BOLD}ServiceNow Services:{bcolors.ENDC}")
+        print("  Choose which ServiceNow integration this Commander service will support:")
+        print("    1. ServiceNow Workflow")
+        print("    2. ServiceNow CMDB")
+        print("    3. Both Workflow and CMDB")
+
+        selections = {
+            '1': ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
+            '2': ServiceNowSetupConstants.SERVICE_TYPE_CMDB,
+            '3': ServiceNowSetupConstants.SERVICE_TYPE_BOTH,
+        }
+        while True:
+            selection = input(
+                f"{bcolors.OKBLUE}Selection [1-3]:{bcolors.ENDC} "
+            ).strip()
+            if selection in selections:
+                return selections[selection]
+            print(f"{bcolors.FAIL}Please enter 1, 2, or 3.{bcolors.ENDC}")
 
     def _get_queue_config(self) -> bool:
         return True
@@ -129,12 +184,14 @@ class ServiceNowAppSetupCommand(ServiceDockerSetupCommand):
         """Collect MID Server service settings without offering tunnel options."""
         DockerSetupPrinter.print_header("Service Mode Configuration")
         port = self._get_port_config()
-        commands = self._get_commands_config(params)
+        service_type = self._get_service_type()
+        commands = self._get_commands_config(params, service_type)
         security_config = self._get_advanced_security_config()
 
-        return DockerServiceConfig(
+        return ServiceNowDockerServiceConfig(
             port=port,
             commands=commands,
+            service_type=service_type,
             queue_enabled=True,
             ngrok_enabled=False,
             ngrok_auth_token='',
@@ -159,13 +216,20 @@ class ServiceNowAppSetupCommand(ServiceDockerSetupCommand):
     def generate_docker_compose_yaml(
         self, setup_result: SetupResult, config: DockerServiceConfig
     ) -> str:
+        # Default to Workflow when called with an older/general ServiceConfig.
+        service_type = getattr(
+            config, 'service_type', ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW
+        )
+        docker_config = asdict(config)
+        docker_config.pop('service_type', None)
         builder = DockerComposeBuilder(
             setup_result,
-            asdict(config),
+            docker_config,
             commander_service_name=ServiceNowSetupConstants.COMMANDER_SERVICE_NAME,
             commander_container_name=ServiceNowSetupConstants.COMMANDER_CONTAINER_NAME,
             commander_environment={
-                ServiceNowSetupConstants.SERVICENOW_RECORD_ENV: setup_result.record_uid
+                ServiceNowSetupConstants.SERVICENOW_RECORD_ENV: setup_result.record_uid,
+                ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV: service_type,
             },
         )
         return builder.build()

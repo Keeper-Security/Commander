@@ -520,17 +520,29 @@ My Vault> service-now-app-setup
 ```
 
 The command follows the Docker setup flow and creates the KSM-backed Commander
-configuration and `docker-compose.yml`. Queue mode (API v2) is always enabled.
+configuration and `docker-compose.yml`. After the port prompt, select whether
+the MID Server will support ServiceNow Workflow, ServiceNow CMDB, or both. The
+generated Compose configuration and command allowlist reflect that selection.
+Queue mode (API v2) is always enabled.
 Unlike the general Docker setup, this flow does not prompt for or configure
 Ngrok, Cloudflare, or Tailscale tunneling.
 
-The service command allowlist is fixed and enforced during setup and when the container starts:
+The fixed command allowlists are enforced during setup and when the container
+starts:
 
+**Workflow**
 ```text
 ls, get, search, sync-down, list-sf, record-add, record-update,
 nsf-record-add, nsf-record-update, nsf-share-record, nsf-share-folder,
 share-folder, share-record, one-time-share, epm
 ```
+
+**CMDB**
+```text
+whoami, pam
+```
+
+Choosing both enables the Workflow commands together with `whoami` and `pam`.
 
 The folder, KSM app, and config record names can be customized with
 `--folder-name`, `--app-name`, and `--record-name`. `--config-path`, `--timeout`,
