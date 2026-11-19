@@ -30,12 +30,12 @@ def vault_machine(**over):
             _field('pamHostname', {'hostName': 'h1', 'port': '22'}),
             _field('text', 'linux', 'operatingSystem'),
             _field('checkbox', True, 'sslVerification'),
-        ],
-        'custom': [
-            _field('pamSettings', {'allowSupplyHost': False,
+            {'type': 'text', 'label': 'instanceName', 'value': []},      # every field of the type is listed, empty too
+            _field('pamSettings', {'allowSupplyHost': False,             # a TYPED field, as in a real vault record
                                    'portForward': {},
                                    'connection': {'protocol': 'ssh', 'port': '2222', 'recordingIncludeKeys': True}}),
         ],
+        'custom': [],
     }
     data.update(over)
     return data
@@ -123,9 +123,36 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(by_path['title'].shown(), ('M1', 'Renamed'))
 
     def test_checkbox_difference(self):
-        raw = {'type': 'pamMachine', 'ssl_verification': False}
+        raw = {'type': 'pamMachine', 'title': 'M1', 'ssl_verification': False}
         change, = diff(raw, vault_machine()).changes
         self.assertEqual((change.op, change.old, change.new), (ud.OP_CHANGE, True, False))
+
+    def test_ssl_verification_stored_as_a_custom_field_is_compared(self):
+        # a pamMachine record type has no sslVerification field: the import stores it as a custom checkbox
+        current = vault_machine()
+        current['fields'] = [f for f in current['fields'] if f.get('label') != 'sslVerification']
+        current['custom'] = [{'type': 'checkbox', 'label': 'sslVerification', 'value': [False]}]
+        same = diff({'type': 'pamMachine', 'title': 'M1', 'ssl_verification': False}, current)
+        self.assertEqual((same.changes, same.warnings), ([], []))
+        change, = diff({'type': 'pamMachine', 'title': 'M1', 'ssl_verification': True}, current).changes
+        self.assertEqual((change.op, change.old, change.new), (ud.OP_CHANGE, False, True))
+
+    def test_a_field_the_record_type_does_not_have_is_skipped_with_a_warning(self):
+        # neither a typed nor a custom field (a vault imported by the older batch code, which dropped the value)
+        current = vault_machine()
+        current['fields'] = [f for f in current['fields'] if f.get('label') != 'sslVerification']
+        raw = {'type': 'pamMachine', 'title': 'M1', 'ssl_verification': False}
+        result = diff(raw, current)
+        self.assertEqual(result.changes, [])
+        self.assertEqual(result.warnings, ['"M1": "ssl_verification" is not a field of the record (type "pamMachine") - skipped'])
+
+    def test_an_empty_field_of_the_type_is_still_a_normal_add(self):
+        raw = {'type': 'pamMachine', 'instance_name': 'i-1'}              # the fixture lists instanceName with no value
+        self.assertEqual([c.op for c in diff(raw, vault_machine()).changes], [ud.OP_ADD])
+
+    def test_pamsettings_is_found_as_a_typed_field(self):
+        raw = {'type': 'pamMachine', 'pam_settings': {'connection': {'protocol': 'ssh', 'port': '2222'}}}
+        self.assertEqual(diff(raw, vault_machine()).changes, [])
 
     def test_unknown_key_is_a_warning_and_not_a_change(self):
         raw = {'type': 'pamMachine', 'colour': 'red', 'pam_settings': {'connection': {'protocol': 'ssh', 'nope': 1}}}
@@ -206,7 +233,7 @@ class TestOverwrite(unittest.TestCase):
 
     def test_an_empty_desired_object_is_not_a_change_only_its_extra_keys_are_removals(self):
         current = vault_machine()
-        current['custom'][0]['value'][0]['portForward'] = {'port': '2222'}
+        current['fields'][-1]['value'][0]['portForward'] = {'port': '2222'}
         raw = {'type': 'pamMachine', 'pam_settings': {'connection': {'protocol': 'ssh', 'port': '2222'}}}
         changes = diff(raw, current, mode=ud.MODE_OVERWRITE).changes
         self.assertEqual([(c.op, c.path) for c in changes if 'portForward' in c.path],
@@ -214,14 +241,14 @@ class TestOverwrite(unittest.TestCase):
 
     def test_a_key_added_by_a_newer_vault_is_removed(self):
         current = vault_machine()
-        current['custom'][0]['value'][0]['connection']['futureKey'] = 'x'
+        current['fields'][-1]['value'][0]['connection']['futureKey'] = 'x'
         raw = {'type': 'pamMachine', 'pam_settings': {'connection': {'protocol': 'ssh', 'port': '2222'}}}
         removed = {c.path for c in diff(raw, current, mode=ud.MODE_OVERWRITE).changes if c.op == ud.OP_REMOVE}
         self.assertIn('pamSettings.connection.futureKey', removed)
 
     def test_protected_and_reference_keys_are_never_removed(self):
         current = vault_machine()
-        conn = current['custom'][0]['value'][0]['connection']
+        conn = current['fields'][-1]['value'][0]['connection']
         conn.update({'locked': True, 'service_names': ['a'], 'userRecords': ['UID1'], 'launchRecordUid': 'UID2'})
         raw = {'type': 'pamMachine', 'pam_settings': {'connection': {'protocol': 'ssh', 'port': '2222'}}}
         removed = {c.path for c in diff(raw, current, mode=ud.MODE_OVERWRITE).changes if c.op == ud.OP_REMOVE}
@@ -404,7 +431,8 @@ class TestDesiredValuesFollowTheBuilders(unittest.TestCase):
             ok, value = ud.desired_value(obj, path, us.resolve(path, 'pamMachine'), family, container)
             self.assertEqual(value, hostname[key], path)
         ok, value = ud.desired_value(obj, 'ssl_verification', us.resolve('ssl_verification', 'pamMachine'), family, container)
-        self.assertEqual(str(value).lower(), written['f.checkbox.sslVerification'])
+        self.assertEqual(str(value).lower(), written['checkbox.sslVerification'])     # no "f.": see _machine_kwargs
+        self.assertNotIn('f.checkbox.sslVerification', written)
         settings = json.loads(written['c.pamSettings'].split('$JSON:', 1)[1])
         self.assertEqual(container, settings)
 

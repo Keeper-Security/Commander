@@ -39,9 +39,10 @@ def machine_json(**over):
 
 def vault_machine():
     return {'title': 'M1', 'notes': '', 'type': 'pamMachine',
-            'fields': [_f('pamHostname', {'hostName': 'h1', 'port': '22'}), _f('text', 'linux', 'operatingSystem')],
-            'custom': [_f('pamSettings', {'allowSupplyHost': False, 'portForward': {},
-                                          'connection': {'protocol': 'ssh', 'port': '22', 'userRecords': [U1]}})]}
+            'fields': [_f('pamHostname', {'hostName': 'h1', 'port': '22'}), _f('text', 'linux', 'operatingSystem'),
+                       _f('pamSettings', {'allowSupplyHost': False, 'portForward': {},
+                                          'connection': {'protocol': 'ssh', 'port': '22'}})],
+            'custom': []}
 
 
 def vault_user(password='pw'):
@@ -323,6 +324,26 @@ class TestLinkAndFiles(Quiet):
             plan = self.build(raw, st=self._script_state('run.sh', command='sh'))
         self.assertEqual([c.path for c in plan.results[0].changes], ['script "other.sh"'])
         self.assertEqual([w for w in plan.results[0].warnings if 'differs' in w], [])
+
+    def test_an_unreadable_file_record_blocks_the_guess_and_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            script = self._file(tmp, 'run.sh', 19)
+            raw = machine_json(users=[], scripts=[{'file': script, 'script_command': 'sh'}])
+            st = state()
+            st.records[M1].errors = [{'stage': 'file_record', 'message': 'File record FILE1 could not be loaded.'}]
+            plan = self.build(raw, st=st)
+        self.assertEqual(plan.results[0].changes, [])          # not an "add": the vault may already have it
+        self.assertTrue(any('script "run.sh" not compared - 1 file record(s)' in w for w in plan.results[0].warnings))
+
+    def test_an_unreadable_file_record_does_not_hide_a_matching_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            same = self._file(tmp, 'same.txt', 10)
+            raw = machine_json(users=[], attachments=[same])
+            st = state(files=[{'name': 'same.txt', 'size': 10}])
+            st.records[M1].errors = [{'stage': 'file_record', 'message': 'x'}]
+            plan = self.build(raw, st=st)
+        self.assertEqual(plan.results[0].changes, [])
+        self.assertEqual([w for w in plan.results[0].warnings if 'not compared' in w], [])
 
     def test_no_files_no_noise(self):
         plan = self.build()

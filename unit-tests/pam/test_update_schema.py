@@ -114,10 +114,12 @@ class TestResolve(unittest.TestCase):
         self.assertEqual(us.resolve('users', 'pamMachine').kind, us.KIND_NESTED)
         self.assertEqual(us.resolve('login', 'pamMachine').kind, us.KIND_IGNORED)   # legacy on a machine ...
         self.assertEqual(us.resolve('login', 'pamUser').kind, us.KIND_RECORD)       # ... a real field on a user
+        self.assertEqual(us.resolve('otp', 'pamRemoteBrowser').kind, us.KIND_RECORD)
+        self.assertEqual(us.resolve('otp', 'pamCloudResource').kind, us.KIND_IGNORED)   # the cloud type has no oneTimeCode
 
     def test_connection_keys_by_rule_and_by_row(self):
         t = us.resolve('pam_settings.connection.enable_touch', 'pamMachine', 'rdp')
-        self.assertEqual((t.kind, t.field, t.sub, t.scope), (us.KIND_RECORD, 'pamSettings', 'connection.enableTouch', us.SCOPE_CUSTOM))
+        self.assertEqual((t.kind, t.field, t.sub, t.scope), (us.KIND_RECORD, 'pamSettings', 'connection.enableTouch', us.SCOPE_ANY))
         self.assertEqual(us.resolve('pam_settings.connection.pod_name', 'pamMachine', 'kubernetes').sub, 'connection.pod')
         self.assertEqual(us.resolve('pam_settings.connection.default_database', 'pamDatabase', 'mysql').sub, 'connection.database')
 

@@ -417,6 +417,7 @@ def _file_changes(item: ImportItem, result: ItemResult, record_state) -> None:
     same name and size is the same file; the same name with another size is replaced; a new name is added. Files
     are never removed, in either mode (they are separate file records)."""
     have = list(record_state.files or [])
+    unreadable = sum(1 for e in (record_state.errors or []) if e.get('stage') == 'file_record')
     for kind, path in _raw_files(item):
         full = os.path.abspath(os.path.expanduser(path))
         if not os.path.isfile(full):
@@ -426,6 +427,11 @@ def _file_changes(item: ImportItem, result: ItemResult, record_state) -> None:
         same_name = [f for f in have if f.get('name') == name]
         if any(f.get('size') == size for f in same_name):
             continue                                  # same file; a script's other settings are reported below
+        if not same_name and unreadable:
+            # some file records of this record could not be read, so a "new" name may be one of them: do not guess
+            result.warnings.append(f'{item.ident}: {kind} "{name}" not compared - {unreadable} file record(s) of this '
+                                   'record could not be read')
+            continue
         target = us.Target(us.KIND_FILES, note=kind)
         if same_name:
             old = same_name[0].get('size')

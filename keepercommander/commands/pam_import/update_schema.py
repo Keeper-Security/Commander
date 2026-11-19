@@ -164,7 +164,8 @@ COMMON_ROWS: Dict[str, Target] = {
 RESOURCE_ROWS: Dict[str, Target] = {
     'host': _typed('pamHostname', sub='hostName'),
     'port': _typed('pamHostname', sub='port'),
-    'ssl_verification': _typed('checkbox', 'sslVerification'),
+    # typed field if the record type has it, otherwise a custom field (the import writes it without "f.")
+    'ssl_verification': _typed('checkbox', 'sslVerification', scope=SCOPE_ANY),
     'operating_system': _text('operatingSystem'),
     'instance_name': _text('instanceName'),
     'instance_id': _text('instanceId'),
@@ -255,7 +256,8 @@ sftp_upload_directory
 # and launch credentials, as flags on the ACL edges of the graph).
 CONNECTION_REFS: Dict[str, Target] = {
     'administrative_credentials': Target(KIND_REF, comparator='admin_credential',
-                                         note='record: connection.userRecords; graph: is_admin on the ACL edge'),
+                                         note='graph: is_admin on the ACL edge (the import does not write '
+                                              'connection.userRecords - seen in a dump of a PROD import)'),
     'launch_credentials': Target(KIND_REF, comparator='launch_credential',
                                  note='graph: is_launch_credential on the ACL edge (single slot)'),
     'autofill_credentials': Target(KIND_REF, comparator='http_credentials',
@@ -356,7 +358,7 @@ OPTION_IGNORED = {
 def _connection_row(rest: List[str], family: str, protocol: str) -> Optional[Target]:
     """``rest`` = the path below ``pam_settings.connection`` (may be empty: the whole object)."""
     field_type, scope, root = (
-        ('pamSettings', SCOPE_CUSTOM, 'connection') if family == FAMILY_RESOURCE
+        ('pamSettings', SCOPE_ANY, 'connection') if family == FAMILY_RESOURCE
         else ('pamRemoteBrowserSettings', SCOPE_ANY, 'connection'))
     if not rest:
         return Target(KIND_RECORD, field=field_type, sub=root, scope=scope, note='the whole connection object')
@@ -417,13 +419,13 @@ def _pam_settings_row(rest: List[str], family: str, protocol: str) -> Optional[T
         return _options_row(rest[1:], family)
     if family == FAMILY_RESOURCE:
         if head == 'allow_supply_host' and len(rest) == 1:
-            return Target(KIND_RECORD, field='pamSettings', sub='allowSupplyHost', scope=SCOPE_CUSTOM)
+            return Target(KIND_RECORD, field='pamSettings', sub='allowSupplyHost', scope=SCOPE_ANY)
         if head == 'port_forward':
             if len(rest) == 1:
-                return Target(KIND_RECORD, field='pamSettings', sub='portForward', scope=SCOPE_CUSTOM,
+                return Target(KIND_RECORD, field='pamSettings', sub='portForward', scope=SCOPE_ANY,
                               note='the whole port_forward object')
             if len(rest) == 2 and rest[1] in PORT_FORWARD_KEYS:
-                return Target(KIND_RECORD, field='pamSettings', scope=SCOPE_CUSTOM,
+                return Target(KIND_RECORD, field='pamSettings', scope=SCOPE_ANY,
                               sub=f'portForward.{port_forward_output_key(rest[1])}')
     return None
 
@@ -437,6 +439,8 @@ def resolve(path: str, record_type: str, protocol: str = '') -> Optional[Target]
     family = family_of(record_type)
     if family is None:
         return None
+    if path == 'otp' and record_type == 'pamCloudResource':
+        return Target(KIND_IGNORED, note='the pamCloudResource record type has no one-time code field')
     if path in COMMON_ROWS:
         return COMMON_ROWS[path]
     rows = FAMILY_ROWS[family]

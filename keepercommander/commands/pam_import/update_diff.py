@@ -389,6 +389,12 @@ def diff_record(raw: Dict[str, Any], record_type: str, obj: Any, current: Dict[s
             result.warnings.append(f'"{result.title}": the value of "{path}" was not accepted by the import parser '
                                    '(skipped)')
             continue
+        if target.scope != us.SCOPE_STANDARD and find_field(current, target) is None:
+            # The record type has no such field (the vault lists every field of the type, empty ones too): it can
+            # neither be compared nor set. Report it once instead of showing a change that never goes away.
+            result.warnings.append(f'"{result.title}": "{path}" is not a field of the record (type "{record_type}") '
+                                   '- skipped')
+            continue
         exists, old = current_value(current, target)
         _compare(result, target, _display(target), exists, old, wanted, include_passwords, rotating)
 
@@ -407,7 +413,7 @@ def _overwrite_record(result, classification, family, record_type, obj, current,
     #    settings object is NOT touched (an item that does not mention it is not an instruction to empty it).
     if touches_container and container is not None:
         owner = 'pamSettings' if family == us.FAMILY_RESOURCE else 'pamRemoteBrowserSettings'
-        scope = us.SCOPE_CUSTOM if family == us.FAMILY_RESOURCE else us.SCOPE_ANY
+        scope = us.SCOPE_ANY
         base = us.Target(us.KIND_RECORD, field=owner, scope=scope)
         exists, vault_object = current_value(current, base)
         vault_object = vault_object if exists and isinstance(vault_object, dict) else {}

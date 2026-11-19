@@ -320,11 +320,10 @@ class TestCredentialRefs(unittest.TestCase):
         changes, warnings = self.diff(resolved, resolved, {'userRecords': ['A']}, admin='A', launch='L')
         self.assertEqual((changes, warnings), ([], []))
 
-    def test_replacing_the_admin_changes_edge_and_record_and_warns(self):
+    def test_replacing_the_admin_changes_the_edge_only_and_warns(self):
+        # the import does not write connection.userRecords (dump of a PROD import): nothing to compare in the record
         changes, warnings = self.diff({'admin_credential': 'B'}, {'admin_credential'}, {'userRecords': ['A']}, admin='A')
-        self.assertEqual({(c.kind, c.op, c.path) for c in changes},
-                         {(ud.KIND_GRAPH, ud.OP_CHANGE, 'acl.is_admin'),
-                          (ud.KIND_RECORD, ud.OP_CHANGE, 'pamSettings.connection.userRecords')})
+        self.assertEqual({(c.kind, c.op, c.path) for c in changes}, {(ud.KIND_GRAPH, ud.OP_CHANGE, 'acl.is_admin')})
         self.assertIn('administrative credential changes from A to B', warnings[0])
 
     def test_launch_credential_is_a_single_slot(self):
@@ -339,7 +338,7 @@ class TestCredentialRefs(unittest.TestCase):
 
     def test_no_current_credential_is_an_add(self):
         changes, warnings = self.diff({'admin_credential': 'A'}, {'admin_credential'})
-        self.assertEqual({(c.kind, c.op) for c in changes}, {(ud.KIND_GRAPH, ud.OP_ADD), (ud.KIND_RECORD, ud.OP_ADD)})
+        self.assertEqual({(c.kind, c.op) for c in changes}, {(ud.KIND_GRAPH, ud.OP_ADD)})
         self.assertEqual(warnings, [])
 
     def test_not_written_means_not_compared(self):

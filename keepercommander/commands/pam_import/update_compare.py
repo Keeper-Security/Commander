@@ -495,8 +495,9 @@ def diff_credential_refs(resolved: Dict[str, Optional[str]], explicit: Iterable[
     *resolved* maps the comparator names (``admin_credential``, ``launch_credential``, ``http_credentials``,
     ``sftp_resource``, ``sftp_user``) to the UID the matcher found for the title / login in the JSON (None = could
     not be resolved). *explicit* names the ones the JSON wrote. Admin and launch credential are single slots: a
-    different one REPLACES the old (the router moves the flag), also in merge. The admin lives in two places: the
-    record (``connection.userRecords``) and the ACL edge flag ``is_admin``; the launch credential only on the edge.
+    different one REPLACES the old (the router moves the flag), also in merge. Both live only on the ACL edge
+    (``is_admin`` / ``is_launch_credential``): the import does NOT write ``connection.userRecords`` (checked in a dump
+    of a PROD import, 2026-11-18), so the record is not compared for them.
     """
     explicit = set(explicit)
     who = f'"{title}": ' if title else ''
@@ -524,9 +525,6 @@ def diff_credential_refs(resolved: Dict[str, Optional[str]], explicit: Iterable[
                 changes.append(_graph(OP_CHANGE if old else OP_ADD, 'acl.is_admin', old, uid, comparator='admin_credential'))
                 if old and old != uid:
                     warnings.append(f'{who}the administrative credential changes from {old} to {uid}')
-            current_list = conn.get('userRecords')
-            if not same(current_list, [uid]):
-                record_change(name, 'connection.userRecords', current_list, [uid])
         elif name == 'launch_credential':
             have = holders['launch']
             if uid not in have or len(have) > 1:
