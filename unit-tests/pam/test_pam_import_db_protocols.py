@@ -82,6 +82,16 @@ class TestPamImportNewDbProtocols(unittest.TestCase):
                 obj = PamSettingsFieldData.get_connection_class({'protocol': proto})
                 self.assertFalse(validate_pam_connection(obj, 'pamDatabase'))
 
+    def test_unknown_protocol_with_credentials_uses_base_connection(self):
+        with self.assertLogs(level='WARNING') as logs:
+            obj = PamSettingsFieldData.get_connection_class({
+                'protocol': 'not-a-protocol',
+                'administrative_credentials': 'adm',
+                'launch_credentials': 'root',
+            })
+        self.assertEqual(type(obj).__name__, 'BaseConnectionSettings')
+        self.assertTrue(any('unknown' in line and 'not-a-protocol' in line for line in logs.output))
+
     def test_is_database_protocol(self):
         for proto, _ in self.NEW_PROTOCOLS:
             with self.subTest(protocol=proto):

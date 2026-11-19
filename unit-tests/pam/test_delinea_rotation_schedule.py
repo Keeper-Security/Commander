@@ -26,6 +26,25 @@ class TestQuartzCronToKeeperSchedule(unittest.TestCase):
             with self.subTest(cron=cron):
                 self.assertEqual(quartz_cron_to_keeper_schedule(cron), expected)
 
+    def test_weekday_case_and_full_name(self):
+        monday = _schedule('WEEKLY', '09:00', weekday='MONDAY')
+        for cron in ('0 0 9 ? * mon', '0 0 9 ? * MON', '0 0 9 ? * Monday', '0 0 9 ? * MONDAY'):
+            with self.subTest(cron=cron):
+                self.assertEqual(quartz_cron_to_keeper_schedule(cron), monday)
+
+    def test_several_weekdays(self):
+        monday = _schedule('WEEKLY', '09:00', weekday='MONDAY')
+        tuesday = _schedule('WEEKLY', '09:00', weekday='TUESDAY')
+        wednesday = _schedule('WEEKLY', '09:00', weekday='WEDNESDAY')
+        cases = (
+            ('0 0 9 ? * 2,3', [monday, tuesday]),
+            ('0 0 9 ? * MON,WED', [monday, wednesday]),
+            ('0 0 9 ? * mon,wed', [monday, wednesday]),
+        )
+        for cron, expected in cases:
+            with self.subTest(cron=cron):
+                self.assertEqual(quartz_cron_to_keeper_schedule(cron), expected)
+
     def test_every_weekday_name(self):
         for dow, name in (('SUN', 'SUNDAY'), ('MON', 'MONDAY'), ('TUE', 'TUESDAY'), ('WED', 'WEDNESDAY'),
                           ('THU', 'THURSDAY'), ('FRI', 'FRIDAY'), ('SAT', 'SATURDAY')):
@@ -37,7 +56,6 @@ class TestQuartzCronToKeeperSchedule(unittest.TestCase):
             None, 12345, '', '0 0 * * *', '0 0 0 * * ? 2025',       # not six fields
             '0 */5 * * * ?', '0 0 */2 * * ?', '0 0,30 2 * * ?',     # non-numeric clock
             '0 0 1 */0 * ?', '0 0 1 */x * ?',                       # bad day step
-            '0 0 9 ? * MON,WED', '0 0 9 ? * mon',                   # several / lowercase weekdays
             '0 0 9 ? * MON#2', '0 0 9 ? */2 FRIL',                  # nth / last weekday
             '0 0 0 0 * ?', '0 0 0 32 * ?', '0 0 0 1 */0 ?',         # bad month day / step
             '0 0 0 1 3 ?', '0 0 0 * 3 ?',                           # fixed month
@@ -60,6 +78,61 @@ class TestQuartzCronToKeeperSchedule(unittest.TestCase):
         self.assertIsNone(quartz_cron_to_keeper_schedule('0 60 2 * * ?'))
         self.assertIsNone(quartz_cron_to_keeper_schedule('0 0 25 * * ?'))
         self.assertIsNone(quartz_cron_to_keeper_schedule('0 99 2 * * ?'))
+
+    def test_bare_l_maps_to_saturday(self):
+        saturday = _schedule('WEEKLY', '09:00', weekday='SATURDAY')
+        for cron in ('0 0 9 ? * L', '0 0 9 ? * l'):
+            with self.subTest(cron=cron):
+                self.assertEqual(quartz_cron_to_keeper_schedule(cron), saturday)
+
+    def test_malformed_dow_field_rejected(self):
+        for cron in (
+            '0 0 9 ? * MON,,FRI',    # empty token in middle
+            '0 0 9 ? * ,MON,FRI',    # leading comma
+            '0 0 9 ? * MON,FRI,',    # trailing comma
+            '0 0 9 ? * MON,,FRI,',   # multiple issues
+        ):
+            with self.subTest(cron=cron):
+                self.assertIsNone(quartz_cron_to_keeper_schedule(cron))
+
+    def test_numeric_and_named_weekday_mix(self):
+        monday = _schedule('WEEKLY', '09:00', weekday='MONDAY')
+        tuesday = _schedule('WEEKLY', '09:00', weekday='TUESDAY')
+        cases = (
+            ('0 0 9 ? * 2', monday),
+            ('0 0 9 ? * 2,3', [monday, tuesday]),
+            ('0 0 9 ? * MON,2', [monday, monday]),
+        )
+        for cron, expected in cases:
+            with self.subTest(cron=cron):
+                self.assertEqual(quartz_cron_to_keeper_schedule(cron), expected)
+
+    def test_quartz_special_characters_rejected(self):
+        """Quartz special chars (W, L with digit, #, -) are not supported by Keeper and should be rejected."""
+        unsupported = (
+            '0 0 9 15W * ?',      # W: nearest weekday
+            '0 0 9 ? * 5L',       # L with digit: last occurrence of weekday
+            '0 0 9 ? * MON#3',    # #: nth occurrence of weekday
+            '0 0 9 1-15 * ?',     # -: range in day field
+            '0 0 9 ? * 1-5',      # -: range in DOW field (unless we support it)
+        )
+        for cron in unsupported:
+            with self.subTest(cron=cron):
+                self.assertIsNone(quartz_cron_to_keeper_schedule(cron))
+
+    def test_keeper_supported_special_characters(self):
+        """Keeper cron spec supports *, ?, comma-separated values, and step values in specific fields."""
+        cases = (
+            ('0 30 2 * * ?', _schedule('DAILY', '02:30')),              # * and ? in day/DOW
+            ('0 5 14 */3 * ?', _schedule('DAILY', '14:05', 3)),         # / (step) in day field
+            ('0 0 9 ? * MON,WED', [
+                _schedule('WEEKLY', '09:00', weekday='MONDAY'),
+                _schedule('WEEKLY', '09:00', weekday='WEDNESDAY'),
+            ]),                                                          # comma-separated DOW
+        )
+        for cron, expected in cases:
+            with self.subTest(cron=cron):
+                self.assertEqual(quartz_cron_to_keeper_schedule(cron), expected)
 
 
 class TestScheduleToCron(unittest.TestCase):
