@@ -355,6 +355,12 @@ def execute_batch_attachments(
             for item in items:
                 keys[item.file_uid] = item.file_key
             linked = linked_keys_for_channel_a_refs(record, keys)
+            # A script file is referenced from the `script` field (value["fileRef"]), which the channel-A helper does
+            # not list (it only takes the script's recordRef). Without its key here the record update has no link to
+            # the file, so the file record is never delivered to the vault ("File record ... could not be loaded").
+            # The sequential import links every uploaded file (attachment.upload_attachments: linked_keys[file] = key).
+            for item in items:
+                linked[item.file_uid] = item.file_key
             if linked:
                 record.linked_keys = linked
             update_pbs.append(_build_typed_record_update_pb(params, record, existing))

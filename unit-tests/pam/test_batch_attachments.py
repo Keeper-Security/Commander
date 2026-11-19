@@ -241,6 +241,46 @@ class TestExecuteBatchAttachments(unittest.TestCase):
             exec_upd.assert_called_once()
             sync.assert_called_once()
 
+    def test_every_uploaded_file_incl_a_script_is_linked_to_the_parent(self):
+        """The script file is referenced only from the `script` field: its key must still reach record_links_add."""
+        from keepercommander.commands.pam_import.batch_attachments import _UploadSuccess
+        script_uid = 'SSSSSSSSSSSSSSSSSSSSSA'
+        params = MagicMock()
+        params.record_cache = {PARENT_UID: MagicMock()}
+        params.data_key = b'\x00' * 32
+        pending = [PendingUpload(PARENT_UID, '/tmp/a.bin', 'a.bin', 5, 'attachment'),
+                   PendingUpload(PARENT_UID, '/tmp/run.sh', 'run.sh', 7, 'script', script=PamScriptObject())]
+        existing = vault.TypedRecord()
+        existing.record_uid = PARENT_UID
+        existing.type_name = 'pamMachine'
+        existing.record_key = b'\x07' * 32
+        seen = {}
+
+        def fake_build(_params, record, _existing):
+            seen['linked'] = dict(record.linked_keys or {})
+            seen['refs'] = vault_extensions.extract_typed_record_refs(record)
+            return record_pb2.RecordUpdate()
+
+        from keepercommander import vault_extensions
+        ok = record_pb2.RecordModifyStatus()
+        ok.record_uid = utils.base64_url_decode(PARENT_UID)
+        ok.status = record_pb2.RS_SUCCESS
+        with patch('keepercommander.commands.pam_import.batch_attachments._files_add_chunk') as files_add, \
+                patch('keepercommander.commands.pam_import.batch_attachments._parallel_puts',
+                      return_value=([_UploadSuccess(pending[0], FILE_UID, b'\x03' * 32),
+                                     _UploadSuccess(pending[1], script_uid, b'\x04' * 32)], [])), \
+                patch('keepercommander.vault.KeeperRecord.load', return_value=existing), \
+                patch('keepercommander.commands.pam_import.batch_attachments._build_typed_record_update_pb',
+                      side_effect=fake_build), \
+                patch('keepercommander.commands.pam_import.batch_attachments.execute_records_update_with_retry',
+                      return_value=[ok]), \
+                patch('keepercommander.commands.pam_import.batch_attachments.api.sync_down'):
+            files_add.return_value = record_pb2.FilesAddResponse()
+            summary = execute_batch_attachments(params, pending)
+        self.assertEqual(summary.failures, [])
+        self.assertEqual(seen['linked'], {FILE_UID: b'\x03' * 32, script_uid: b'\x04' * 32})
+        self.assertEqual(seen['refs'], {FILE_UID, script_uid})
+
     def test_put_failure_aborts_before_records_update(self):
         params = MagicMock()
         params.record_cache = {PARENT_UID: MagicMock()}
