@@ -135,10 +135,6 @@ class DelineaImportOrchestrator:
         except (OSError, ValueError) as e:
             raise CommandError(COMMAND, str(e)) from e
         if opts.crosswalk_out or opts.crosswalk_check:
-            crosswalk = Crosswalk.load(opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
-        except (OSError, ValueError) as e:
-            raise CommandError(COMMAND, str(e)) from e
-        if opts.crosswalk_out or opts.crosswalk_check:
             self.run_crosswalk(crosswalk)
             return
 
