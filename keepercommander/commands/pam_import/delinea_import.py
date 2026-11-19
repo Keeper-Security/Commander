@@ -135,10 +135,6 @@ class DelineaImportOrchestrator:
         except (OSError, ValueError) as e:
             raise CommandError(COMMAND, str(e)) from e
         if opts.crosswalk_out or opts.crosswalk_check:
-            crosswalk = Crosswalk.load(opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
-        except (OSError, ValueError) as e:
-            raise CommandError(COMMAND, str(e)) from e
-        if opts.crosswalk_out or opts.crosswalk_check:
             self.run_crosswalk(crosswalk)
             return
 
@@ -148,9 +144,10 @@ class DelineaImportOrchestrator:
         for warning in validate_import_data(mapped.resources, mapped.users):
             logging.warning(warning)
 
-        # The review file is always written; --dry-run also prints it, --output stops after it.
+        # The review file is written only when --output or --dry-run is set.
         document = self.build_import_json(mapped, use_nsf)
-        self.write_output(document)
+        if opts.dry_run or opts.output_file:
+            self.write_output(document)
         if opts.dry_run:
             self.print_dry_run(mapped, document)
             return

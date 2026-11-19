@@ -1786,6 +1786,7 @@ class PAMProjectImportCommand(Command):
                             args["schedule_json_data"] = [json.dumps(keeper_schedule)]
                         elif cron_expr:
                             args["schedule_cron_data"] = [cron_expr]
+                            logging.warning(f"{bcolors.WARNING}schedule.type=cron uses raw cron expression (vault schedule will be empty for user {user.name}){bcolors.ENDC}")
                         else:
                             logging.warning(f"{bcolors.WARNING}schedule.type=cron but schedule.cron is empty (skipped){bcolors.ENDC} ")
                     if user.rotation_settings.password_complexity:

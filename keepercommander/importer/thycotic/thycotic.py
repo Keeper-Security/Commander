@@ -2274,22 +2274,31 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             return []
 
     @staticmethod
-    def _folder_nsf_role_by_email(folder, users_by_id, old_domain=None, new_domain=None):
-        # type: (Dict, Dict[int, Dict], Optional[str], Optional[str]) -> Dict[str, str]
+    def _folder_nsf_role_by_email(folder, users_by_id, groups_by_id=None, old_domain=None, new_domain=None):
+        # type: (Dict, Dict[int, Dict], Optional[Dict[int, Dict]], Optional[str], Optional[str]) -> Dict[str, str]
         from .nsf_acl import thycotic_roles_to_nsf_role
 
+        users_by_id = users_by_id or {}
+        groups_by_id = groups_by_id or {}
         folder_perms_by_email = {}  # type: Dict[str, str]
         for p in folder.get('permissions', []) or []:
             user_id = p.get('userId') or 0
-            if user_id <= 0 or user_id not in users_by_id:
-                continue
-            email = users_by_id[user_id].get('emailAddress')
-            if not email:
-                continue
+            group_id = p.get('groupId') or 0
             nsf_role = thycotic_roles_to_nsf_role(
                 p.get('folderAccessRoleName'), p.get('secretAccessRoleName'))
-            if nsf_role:
-                folder_perms_by_email[replace_email_domain(email, old_domain, new_domain)] = nsf_role
+            if not nsf_role:
+                continue
+
+            if user_id > 0 and user_id in users_by_id:
+                email = users_by_id[user_id].get('emailAddress')
+                if email:
+                    folder_perms_by_email[replace_email_domain(email, old_domain, new_domain)] = nsf_role
+            elif group_id > 0 and group_id in groups_by_id:
+                for mid in groups_by_id[group_id].get('users', []) or []:
+                    if mid in users_by_id:
+                        member_email = users_by_id[mid].get('emailAddress')
+                        if member_email:
+                            folder_perms_by_email[replace_email_domain(member_email, old_domain, new_domain)] = nsf_role
         return folder_perms_by_email
 
     @staticmethod
@@ -2368,7 +2377,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             folder = folders[folder_id]
             if not folder.get('inheritPermissions', True) and folder.get('permissions'):
                 folder_nsf_role_by_email = self._folder_nsf_role_by_email(
-                    folder, users_lookup, old_domain, new_domain)
+                    folder, users_lookup, groups_lookup, old_domain, new_domain)
                 folder_perm_rows = folder.get('permissions') or []
             elif folder_id:
                 folder_perm_rows = self._folder_permission_rows_for_folder(auth, folder_id)
