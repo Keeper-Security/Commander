@@ -58,19 +58,10 @@ class DelineaPamClient:
 
     @classmethod
     def connect(cls, server: str, proxy: Optional[dict] = None) -> Optional['DelineaPamClient']:
-        url = server or os.getenv('KEEPER_THYCOTIC_URL')
-        username = os.getenv('KEEPER_THYCOTIC_USER')
-        password = os.getenv('KEEPER_THYCOTIC_PASSWORD')
-
-        if not url:
+        auth = ThycoticMixin.connect_to_server(server)
+        if not auth:
             return None
-
-        auth = ThycoticAuth(url)
-        if proxy:
-            auth.proxy = proxy
-        auth.authenticate(username, password)
-        if not auth.access_token:
-            return None
+        auth.proxy = proxy   
         return cls(auth)
 
     def _get(self, key: str, entity_id: int) -> Optional[dict]:
