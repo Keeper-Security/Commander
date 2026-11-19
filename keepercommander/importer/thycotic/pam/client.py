@@ -8,6 +8,7 @@
 # Keeper Commander — Delinea PAM import
 
 import logging
+import os
 from typing import Dict, Iterable, List, Optional
 
 from ..thycotic import ThycoticAuth, ThycoticMixin
@@ -57,10 +58,19 @@ class DelineaPamClient:
 
     @classmethod
     def connect(cls, server: str, proxy: Optional[dict] = None) -> Optional['DelineaPamClient']:
-        auth = ThycoticMixin.connect_to_server(server)
-        if not auth:
+        url = server or os.getenv('KEEPER_THYCOTIC_URL')
+        username = os.getenv('KEEPER_THYCOTIC_USER')
+        password = os.getenv('KEEPER_THYCOTIC_PASSWORD')
+
+        if not url:
             return None
-        auth.proxy = proxy
+
+        auth = ThycoticAuth(url)
+        if proxy:
+            auth.proxy = proxy
+        auth.authenticate(username, password)
+        if not auth.access_token:
+            return None
         return cls(auth)
 
     def _get(self, key: str, entity_id: int) -> Optional[dict]:
