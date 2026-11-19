@@ -46,6 +46,13 @@ CRON_WEEKDAYS = {
     'SUN': 'SUNDAY', 'MON': 'MONDAY', 'TUE': 'TUESDAY', 'WED': 'WEDNESDAY',
     'THU': 'THURSDAY', 'FRI': 'FRIDAY', 'SAT': 'SATURDAY',
 }
+CRON_WEEKDAY_NUMBERS = {
+    'SUN': '1', 'MON': '2', 'TUE': '3', 'WED': '4',
+    'THU': '5', 'FRI': '6', 'SAT': '7',
+}
+CRON_WEEKDAY_FROM_NUMBER = {
+    number: CRON_WEEKDAYS[name] for name, number in CRON_WEEKDAY_NUMBERS.items()
+}
 
 # Rotation schedule types
 SCHEDULE_TYPES = ("on-demand", "cron")
@@ -481,8 +488,57 @@ class PamAttachmentObject():
     # def to_json(self): pass  # File upload will create the JSON format
 
 
+def _quartz_weekday_number(token):
+    """Quartz day-of-week token to ``1``–``7``, or ``None``.
+
+    Accepts ``1``–``7``, ``MON`` / ``mon``, and ``MONDAY`` / ``Monday``.
+    In Quartz, bare ``L`` (or ``l``) means Saturday (7).
+    """
+    text = (token or '').strip()
+    if text in CRON_WEEKDAY_FROM_NUMBER:
+        return text
+    if text.upper() == 'L':
+        return '7'
+    upper = text.upper()
+    short = upper[:3]
+    if short not in CRON_WEEKDAY_NUMBERS:
+        return None
+    if upper != short and upper != CRON_WEEKDAYS[short]:
+        return None
+    return CRON_WEEKDAY_NUMBERS[short]
+
+
+def quartz_named_dow_to_numbers(cron):
+    """Replace Quartz weekday names with 1–7 so Keeper's rotation CRON validator accepts the field.
+
+    Accepts 6-field Quartz cron (second, minute, hour, day-of-month, month, day-of-week).
+    Rejects malformed day-of-week fields like "MON,,FRI," (empty tokens).
+    """
+    parts = str(cron or '').split()
+    if len(parts) != 6:
+        return cron
+    dow_field = parts[5]
+    if not dow_field or dow_field.startswith(',') or dow_field.endswith(','):
+        return cron
+    raw_tokens = dow_field.split(',')
+    tokens = [token.strip() for token in raw_tokens if token.strip()]
+    if len(tokens) != len(raw_tokens):
+        return cron
+    if not tokens:
+        return cron
+    numbers = []
+    for token in tokens:
+        number = _quartz_weekday_number(token)
+        if number is None:
+            return cron
+        numbers.append(number)
+    parts[5] = ','.join(numbers)
+    return ' '.join(parts)
+
+
 def quartz_cron_to_keeper_schedule(cron):
     """Six-field Quartz cron to a Keeper ``DAILY`` / ``WEEKLY`` / ``MONTHLY_BY_DAY`` schedule, else ``None``."""
+    cron = quartz_named_dow_to_numbers(cron)
     parts = str(cron or '').split()
     if len(parts) != 6:
         return None
@@ -505,11 +561,14 @@ def quartz_cron_to_keeper_schedule(cron):
         interval = _step(dom)
         if interval:
             return {'type': 'DAILY', 'utcTime': utc_time, 'intervalCount': interval, 'tz': 'Etc/UTC'}
-    if dom in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and month == CRON_ANY_VALUE and dow in CRON_WEEKDAYS:
-        return {
-            'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': CRON_WEEKDAYS[dow],
-            'intervalCount': 1, 'tz': 'Etc/UTC',
-        }
+    if dom in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and month == CRON_ANY_VALUE:
+        days = [part for part in dow.split(',') if part]
+        if days and all(day in CRON_WEEKDAY_FROM_NUMBER for day in days):
+            schedules = [{
+                'type': 'WEEKLY', 'utcTime': utc_time, 'weekday': CRON_WEEKDAY_FROM_NUMBER[day],
+                'intervalCount': 1, 'tz': 'Etc/UTC',
+            } for day in days]
+            return schedules[0] if len(schedules) == 1 else schedules
     if dow in (CRON_NO_SPECIFIC_VALUE, CRON_ANY_VALUE) and dom.isdigit():
         interval = _step(month)
         day = int(dom)
@@ -3364,8 +3423,9 @@ class PamSettingsFieldData:
                     if isinstance(pr, ConnectionProtocol) and pr.value.lower() == proto:  # pylint: disable=E1101
                         return con.load(cdata)
             if cdata.get("administrative_credentials") or cdata.get("launch_credentials"):
-                if proto:
-                    logging.warning(f"""Unrecognized protocol "{str(proto)[:24]}" - connection settings ignored, keeping credentials only""")
+                logging.warning(
+                    'Connection protocol "%s" is unknown; loading base connection settings',
+                    str(proto)[:24])
                 return BaseConnectionSettings.load(cdata)
             logging.warning(f"""Connection skipped: unknown protocol "{str(proto)[:24]}" """)
         return None
