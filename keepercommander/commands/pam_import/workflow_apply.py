@@ -156,6 +156,13 @@ def _new_approver_key(a: dict) -> str:
     return f'team:{a["team_uid_b64"]}'
 
 
+def _same_escalation(existing: workflow_pb2.WorkflowApprover, new: dict) -> bool:
+    """Escalation on / off, and its delay when it is on (the delay of a switched-off escalation does not matter)."""
+    if bool(existing.escalation) != bool(new.get('escalation')):
+        return False
+    return not new.get('escalation') or int(existing.escalationAfterMs or 0) == int(new.get('escalation_after_ms') or 0)
+
+
 def _reconcile_approvers(
     params: KeeperParams,
     record_uid_bytes: bytes,
@@ -170,6 +177,13 @@ def _reconcile_approvers(
 
     to_delete = [a for k, a in existing_keys.items() if k not in new_keys]
     to_add = [a for k, a in new_keys.items() if k not in existing_keys]
+    # an approver that is on both sides but with another escalation is replaced (delete + add): the API has no
+    # "update approver" call, and leaving it alone kept the old escalation (found by `pam project update`, QA 2026-11-19)
+    for key, new in new_keys.items():
+        old_approver = existing_keys.get(key)
+        if old_approver is not None and not _same_escalation(old_approver, new):
+            to_delete.append(old_approver)
+            to_add.append(new)
 
     if to_delete:
         config = workflow_pb2.WorkflowConfig()
