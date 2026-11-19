@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionSaasSetCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action saas set')
+    parser = argparse.ArgumentParser(
+        prog='pam action saas set',
+        description='Assign a SaaS credential rotation plugin configuration to a PAM user record.')
 
     parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
                         help='Gateway name of UID.')

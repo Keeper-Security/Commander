@@ -432,7 +432,9 @@ def _vault_title_matches_import(vault_title: str, import_title: str) -> bool:
 
 
 class PAMProjectExtendCommand(Command):
-    parser = argparse.ArgumentParser(prog="pam project extend")
+    parser = argparse.ArgumentParser(
+        prog="pam project extend",
+        description="Extend an existing PAM configuration by importing additional resources and users from JSON.")
     parser.add_argument("--config", "-c", required=True, dest="config", action="store", help="PAM Configuration UID or Title")
     parser.add_argument("--filename", "-f", required=True, dest="file_name", action="store", help="File to load import data from.")
     parser.add_argument("--resources-folder", required=False, dest="resources_folder", action="store", default="",

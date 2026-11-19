@@ -254,7 +254,9 @@ class PAMRbiCommand(GroupCommand):
 
 # Individual Commands
 class PAMTunnelListCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel list')
+    pam_cmd_parser = argparse.ArgumentParser(
+        prog='pam tunnel list',
+        description='List active PAM port-forwarding tunnels on this machine.')
     pam_cmd_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'],
                                 default='table', help='Output format (table, json)')
 
@@ -357,7 +359,9 @@ class PAMTunnelStopCommand(Command):
     # the lease ends via either expiresOn server-side expiry or an explicit
     # `pam workflow end`. Releasing here would clobber leases the user
     # checked out manually via `pam workflow start`.
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel stop')
+    pam_cmd_parser = argparse.ArgumentParser(
+        prog='pam tunnel stop',
+        description='Stop one or all active PAM port-forwarding tunnels.')
     pam_cmd_parser.add_argument('uid', type=str, action='store', nargs='?', help='The Tunnel ID, Conversation ID, or Record UID (omit with --all to stop all tunnels)')
     pam_cmd_parser.add_argument('--all', dest='stop_all', action='store_true',
                                 help='Stop all tunnels (if no UID) or all tunnels matching the UID (if UID provided)')
@@ -500,7 +504,9 @@ class PAMTunnelStopCommand(Command):
 
 
 class PAMTunnelEditCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel edit')
+    pam_cmd_parser = argparse.ArgumentParser(
+        prog='pam tunnel edit',
+        description='Configure PAM tunneling, port overrides, and database proxy settings on a PAM resource record.')
     pam_cmd_parser.add_argument('record', type=str, action='store', help='The record path or UID of the PAM '
                                                                       'resource record with network information to use '
                                                                       'for tunneling')
@@ -811,7 +817,9 @@ class PAMTunnelEditCommand(Command):
 
 
 class PAMTunnelStartCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam tunnel start')
+    pam_cmd_parser = argparse.ArgumentParser(
+        prog='pam tunnel start',
+        description='Start a local PAM port-forwarding tunnel to a target PAM resource record.')
     pam_cmd_parser.add_argument('uid', type=str, action='store', help='The Record UID of the PAM resource '
                                                                       'record with network information to use for '
                                                                       'tunneling')
@@ -3119,7 +3127,9 @@ class PAMConnectionEditCommand(Command):
     non_db_protocols = ['http', 'kubernetes', 'rdp', 'ssh', 'telnet', 'vnc']
     # Protocols offered by --protocol ('' clears the protocol).
     protocols = [''] + sorted(non_db_protocols + db_protocols)
-    parser = argparse.ArgumentParser(prog='pam connection edit')
+    parser = argparse.ArgumentParser(
+        prog='pam connection edit',
+        description='Configure PAM connection protocol, credentials, recording, and gateway settings on a PAM resource.')
     parser.add_argument('record', type=str, action='store', help='The record UID or path of the PAM '
                         'resource record with network information to use for connections')
     parser.add_argument('--configuration', '-c', required=False, dest='config', action='store',
@@ -3615,7 +3625,9 @@ class PAMConnectionEditCommand(Command):
 
 
 class PAMConnectionJitCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam connection jit')
+    parser = argparse.ArgumentParser(
+        prog='pam connection jit',
+        description='Configure Just-In-Time (JIT) ephemeral user creation or privilege elevation on a PAM resource.')
     parser.add_argument('record', type=str, action='store',
                         help='Record UID, path, or title (pamMachine, pamDatabase, or pamDirectory)')
     parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
@@ -3871,7 +3883,9 @@ _PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL = (
 
 class PAMConnectionAiCommand(Command):
     choices = ['on', 'off', 'default']
-    parser = argparse.ArgumentParser(prog='pam connection ai')
+    parser = argparse.ArgumentParser(
+        prog='pam connection ai',
+        description='Configure KeeperAI session threat detection and risk-level actions on a PAM resource.')
     parser.add_argument('record', type=str, action='store',
                         help=f'Record UID, path, or title ({_PAM_CONNECTION_AI_RESOURCE_TYPES_LABEL})')
     parser.add_argument('--configuration', '-c', type=str, dest='configuration', action='store', default=None,
@@ -4169,7 +4183,9 @@ RBI_CLIPBOARD_BUFFER_SIZES = {
 
 class PAMRbiEditCommand(Command):
     choices = ['on', 'off', 'default']
-    parser = argparse.ArgumentParser(prog='pam rbi edit')
+    parser = argparse.ArgumentParser(
+        prog='pam rbi edit',
+        description='Configure Remote Browser Isolation (RBI) URL, autofill, recording, and KeeperAI settings.')
 
     # Record and Configuration
     parser.add_argument('--record', '-r', type=str, required=True, dest='record', action='store',
@@ -4665,7 +4681,9 @@ class PAMRbiEditCommand(Command):
         sync_down_preserving_nsf_keys(params)
 
 class PAMSplitCommand(Command):
-    pam_cmd_parser = argparse.ArgumentParser(prog='pam split')
+    pam_cmd_parser = argparse.ArgumentParser(
+        prog='pam split',
+        description='Split embedded credentials from a legacy PAM Machine record into a separate PAM User record.')
     pam_cmd_parser.add_argument('pam_machine_record', type=str, action='store',
                                 help='The record UID or title of the legacy PAM Machine '
                                 'record with built-in PAM User credentials.')

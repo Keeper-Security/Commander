@@ -14,7 +14,9 @@ if TYPE_CHECKING:
 
 
 class PAMDebugVertexCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action debug info')
+    parser = argparse.ArgumentParser(
+        prog='pam action debug vertex',
+        description='Inspect raw DAG vertex edges and attributes for a PAM record.')
 
     type_name_map = {
         PAM_USER: "PAM User",

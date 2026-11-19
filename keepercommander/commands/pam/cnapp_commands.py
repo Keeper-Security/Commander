@@ -244,7 +244,9 @@ def _add_configuration_args(parser, require_secret=True, optional_secret_on_set=
 
 
 class PAMCnappConfigSetCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp config set')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp config set',
+        description='Configure CNAPP integration credentials and endpoint settings for a PAM network.')
     _add_configuration_args(parser, optional_secret_on_set=True)
     parser.add_argument('--config-record', required=True, dest='cnapp_config_record_uid',
                         help='UID of the vault record holding the Encrypter URL + key.')
@@ -271,7 +273,9 @@ class PAMCnappConfigSetCommand(Command):
 
 
 class PAMCnappConfigTestCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp config test')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp config test',
+        description='Test connectivity and authentication for a CNAPP integration configuration.')
     _add_configuration_args(parser, require_secret=True)
 
     def get_parser(self):
@@ -292,7 +296,9 @@ class PAMCnappConfigTestCommand(Command):
 
 
 class PAMCnappConfigTestEncrypterCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp config test-encrypter')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp config test-encrypter',
+        description='Test the CNAPP payload encrypter endpoint.')
     parser.add_argument('--url', '-u', required=True, dest='url',
                         help='Base URL of the Encrypter. krouter probes <url>/health.')
 
@@ -305,7 +311,9 @@ class PAMCnappConfigTestEncrypterCommand(Command):
 
 
 class PAMCnappConfigReadCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp config read')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp config read',
+        description='Display the CNAPP integration configuration for a PAM network.')
     parser.add_argument('--network-uid', '-n', required=True, dest='network_uid',
                         help='Network record UID (base64url).')
     parser.add_argument('--provider', '-p', required=True, dest='provider',
@@ -334,7 +342,9 @@ class PAMCnappConfigReadCommand(Command):
 
 
 class PAMCnappConfigDeleteCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp config delete')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp config delete',
+        description='Delete the CNAPP integration configuration for a PAM network.')
     parser.add_argument('--network-uid', '-n', required=True, dest='network_uid',
                         help='Network record UID (base64url).')
 
@@ -366,7 +376,9 @@ class PAMCnappQueueCommand(GroupCommand):
 
 
 class PAMCnappQueueListCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp queue list')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp queue list',
+        description='List queued CNAPP findings and remediation items for a PAM network.')
     parser.add_argument('--network-uid', '-n', required=True, dest='network_uid',
                         help='Network record UID (base64url).')
     parser.add_argument('--status', '-s', required=False, dest='status', default=0,
@@ -498,7 +510,9 @@ class PAMCnappQueueListCommand(Command):
 
 
 class PAMCnappQueueAssociateCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp queue associate')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp queue associate',
+        description='Associate a CNAPP queue item with a PAM record in the vault.')
     parser.add_argument('--queue-id', '-q', required=True, type=int, dest='cnapp_queue_id',
                         help='Queue item ID (from `pam cnapp queue list`).')
     parser.add_argument('--record-uid', '-r', required=True, dest='record_uid',
@@ -517,7 +531,9 @@ class PAMCnappQueueAssociateCommand(Command):
 
 
 class PAMCnappQueueRemediateCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp queue remediate')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp queue remediate',
+        description='Trigger credential rotation or remediation for a CNAPP queue item.')
     parser.add_argument('--queue-id', '-q', required=True, type=int, dest='cnapp_queue_id',
                         help='Queue item ID.')
     parser.add_argument('--action', '-a', required=True, dest='action_type',
@@ -571,7 +587,9 @@ class PAMCnappQueueRemediateCommand(Command):
 
 
 class PAMCnappQueueSetStatusCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp queue set-status')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp queue set-status',
+        description='Update the status of a CNAPP remediation queue item.')
     parser.add_argument('--queue-id', '-q', required=True, type=int, dest='cnapp_queue_id',
                         help='Queue item ID.')
     parser.add_argument('--status', '-s', required=True, dest='status',
@@ -596,7 +614,9 @@ class PAMCnappQueueSetStatusCommand(Command):
 
 
 class PAMCnappQueueDeleteCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam cnapp queue delete')
+    parser = argparse.ArgumentParser(
+        prog='pam cnapp queue delete',
+        description='Delete an item from the CNAPP remediation queue.')
     parser.add_argument('--queue-id', '-q', required=True, type=int, dest='cnapp_queue_id',
                         help='Queue item ID to delete.')
 

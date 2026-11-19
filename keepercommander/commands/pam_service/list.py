@@ -18,7 +18,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionServiceListCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action service list')
+    parser = argparse.ArgumentParser(
+        prog='pam action service list',
+        description='List Windows services and scheduled tasks linked to PAM user credentials.')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

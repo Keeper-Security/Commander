@@ -22,7 +22,9 @@ class RecordNotConfigException(Exception):
 
 
 class PAMActionSaasUpdateCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action saas update')
+    parser = argparse.ArgumentParser(
+        prog='pam action saas update',
+        description='Update custom SaaS rotation plugin scripts or metadata.')
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')

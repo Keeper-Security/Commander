@@ -932,6 +932,7 @@ class PAMProjectKCMImportCommand(Command):
 
     parser = argparse.ArgumentParser(
         prog='pam project kcm-import',
+        description='Import connections, users, and groups from Keeper Connection Manager (KCM) into KeeperPAM.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
@@ -4106,6 +4107,7 @@ class PAMProjectKCMCleanupCommand(Command):
 
     parser = argparse.ArgumentParser(
         prog='pam project kcm-cleanup',
+        description='Remove records, folders, and configurations created by a KCM migration project.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:

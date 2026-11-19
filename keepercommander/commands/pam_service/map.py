@@ -43,7 +43,9 @@ class GatewayActionUserServiceMapCommand(GatewayAction):
 
 class PAMActionUserServiceMapCommand(PAMGatewayActionDiscoverCommandBase):
 
-    parser = argparse.ArgumentParser(prog='pam action saas config')
+    parser = argparse.ArgumentParser(
+        prog='pam action service map',
+        description='Map a PAM User credential to a Windows service, scheduled task, or IIS app pool.')
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
