@@ -185,6 +185,11 @@ def _files_add_chunk(params, slots: List[_UploadSlot]) -> record_pb2.FilesAddRes
         }
         rf = record_pb2.File()
         rf.record_uid = slot.file_uid
+        # A rotation script file is flagged, as the sequential import does (attachment.FileUploadTask(is_script=True)).
+        # Without the flag the file is stored as a plain file that is not linked to the record (the link comes from a
+        # `fileRef` FIELD, and a script is referenced from a `script` field), so the importing session itself cannot load
+        # it afterwards (seen on a PROD import: "File record ... could not be loaded").
+        rf.is_script = slot.pending.kind == 'script'
         rf.record_key = crypto.encrypt_aes_v2(slot.file_key, params.data_key)
         rf.data = crypto.encrypt_aes_v2(json.dumps(file_data).encode('utf-8'), slot.file_key)
         rf.fileSize = IV_LEN + slot.pending.size + GCM_TAG_LEN

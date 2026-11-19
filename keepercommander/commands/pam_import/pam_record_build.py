@@ -189,6 +189,8 @@ def _pam_user_kwargs(obj: PamUserObject, folder_uid: str) -> Dict[str, Any]:
         fields.append(f'f.checkbox.managed={str(managed).lower()}')
     if obj.oneTimeCode:
         fields.append(f'f.oneTimeCode={obj.oneTimeCode}')
+    # custom fields of the JSON `custom` list (same as the sequential PamUserObject.create_record)
+    append_custom_text_fields(fields, getattr(obj, 'custom', None))
     fields.extend(_attachment_fields(obj))
     if fields:
         args['fields'] = fields
@@ -224,7 +226,11 @@ def _machine_kwargs(obj: PamObject, folder_uid: str) -> Dict[str, Any]:
         fields.append(f'f.pamHostname=$JSON:{val}')
     sslv = utils.value_to_boolean(getattr(obj, 'sslVerification', None))
     if sslv is not None:
-        fields.append(f'f.checkbox.sslVerification={str(sslv).lower()}')
+        # No "f." on purpose (same as the sequential import, PamMachineObject.create_record): the pamMachine record
+        # type has no sslVerification field, and with "f." record-add drops the value ("Field type checkbox is not
+        # found for record type pamMachine"); without it the value goes to the type field if the type has one,
+        # otherwise to a custom field.
+        fields.append(f'checkbox.sslVerification={str(sslv).lower()}')
     for attr, field_name in (
         ('operatingSystem', 'f.text.operatingSystem'),
         ('instanceName', 'f.text.instanceName'),
@@ -291,6 +297,22 @@ def _apply_pam_settings_fields(
             args.setdefault('fields', []).append(pam_field)
 
 
+def log_field_problems(cmd: RecordEditAddCommand, record_type: str, title: str) -> None:
+    """Show what record-add reports while it assigns the fields.
+
+    The sequential import prints these messages (`record-add` does); the batch path builds the record itself and used to
+    drop them, so a value the record type cannot hold (for example `f.checkbox.x` on a type without that field:
+    'Field type "checkbox" is not found for record type pamMachine') was lost without a trace.
+    """
+    who = f'{record_type} "{title}"' if title else record_type
+    for message in cmd.warnings:
+        logging.warning(f'{who}: {message}')
+    for message in cmd.errors:
+        logging.error(f'{who}: {message}')
+    cmd.warnings.clear()
+    cmd.errors.clear()
+
+
 def pam_object_to_typed_record(
     params,
     obj: PamObject,
@@ -338,6 +360,7 @@ def pam_object_to_typed_record(
             field.required = True
         record.fields.append(field)
     cmd.assign_typed_fields(record, record_fields)
+    log_field_problems(cmd, record_type, kwargs.get('title') or '')
 
     record_uid = str(kwargs.get('record_uid', ''))
     if RecordV3.is_valid_ref_uid(record_uid):

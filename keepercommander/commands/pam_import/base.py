@@ -2245,6 +2245,11 @@ class PamCloudResourceObject(PamRemoteBrowserObject):
             return obj
         aid = data.get("account_identifier", None)
         obj.accountIdentifier = str(aid).strip() if aid is not None and str(aid).strip() else None
+        # inherited from pamRemoteBrowser, whose record type has a oneTimeCode field; the pamCloudResource type has none
+        if obj.oneTimeCode:
+            logging.warning(f"""PAM Cloud "{obj.title}": otp not used for pamCloudResource (the record type has no """
+                            "one-time code field) - ignored")
+            obj.oneTimeCode = None
 
         psd = data.get("pam_settings", None)
         options = psd.get("options", None) if isinstance(psd, dict) else None

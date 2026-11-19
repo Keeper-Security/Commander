@@ -152,6 +152,34 @@ class TestApplyUploadsToRecord(unittest.TestCase):
         self.assertEqual(entry['recordRef'], ['UUUUUUUUUUUUUUUUUUUUUA'])
 
 
+class TestFilesAddIsScript(unittest.TestCase):
+    """A rotation script file must be flagged is_script in files_add (as the sequential import does)."""
+
+    def test_script_flagged_attachment_not(self):
+        from keepercommander.commands.pam_import import batch_attachments as ba
+
+        slots = [
+            ba._UploadSlot(PendingUpload(PARENT_UID, '/a', 'a.bin', 5, 'attachment'), b'A' * 16, b'\x01' * 32),
+            ba._UploadSlot(PendingUpload(PARENT_UID, '/b', 'b.sh', 7, 'script'), b'B' * 16, b'\x02' * 32),
+        ]
+        params = MagicMock()
+        params.data_key = b'\x03' * 32
+        sent = []
+
+        def fake_communicate(_params, rq, endpoint, rs_type=None):
+            sent.append((endpoint, rq))
+            return rs_type()
+
+        with patch.object(ba.api, 'communicate_rest', side_effect=fake_communicate), \
+                patch.object(ba, 'rest_fail_on_throttle', return_value=False):
+            ba._files_add_chunk(params, slots)
+
+        self.assertEqual(len(sent), 1)
+        endpoint, rq = sent[0]
+        self.assertEqual(endpoint, 'vault/files_add')
+        self.assertEqual([f.is_script for f in rq.files], [False, True])
+
+
 class TestExecuteBatchAttachments(unittest.TestCase):
     def _mock_file_add_result(self, file_uid: bytes, status=record_pb2.FA_SUCCESS):
         fres = record_pb2.FileAddStatus()
