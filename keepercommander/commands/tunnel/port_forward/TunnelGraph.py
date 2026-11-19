@@ -345,7 +345,7 @@ class TunnelDAG:
                     )
 
             # Fallback: legacy direct DAG-write.
-            config_vertex.add_data(content=content, path='meta', needs_encryption=False)
+            config_vertex.add_data(content=content, path='meta', needs_encryption=False, path_aware=True)
             self.linking_dag.save()
 
     def get_all_owners(self, uid):
