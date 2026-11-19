@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Sample MSIX manifest for the PyInstaller one-folder build of Keeper Commander.
+
+  Expected package layout (package root = folder passed to `makeappx pack /d`):
+
+    AppxManifest.xml
+    keeper-commander.exe
+    _internal\...                 (PyInstaller runtime, copied as-is)
+    Assets\StoreLogo.png          50x50
+    Assets\Square44x44Logo.png    44x44
+    Assets\Square150x150Logo.png  150x150
+    Assets\Wide310x150Logo.png    310x150
+
+  Build & sign:
+    makeappx pack /d <package-root> /p KeeperCommander_18.1.11.0_x64.msix
+    signtool sign /sha1 <DigiCert cert thumbprint> /tr http://timestamp.digicert.com /td SHA256 /fd SHA256 KeeperCommander_18.1.11.0_x64.msix
+
+  NOTE: Identity/Publisher must exactly match the Subject of the signing certificate.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 desktop4 rescap">
+
+  <!-- Version must be 4-part numeric; the last part must be 0 for Store submissions. -->
+  <Identity
+    Name="KeeperSecurity.KeeperCommander"
+    Publisher="CN=Keeper Security Inc., O=Keeper Security Inc., L=Chicago, S=Illinois, C=US, SERIALNUMBER=3407985, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.2=Delaware, OID.1.3.6.1.4.1.311.60.2.1.3=US"
+    Version="18.1.11.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Keeper Commander</DisplayName>
+    <PublisherDisplayName>Keeper Security Inc.</PublisherDisplayName>
+    <Description>Command-line and terminal UI for Keeper Password Manager and KeeperPAM.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- Windows 10 1809 is the practical minimum for desktop app execution aliases. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <Application
+      Id="KeeperCommander"
+      Executable="keeper-commander.exe"
+      EntryPoint="Windows.FullTrustApplication"
+      desktop4:Subsystem="console"
+      desktop4:SupportsMultipleInstances="true">
+
+      <uap:VisualElements
+        DisplayName="Keeper Commander"
+        Description="Keeper Commander CLI"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+      </uap:VisualElements>
+
+      <Extensions>
+        <!--
+          App execution aliases put these names on PATH (via %LOCALAPPDATA%\Microsoft\WindowsApps),
+          so users can type `keeper` or `keeper-commander` from any terminal.
+          This replaces the keeper.bat shim from the zip distribution.
+        -->
+        <uap5:Extension Category="windows.appExecutionAlias">
+          <uap5:AppExecutionAlias desktop4:Subsystem="console">
+            <uap5:ExecutionAlias Alias="keeper.exe" />
+            <uap5:ExecutionAlias Alias="keeper-commander.exe" />
+          </uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- Required for any Win32 / PyInstaller executable. -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
