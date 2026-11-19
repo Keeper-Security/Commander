@@ -118,8 +118,26 @@ def format_text(plan: UpdatePlan, *, verbose: bool = False, brief_tip: bool = Tr
     return '\n'.join(lines)
 
 
-def to_dict(plan: UpdatePlan, *, verbose: bool = False, estimate: bool = False) -> Dict[str, Any]:
-    """The ``--format json`` result: ``{summary, changes[], skipped[], errors[], warnings[]}``."""
+def format_apply(outcome) -> str:
+    """The text after a write run: what was written, the APPLY errors and what update could not write yet."""
+    lines: List[str] = []
+    if outcome.applied:
+        lines.append(f'Written ({len(outcome.applied)}):')
+        lines.extend(f'  {a}' for a in outcome.applied)
+    lines.extend(f'WARNING: {w}' for w in outcome.warnings)
+    if outcome.not_applied:
+        lines.append(f'NOT WRITTEN YET ({len(outcome.not_applied)}) - these still differ on the next run:')
+        lines.extend(f'  {a}' for a in outcome.not_applied)
+    lines.extend(f'ERROR: {e}' for e in outcome.errors)
+    lines.append(f'Done: {len(outcome.applied)} written, {len(outcome.errors)} error(s), '
+                 f'{len(outcome.not_applied)} not written yet.')
+    if outcome.errors:
+        lines.append('Run the same command again to finish what failed.')
+    return '\n'.join(lines)
+
+
+def to_dict(plan: UpdatePlan, *, verbose: bool = False, estimate: bool = False, outcome=None) -> Dict[str, Any]:
+    """The ``--format json`` result: ``{summary, changes[], skipped[], errors[], warnings[]}`` (+ ``apply`` after a write)."""
     total = len(plan.compared)
     summary = {
         'mode': plan.mode,
@@ -136,6 +154,12 @@ def to_dict(plan: UpdatePlan, *, verbose: bool = False, estimate: bool = False) 
         'errors': len(plan.errors),
     }
     out: Dict[str, Any] = {'summary': summary, 'errors': list(plan.errors), 'warnings': list(plan.warnings)}
+    if outcome is not None:
+        summary['applied'] = len(outcome.applied)
+        summary['failed'] = len(outcome.errors)
+        summary['not_applied'] = len(outcome.not_applied)
+        out['apply'] = {'applied': list(outcome.applied), 'errors': list(outcome.errors),
+                        'warnings': list(outcome.warnings), 'not_applied': list(outcome.not_applied)}
     if estimate:
         return out
     changes = []

@@ -229,13 +229,13 @@ class TestErrorsAndLimits(Quiet):
         report, _ = run(plan, Recorder(fail=True))
         self.assertTrue(any('the workflow was not written: workflow boom' in e for e in report.errors))
 
-    def test_record_and_rotation_changes_are_reported_as_not_applied(self):
+    def test_rotation_changes_are_reported_as_not_applied_and_record_fields_are_left_to_update_records(self):
         raw = tp.machine_json(operating_system='windows')
         raw['users'][0]['rotation_settings']['schedule'] = {'type': 'cron', 'cron': '0 0 4 * * ?'}
         st = tp.state(rotation=dict(tp.IDLE_ROTATION, schedule=[{'type': 'CRON', 'cron': '0 30 18 * * ?'}]))
         report, rec = run(plan_for(raw, st=st))
         text = ' | '.join(report.not_applied)
-        self.assertIn('M1: record field changes are not applied yet', text)
+        self.assertNotIn('record field changes', text)               # written by update_records, not here
         self.assertIn('admin1: rotation changes are not applied yet', text)
         self.assertEqual(rec.requests, [])
 

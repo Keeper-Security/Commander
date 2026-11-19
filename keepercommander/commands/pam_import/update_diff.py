@@ -49,7 +49,7 @@ workflow (open item 2). A path that needs one of them is reported as a warning, 
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import update_schema as us
@@ -347,10 +347,12 @@ def _diff_custom(result: RecordDiff, raw_custom: Any, current: Dict[str, Any], m
         path = f'custom "{item["label"]}"'
         values = (existing or {}).get('value') or []
         old = values[0] if values else None
+        # one target per custom field (type + label), so a writer knows which field the change is about
+        own = replace(target, field=item['type'], label=item['label'])
         if existing is None or is_blank(old):
-            result.changes.append(Change(KIND_RECORD, OP_ADD, path, None, item['value'], target=target))
+            result.changes.append(Change(KIND_RECORD, OP_ADD, path, None, item['value'], target=own))
         elif not same(old, item['value']):
-            result.changes.append(Change(KIND_RECORD, OP_CHANGE, path, old, item['value'], target=target))
+            result.changes.append(Change(KIND_RECORD, OP_CHANGE, path, old, item['value'], target=own))
     if mode == MODE_OVERWRITE:
         for existing in current.get('custom') or []:
             key = (existing.get('type'), (existing.get('label') or '').casefold())
@@ -359,7 +361,9 @@ def _diff_custom(result: RecordDiff, raw_custom: Any, current: Dict[str, Any], m
             values = existing.get('value') or []
             if values and not is_blank(values[0]):
                 result.changes.append(Change(KIND_RECORD, OP_REMOVE, f'custom "{existing.get("label")}"',
-                                             values[0], None, target=target))
+                                             values[0], None,
+                                             target=replace(target, field=existing.get('type') or 'text',
+                                                            label=existing.get('label') or '')))
 
 
 def diff_record(raw: Dict[str, Any], record_type: str, obj: Any, current: Dict[str, Any], *,

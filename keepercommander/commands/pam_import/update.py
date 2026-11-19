@@ -33,6 +33,8 @@ from .ksm_scope import collect_ksm_scope
 from .nsf_helpers import find_pam_configuration, get_ksm_app_folders, refresh_stale_nsf_records
 from .port_forward_validation import preflight_port_forward
 from .record_matcher import RecordIndex
+from .update_apply import apply_graph
+from .update_records import apply_records
 from . import update_diff as ud
 from . import update_plan as up
 from . import update_report as report
@@ -224,9 +226,12 @@ class PAMProjectUpdateCommand(Command):
 
         plan = self.build_plan(params, kwargs, mode, include_passwords)
 
-        if as_json:
+        if as_json and (dry or plan.errors or not plan.changed):
+            # plan errors are RETURNED (not raised) so a service caller gets the whole list; nothing is written
             return json.dumps(report.to_dict(plan, verbose=verbose, estimate=bool(kwargs.get('estimate'))), indent=2)
-        if kwargs.get('estimate'):
+        if as_json:
+            pass                                    # a write run: -y is required (check_options), nothing to print first
+        elif kwargs.get('estimate'):
             print(report.estimate_line(plan))
             for e in plan.errors:
                 print(f'ERROR: {e}')
@@ -252,7 +257,13 @@ class PAMProjectUpdateCommand(Command):
             if input('Continue? [y/N] ').strip().lower() not in ('y', 'yes'):
                 print('Cancelled; nothing was written.')
                 return None
-        return self.apply(params, plan, kwargs)
+        outcome = self.apply(params, plan, kwargs)
+        if as_json:
+            return json.dumps(report.to_dict(plan, verbose=verbose, outcome=outcome), indent=2)
+        print(report.format_apply(outcome))
+        if outcome.errors:
+            raise CommandError(PROG, f'{len(outcome.errors)} error(s) while writing; run the same command again to finish.')
+        return None
 
     # ------------------------------------------------------------------------------------------------------
     def build_plan(self, params, kwargs: Dict[str, Any], mode: str, include_passwords: bool) -> up.UpdatePlan:
@@ -308,5 +319,11 @@ class PAMProjectUpdateCommand(Command):
         return plan
 
     def apply(self, params, plan: up.UpdatePlan, kwargs: Dict[str, Any]):
-        """Write the changes of *plan*. NOT IMPLEMENTED YET (`update_apply`, order of work step 5)."""
-        raise CommandError(PROG, 'Writing is not implemented yet: only -d / --dry-run and --estimate work.')
+        """Write the changes of *plan*: the graph side (router), then the record fields. Errors are collected per
+        record and the run goes on (plan: error policy); the caller reports them and ``update`` is run again."""
+        outcome = apply_graph(params, plan, plan.config_uid)
+        records = apply_records(params, plan)
+        outcome.applied.extend(records.applied)
+        outcome.errors.extend(records.errors)
+        outcome.warnings.extend(records.warnings)
+        return outcome

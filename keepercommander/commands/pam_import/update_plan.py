@@ -19,6 +19,7 @@ another type, ...) block a write run and are all listed; warnings never block.
 
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
@@ -74,6 +75,9 @@ class UpdatePlan:
     warnings: List[str] = field(default_factory=list)
     missing: List[str] = field(default_factory=list)         # JSON items not in the vault (subset of the errors)
     not_in_json: List[Tuple[str, str, str]] = field(default_factory=list)   # (uid, title, type)
+    config_uid: str = ''
+    # {uid: freshly read RecordState} -> {uid: ItemResult}: compares those records AGAIN (the retry after `out of sync`)
+    rediff: Optional[Callable[[Dict[str, Any]], Dict[str, 'ItemResult']]] = field(default=None, repr=False)
 
     @property
     def changed(self) -> List[ItemResult]:
@@ -509,6 +513,20 @@ def build_plan(items: List[ImportItem], index: RecordIndex, state, *, config_uid
                          service_mode=service_mode)
 
 
+def _make_rediff(items: List[ImportItem], index: RecordIndex, state, *, config_uid: str, mode: str,
+                 include_passwords: bool, graph_overwrite: bool):
+    resolve = build_ref_resolver(items, index)
+
+    def rediff(fresh_records: Dict[str, Any]) -> Dict[str, 'ItemResult']:
+        merged = copy.copy(state)
+        merged.records = {**state.records, **fresh_records}
+        wanted = [i for i in items if i.uid in fresh_records]
+        results = diff_items(wanted, merged, config_uid=config_uid, mode=mode, include_passwords=include_passwords,
+                             resolve=resolve, graph_overwrite=graph_overwrite, skip_files=True, errors_out=[])
+        return {r.uid: r for r in results}
+    return rediff
+
+
 def assemble_plan(items: List[ImportItem], index: RecordIndex, state, errors: List[str], missing: List[str], *,
                   config_uid: str, mode: str = ud.MODE_MERGE, include_passwords: bool = False,
                   scope_records: Iterable[Tuple[str, str, str, str]] = (), graph_overwrite: bool = False,
@@ -522,9 +540,12 @@ def assemble_plan(items: List[ImportItem], index: RecordIndex, state, errors: Li
     plan.warnings.extend(file_warnings)
     skip_files = skip_files or service_mode
     plan.missing = missing
+    plan.config_uid = config_uid
     if missing:
         plan.errors.append(missing_hint(missing))
     if state is not None:
+        plan.rediff = _make_rediff(items, index, state, config_uid=config_uid, mode=mode,
+                                   include_passwords=include_passwords, graph_overwrite=graph_overwrite)
         plan.results = diff_items(items, state, config_uid=config_uid, mode=mode, include_passwords=include_passwords,
                                   resolve=build_ref_resolver(items, index), graph_overwrite=graph_overwrite,
                                   skip_files=skip_files, errors_out=plan.errors)

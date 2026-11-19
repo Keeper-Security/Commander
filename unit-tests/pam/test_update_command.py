@@ -193,20 +193,42 @@ class TestRun(Quiet):
         self.assertIn('Cancelled; nothing was written.', out)
 
     def test_overwrite_prompt_warns_that_it_removes_keys(self):
-        with patch.object(upd.PAMProjectUpdateCommand, 'apply') as apply:
+        from keepercommander.commands.pam_import.update_apply import ApplyReport
+        with patch.object(upd.PAMProjectUpdateCommand, 'apply', return_value=ApplyReport()) as apply:
             _, out = run_command({'mode': 'overwrite'}, plan=make_plan(), answer='y')
         self.assertIn('REMOVES keys', out)
         apply.assert_called_once()
 
     def test_yes_skips_the_prompt_and_reaches_apply(self):
-        with patch.object(upd.PAMProjectUpdateCommand, 'apply', return_value=None) as apply:
+        from keepercommander.commands.pam_import.update_apply import ApplyReport
+        with patch.object(upd.PAMProjectUpdateCommand, 'apply', return_value=ApplyReport()) as apply:
             run_command({'yes': True}, plan=make_plan())
         apply.assert_called_once()
 
-    def test_apply_is_not_implemented_yet_and_says_so(self):
-        with self.assertRaises(CommandError) as ctx:
-            run_command({'yes': True}, plan=make_plan())
-        self.assertIn('not implemented yet', str(ctx.exception))
+    def test_a_write_run_prints_what_was_written_and_raises_on_apply_errors(self):
+        from keepercommander.commands.pam_import.update_apply import ApplyReport
+        ok = ApplyReport(applied=['M1: record fields (2)'], not_applied=['admin1: rotation changes are not applied yet'])
+        with patch.object(upd.PAMProjectUpdateCommand, 'apply', return_value=ok):
+            _, out = run_command({'yes': True}, plan=make_plan())
+        self.assertIn('Written (1):', out)
+        self.assertIn('M1: record fields (2)', out)
+        self.assertIn('NOT WRITTEN YET (1)', out)
+        self.assertIn('Done: 1 written, 0 error(s), 1 not written yet.', out)
+        bad = ApplyReport(applied=[], errors=['M1: record fields were not written: boom'])
+        with patch.object(upd.PAMProjectUpdateCommand, 'apply', return_value=bad):
+            with self.assertRaises(CommandError) as ctx:
+                run_command({'yes': True}, plan=make_plan())
+        self.assertIn('1 error(s) while writing', str(ctx.exception))
+
+    def test_a_json_write_run_returns_the_result_with_the_apply_section_and_does_not_raise(self):
+        from keepercommander.commands.pam_import.update_apply import ApplyReport
+        bad = ApplyReport(applied=['a'], errors=['M1: record fields were not written: boom'], warnings=['w'])
+        with patch.object(upd.PAMProjectUpdateCommand, 'apply', return_value=bad):
+            result, _ = run_command({'yes': True, 'output_format': 'json'}, plan=make_plan())
+        data = json.loads(result)
+        self.assertEqual((data['summary']['applied'], data['summary']['failed']), (1, 1))
+        self.assertEqual(data['apply']['errors'], ['M1: record fields were not written: boom'])
+        self.assertEqual(data['apply']['warnings'], ['w'])
 
 
 class TestJsonInput(Quiet):
