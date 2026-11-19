@@ -202,9 +202,7 @@ class TestDescribeLocation(unittest.TestCase):
     def test_no_shared_folder_on_the_path(self):
         p = _nsf_tree()
         scope = _collect(p, AppShares(folder_uids=[]))
-        text = scope.describe_location('g1rec1')
-        self.assertIn('folder "P/C/G1"', text)
-        self.assertIn('no folder on this path is shared to the KSM app', text)
+        self.assertEqual(scope.describe_location('g1rec1'), 'folder "P/C/G1"')
 
     def test_record_in_no_folder(self):
         scope = _collect(_params(), AppShares())
@@ -216,7 +214,8 @@ class TestDescribeLocation(unittest.TestCase):
         r = match_record(index, ident='"g1rec1"', title='g1rec1', mode=MODE_UPDATE,
                          describe_location=scope.describe_location)
         self.assertEqual(r.code, 'outside_scope')
-        self.assertIn('folder "P/C/G1" (closest shared folder on the path: "C")', r.message)
+        self.assertIn('is in folder "P/C/G1", which is not shared to the KSM app (closest shared folder on the path: "C").',
+                      r.message)
 
 
 class TestReadAppShares(unittest.TestCase):

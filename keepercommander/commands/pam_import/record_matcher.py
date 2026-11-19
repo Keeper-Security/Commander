@@ -133,10 +133,15 @@ class RecordIndex:
 
 
 def _outside_scope(ident: str, suffix: str, location: str) -> MatchResult:
+    # ``location`` reads ``folder "A/B"`` or ``folder "A/B" (closest shared folder on the path: "A")``: the note in
+    # parentheses belongs after "not shared", not inside the sentence
+    where, sep, note = location.partition(' (')
+    note = f' ({note}' if sep else ''
     return MatchResult(
         STATUS_ERROR, code=CODE_OUTSIDE_SCOPE,
-        message=(f'record {ident}{suffix} exists in {location}, which is not shared to the KSM app. '
-                 f'Share the folder to the app; update does not change shares.'))
+        message=(f'record {ident}{suffix} is in {where}, which is not shared to the KSM app{note}. '
+                 f'update only sees records in folders shared to the app: share that folder to the app or move '
+                 f'the record back. update does not change shares or move records.'))
 
 
 def match_record(index: RecordIndex, *,

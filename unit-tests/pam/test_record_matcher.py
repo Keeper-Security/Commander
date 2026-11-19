@@ -122,8 +122,13 @@ class TestMatchUpdateMode(unittest.TestCase):
         r = self._match(_index(), uid_imported=UID_A, vault_has_uid=lambda uid: uid == UID_A,
                         describe_location=lambda uid: 'folder "A/B/C" (closest shared folder on the path: "B")')
         self.assertEqual((r.status, r.code), (STATUS_ERROR, CODE_OUTSIDE_SCOPE))
-        self.assertIn('exists in folder "A/B/C" (closest shared folder on the path: "B")', r.message)
-        self.assertIn('Share the folder to the app; update does not change shares.', r.message)
+        self.assertIn('is in folder "A/B/C", which is not shared to the KSM app (closest shared folder on the path: "B").',
+                      r.message)
+        self.assertIn('share that folder to the app or move the record back. update does not change shares or move '
+                      'records.', r.message)
+        plain = self._match(_index(), uid_imported=UID_A, vault_has_uid=lambda uid: uid == UID_A,
+                            describe_location=lambda uid: 'folder "UTest-Outside"')
+        self.assertIn('is in folder "UTest-Outside", which is not shared to the KSM app. update only sees', plain.message)
 
     def test_record_in_unshared_folder_is_outside_scope_by_title_and_uid(self):
         index = _index(MatchRecord(UID_A, 'web', folder_uids=('g1',), shared=False))

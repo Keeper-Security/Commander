@@ -135,8 +135,7 @@ class KsmScope:
                 break
         if ancestor_name:
             return f'folder "{path}" (closest shared folder on the path: "{ancestor_name}")'
-        return (f'folder "{path}" (no folder on this path is shared to the KSM app - '
-                f'was the parent / root folder unshared?)')
+        return f'folder "{path}"'
 
     def nsf_warnings(self, ignored: bool = True) -> List[str]:
         """One line per unshared NSF folder below a shared NSF, plus the other scope warnings."""
