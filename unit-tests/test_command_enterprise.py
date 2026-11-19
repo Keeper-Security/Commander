@@ -124,6 +124,99 @@ class TestEnterprise(TestCase):
             'role_name': ent_env.role1_name,
         }])
 
+    def test_enterprise_info_users_enforcements(self):
+        """User enforcements resolve from both direct role_users and inherited role_teams and support pattern filtering."""
+        params = get_connected_params()
+        api.query_enterprise(params)
+        params.enterprise['role_users'].append(
+            {'role_id': ent_env.role_admin_id, 'enterprise_user_id': ent_env.user1_id}
+        )
+        params.enterprise['role_teams'] = [
+            {'role_id': ent_env.role2_id, 'team_uid': ent_env.team2_uid}
+        ]
+        params.enterprise['role_enforcements'] = [
+            {
+                'role_id': ent_env.role1_id,
+                'enforcements': {
+                    'require_two_factor': 'true',
+                    'allow_pam_rotation': 'true',
+                    'allow_secrets_manager': 'true',
+                },
+            },
+            {
+                'role_id': ent_env.role2_id,
+                'enforcements': {'allow_launch_rbi': 'true'},
+            },
+            {
+                'role_id': ent_env.role_admin_id,
+                'enforcements': {'require_two_factor': 'true'},
+            },
+        ]
+        cmd = enterprise.EnterpriseInfoCommand()
+        report = cmd.execute(
+            params,
+            users=True,
+            format='json',
+            columns='node,roles,pam_roles,ksm_roles,enforcement_count,enforcements,pam_enforcements,ksm_enforcements',
+            quiet=True,
+        )
+        users = json.loads(report)
+        user1 = next(u for u in users if u['user_id'] == ent_env.user1_id)
+        user2 = next(u for u in users if u['user_id'] == ent_env.user2_id)
+        self.assertEqual(set(user1['roles']), {ent_env.role1_name, ent_env.role_admin_name})
+        self.assertEqual(user1['pam_roles'], [ent_env.role1_name])
+        self.assertEqual(user1['ksm_roles'], [ent_env.role1_name])
+        self.assertEqual(user1['enforcement_count'], 3)
+        self.assertEqual(user1['pam_enforcements'], {
+            'allow_pam_rotation': 'true',
+        })
+        self.assertEqual(user1['ksm_enforcements'], {
+            'allow_secrets_manager': 'true',
+        })
+        self.assertEqual(user2['roles'], [ent_env.role2_name])
+        self.assertEqual(user2['pam_roles'], [ent_env.role2_name])
+        self.assertEqual(user2['ksm_roles'], [])
+        self.assertEqual(user2['enforcement_count'], 1)
+        self.assertEqual(user2['pam_enforcements'], {'allow_launch_rbi': 'true'})
+
+        filtered = json.loads(cmd.execute(
+            params,
+            users=True,
+            format='json',
+            columns='node,pam_roles,pam_enforcements',
+            pattern='pam',
+            quiet=True,
+        ))
+        self.assertEqual(
+            {u['user_id'] for u in filtered},
+            {ent_env.user1_id, ent_env.user2_id},
+        )
+
+        pam_cmd = enterprise.PamUsersCommand()
+        pam_users = json.loads(pam_cmd.execute(params, format='json', quiet=True))
+        self.assertEqual(
+            {u['user_id'] for u in pam_users},
+            {ent_env.user1_id, ent_env.user2_id},
+        )
+        pam_user1 = next(u for u in pam_users if u['user_id'] == ent_env.user1_id)
+        self.assertIn('node', pam_user1)
+        self.assertEqual(pam_user1['pam_roles'], [ent_env.role1_name])
+        self.assertEqual(pam_user1['pam_enforcements'], {
+            'allow_pam_rotation': 'true',
+        })
+        pam_csv = pam_cmd.execute(params, format='csv', quiet=True)
+        self.assertIn('PAM Role(s)', pam_csv)
+        self.assertIn('PAM Enforcements', pam_csv)
+
+        ksm_cmd = enterprise.KsmUsersCommand()
+        ksm_users = json.loads(ksm_cmd.execute(params, format='json', quiet=True))
+        self.assertEqual([u['user_id'] for u in ksm_users], [ent_env.user1_id])
+        self.assertEqual(ksm_users[0]['ksm_roles'], [ent_env.role1_name])
+        self.assertEqual(ksm_users[0]['ksm_enforcements'], {'allow_secrets_manager': 'true'})
+        ksm_csv = ksm_cmd.execute(params, format='csv', quiet=True)
+        self.assertIn('KSM Role(s)', ksm_csv)
+        self.assertIn('KSM Enforcements', ksm_csv)
+
     def test_enterprise_info_columns_base_fields_no_warning(self):
         """Base fields that are always present in the row (user_id/email, team_uid, node_id, role_id, and
         name for teams/nodes/roles) should not trigger the "Supported X columns" warning."""

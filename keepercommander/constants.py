@@ -280,6 +280,27 @@ def enforcement_list():  # type: () -> List[Tuple[str, str, str]]
 
 ENFORCEMENTS = {e[0].lower(): e[2].lower() for e in [*_ENFORCEMENTS, *_COMPOUND_ENFORCEMENTS]}
 
+KSM_ENFORCEMENTS = {
+    'allow_secrets_manager',
+}
+
+PAM_ENFORCEMENTS = {
+    'allow_pam_rotation',
+    'allow_pam_discovery',
+    'allow_pam_gateway',
+    'allow_configure_rotation_settings',
+    'allow_rotate_credentials',
+    'allow_configure_pam_cloud_connection_settings',
+    'allow_launch_pam_on_cloud_connection',
+    'allow_configure_pam_tunneling_settings',
+    'allow_launch_pam_tunnels',
+    'allow_launch_rbi',
+    'allow_configure_rbi',
+    'allow_view_kcm_recordings',
+    'allow_view_rbi_recordings',
+    'allow_configure_workflow_settings',
+}
+
 TWO_FACTOR_DURATION_MAP = {'0': 'login', '12': '12_hours', '24': '24_hours', '30': '30_days', '9999': 'forever'}
 
 
