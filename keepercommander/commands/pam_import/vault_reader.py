@@ -45,6 +45,7 @@ from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamGraphId
 from ..pam_debug import get_connection
 from ..pam_debug.graph_edges import EXCLUDE_EDGE_TYPES, decode_edge_local, decrypt_acl_pwd_complexity
 from ..pam_debug.record_state import file_record_info, file_refs, record_json, rotation_info
+from .nsf_helpers import fetch_file_record_infos
 from .record_loader import load_pam_record
 from .workflow_apply import read_workflow_config
 
@@ -228,12 +229,21 @@ class VaultState:
 def read_record_state(params, record_uid: str) -> RecordState:
     data, errors = record_json(params, record_uid)
     files = []
+    missing = []
     for file_uid in file_refs(data):
         info = file_record_info(params, file_uid)
         if info is None:
-            errors.append({'stage': 'file_record', 'message': f'File record {file_uid} could not be loaded.'})
+            missing.append(file_uid)
         else:
             files.append(info)
+    if missing:
+        # not in any local cache (the files of a record in a Nested Share Folder are not synced): ask the server by uid
+        fetched = fetch_file_record_infos(params, missing)
+        for file_uid in missing:
+            if file_uid in fetched:
+                files.append(fetched[file_uid])
+            else:
+                errors.append({'stage': 'file_record', 'message': f'File record {file_uid} could not be loaded.'})
     return RecordState(uid=record_uid, data=data, rotation=rotation_info(params, record_uid), files=files,
                        errors=errors)
 

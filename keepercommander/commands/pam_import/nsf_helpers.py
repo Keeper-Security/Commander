@@ -215,6 +215,51 @@ def sync_down_preserving_nsf_keys(params) -> None:
     restore_nsf_folder_keys(params, preserved)
 
 
+def fetch_file_record_infos(params, file_uids) -> dict:
+    """Name / size / mime type / time of file records the local caches do not hold.
+
+    Found on QA 2026-11-19 (``resend_test/probe_file_records.py``): the files of a record in a Nested Share Folder are
+    linked to it (the Web Vault shows them) but the sync does not deliver them to Commander - they are in no cache.
+    ``vault/records/v3/details/data`` hands them out by uid (version 4 records; the key is encrypted with the data key,
+    the data holds ``name``, ``size``, ``title``, ``type``, ``lastModified``). One request for all uids. Returns
+    ``{uid: info}`` in the shape of ``record_state.file_record_info``; a uid the server does not give (or that cannot be
+    decrypted) is simply absent, and a failing request returns ``{}`` - the caller then reports the file as unreadable.
+    """
+    import json
+    from ... import crypto, utils
+    from ...nested_share_folder.record_api import _try_decrypt_record_key
+    from ...proto import record_details_pb2
+
+    uids = [u for u in dict.fromkeys(file_uids or []) if u]
+    if not uids:
+        return {}
+    rq = record_details_pb2.RecordDataRequest()
+    for uid in uids:
+        rq.recordUids.append(utils.base64_url_decode(uid))
+    rq.clientTime = utils.current_milli_time()
+    try:
+        rs = api.communicate_rest(params, rq, 'vault/records/v3/details/data', rs_type=record_details_pb2.RecordDataResponse)
+    except Exception as e:      # pylint: disable=broad-except
+        logging.debug('file record fetch failed: %s', e)
+        return {}
+    out = {}
+    for rd in rs.data:
+        uid = utils.base64_url_encode(rd.recordUid)
+        try:
+            key = _try_decrypt_record_key(params, rd.recordKey, rd.recordKeyType, uid)
+            enc = rd.encryptedRecordData
+            enc = utils.base64_url_decode(enc) if isinstance(enc, str) else enc
+            if not (key and enc):
+                continue
+            data = json.loads(crypto.decrypt_aes_v2(enc, key).decode().rstrip(' '))
+        except Exception as e:      # pylint: disable=broad-except
+            logging.debug('file record %s could not be decrypted: %s', uid, e)
+            continue
+        out[uid] = {'record_uid': uid, 'name': data.get('name') or data.get('title') or '', 'size': data.get('size'),
+                    'mime_type': data.get('type') or '', 'last_modified': data.get('lastModified')}
+    return out
+
+
 def stale_nsf_records(params, record_uids) -> List[str]:
     """UIDs of the records whose local DATA is older than what the server has.
 

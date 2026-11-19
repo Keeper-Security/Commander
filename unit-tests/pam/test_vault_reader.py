@@ -294,9 +294,22 @@ class TestReadVaultState:
     def test_missing_file_record_is_reported_on_the_record(self):
         record_data = {'fields': [{'type': 'fileRef', 'value': ['GONE']}]}
         with patch.object(vault_reader, 'record_json', return_value=(record_data, [])), \
-                patch.object(vault_reader, 'file_record_info', return_value=None):
+                patch.object(vault_reader, 'file_record_info', return_value=None), \
+                patch.object(vault_reader, 'fetch_file_record_infos', return_value={}):
             state = vault_reader.read_record_state(_params(), 'M1')
         assert state.files == [] and state.errors[0]['stage'] == 'file_record'
+
+    def test_a_file_missing_from_the_caches_is_fetched_from_the_server_by_uid(self):
+        record_data = {'fields': [{'type': 'fileRef', 'value': ['IN_CACHE', 'NSF1']}]}
+        cached = {'record_uid': 'IN_CACHE', 'name': 'a.txt', 'size': 1}
+        fetched = {'NSF1': {'record_uid': 'NSF1', 'name': 'b.ini', 'size': 13}}
+        with patch.object(vault_reader, 'record_json', return_value=(record_data, [])), \
+                patch.object(vault_reader, 'file_record_info', side_effect=lambda p, uid: cached if uid == 'IN_CACHE' else None), \
+                patch.object(vault_reader, 'fetch_file_record_infos', return_value=fetched) as fetch:
+            state = vault_reader.read_record_state(_params(), 'M1')
+        fetch.assert_called_once()
+        assert fetch.call_args[0][1] == ['NSF1']                   # only what the caches do not hold
+        assert [f['name'] for f in state.files] == ['a.txt', 'b.ini'] and state.errors == []
 
 
 class TestReadWorkflowConfig:
