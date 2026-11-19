@@ -40,7 +40,9 @@ class PAMGatewayActionDiscoverJobStatusCommand(PAMGatewayActionDiscoverCommandBa
 
     """
 
-    parser = argparse.ArgumentParser(prog='pam action discover status')
+    parser = argparse.ArgumentParser(
+        prog='pam action discover status',
+        description='Check status and progress of PAM infrastructure discovery jobs.')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway', action='store',
                         help='Show only discovery jobs from a specific gateway.')
     parser.add_argument('--job-id', '-j', required=False, dest='job_id', action='store',

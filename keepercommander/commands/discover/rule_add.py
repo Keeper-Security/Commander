@@ -15,7 +15,9 @@ if TYPE_CHECKING:
 
 
 class PAMGatewayActionDiscoverRuleAddCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action discover rule add')
+    parser = argparse.ArgumentParser(
+        prog='pam action discover rule add',
+        description='Add a rule to automatically categorize or onboard discovered PAM resources.')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
     parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',

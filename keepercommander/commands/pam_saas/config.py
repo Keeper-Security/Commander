@@ -51,7 +51,9 @@ class GatewayActionSaasListCommand(GatewayAction):
 
 class PAMActionSaasConfigCommand(PAMGatewayActionDiscoverCommandBase):
 
-    parser = argparse.ArgumentParser(prog='pam action saas config')
+    parser = argparse.ArgumentParser(
+        prog='pam action saas config',
+        description='Create or configure a SaaS rotation plugin record for PAM.')
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')

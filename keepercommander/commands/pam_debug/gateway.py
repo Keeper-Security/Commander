@@ -13,7 +13,9 @@ if TYPE_CHECKING:
 
 
 class PAMDebugGatewayCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action debug gateway')
+    parser = argparse.ArgumentParser(
+        prog='pam action debug gateway',
+        description='Inspect gateway context and configuration bindings for PAM debugging.')
 
     type_name_map = {
         PAM_USER: "PAM User",

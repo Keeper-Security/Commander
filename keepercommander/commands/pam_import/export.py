@@ -97,7 +97,9 @@ class _LazyUserTitleIndex:
 class PAMProjectExportCommand(Command):
     """Export a PAM project to JSON for re-import via pam project import."""
 
-    parser = argparse.ArgumentParser(prog="pam project export")
+    parser = argparse.ArgumentParser(
+        prog="pam project export",
+        description="Export a PAM project configuration and linked records to JSON.")
     parser.add_argument(
         "--project-uid", "-p",
         required=True, dest="project_uid", action="store",

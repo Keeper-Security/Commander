@@ -14,7 +14,9 @@ if TYPE_CHECKING:
 
 
 class PAMDebugVerifyCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action debug verify')
+    parser = argparse.ArgumentParser(
+        prog='pam action debug verify',
+        description='Verify and optionally repair PAM graph links for a gateway configuration.')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

@@ -43,7 +43,9 @@ class PAMUniversalSyncConfigCommand(GroupCommand):
 
 
 class PAMUniversalSyncConfigListCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam universal-sync-config list')
+    parser = argparse.ArgumentParser(
+        prog='pam universal-sync-config list',
+        description='List Universal Secrets Sync (USS) configurations for external secret stores.')
     parser.add_argument('--network', '-n', required=False, dest='network', action='store',
                         help='Specific Network UID or name to show detailed view')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
@@ -585,7 +587,9 @@ class PAMUniversalSyncConfigListCommand(Command):
 
 
 class PAMUniversalSyncConfigAddCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam universal-sync-config add')
+    parser = argparse.ArgumentParser(
+        prog='pam universal-sync-config add',
+        description='Add a Universal Secrets Sync (USS) configuration to sync secrets to an external store.')
 
     parser.add_argument('--network', '-n', required=True, dest='network', action='store',
                         help='Network UID or name to configure universal sync')
@@ -734,7 +738,9 @@ class PAMUniversalSyncConfigAddCommand(Command):
 
 
 class PAMUniversalSyncConfigEditCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam universal-sync-config edit')
+    parser = argparse.ArgumentParser(
+        prog='pam universal-sync-config edit',
+        description='Update an existing Universal Secrets Sync (USS) configuration.')
     parser.add_argument('--network', '-n', required=True, dest='network', action='store',
                         help='Network UID or name to configure universal sync')
     parser.add_argument('--enabled', '-e', dest='enabled', action='store',
@@ -957,7 +963,9 @@ class PAMUniversalSyncConfigEditCommand(Command):
 
 
 class PAMUniversalSyncConfigRemoveCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam universal-sync-config remove')
+    parser = argparse.ArgumentParser(
+        prog='pam universal-sync-config remove',
+        description='Remove a Universal Secrets Sync (USS) configuration.')
     parser.add_argument('--network', '-n', required=True, dest='network', action='store',
                         help='Network UID or name to remove universal sync configuration')
 
@@ -990,7 +998,9 @@ class PAMUniversalSyncConfigRemoveCommand(Command):
 
 
 class PAMUniversalSyncRunCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam universal-sync-run')
+    parser = argparse.ArgumentParser(
+        prog='pam universal-sync-run',
+        description='Execute a Universal Secrets Sync (USS) job to push secrets to external stores.')
     parser.add_argument('--network', '-n', required=True, dest='network', action='store',
                         help='Network UID or name to run universal sync')
 
