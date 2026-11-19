@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionServiceAddCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action service add')
+    parser = argparse.ArgumentParser(
+        prog='pam action service add',
+        description='Add a service or scheduled-task dependency link between a PAM Machine and PAM User.')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

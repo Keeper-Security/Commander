@@ -20,7 +20,9 @@ if TYPE_CHECKING:
 
 
 class PAMGatewayActionDiscoverJobStartCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action discover start')
+    parser = argparse.ArgumentParser(
+        prog='pam action discover start',
+        description='Start a PAM infrastructure discovery job on a KeeperPAM Gateway.')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
     parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',

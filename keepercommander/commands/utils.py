@@ -212,6 +212,7 @@ def register_commands(commands):
     commands['blank-records'] = BlankRecordCommand()
     commands['run-as'] = RunAsCommand()
     commands['login-status'] = LoginStatusCommand()
+    commands['ai-setup'] = AiSetupCommand()
 
 
 def register_command_info(aliases, command_info):
@@ -224,8 +225,29 @@ def register_command_info(aliases, command_info):
     aliases['ssd'] = 'sync-security-data'
     for p in [sync_down_parser, whoami_parser, this_device_parser, proxy_parser, login_parser, logout_parser, echo_parser, set_parser, help_parser,
               version_parser, update_parser, ksm_parser, keepalive_parser, generate_parser, reset_password_parser,
-              sync_security_data_parser, delete_all_parser, loginstatus_parser, run_as_parser]:
+              sync_security_data_parser, delete_all_parser, loginstatus_parser, run_as_parser, ai_setup_parser]:
         command_info[p.prog] = p.description
+
+
+ai_setup_parser = argparse.ArgumentParser(
+    prog='ai-setup',
+    description='Export the Keeper Commander AI skill/instructions file for Copilot, Claude, Cursor, or Codex.',
+)
+ai_setup_parser.add_argument(
+    '--target', '-t', dest='target', action='store',
+    choices=['m365-copilot', 'copilot', 'claude', 'cursor', 'agents', 'all'],
+    help='AI assistant target format/location (m365-copilot, copilot, claude, cursor, agents, or all)',
+)
+ai_setup_parser.add_argument(
+    '--output', '-o', dest='output', action='store',
+    help='Custom file path to write the Keeper Commander AI skill file (e.g., for Microsoft Copilot Studio upload)',
+)
+ai_setup_parser.add_argument(
+    '--print', '-p', dest='print_stdout', action='store_true',
+    help='Print the Keeper Commander AI skill markdown directly to stdout',
+)
+ai_setup_parser.error = raise_parse_exception
+ai_setup_parser.exit = suppress_exit
 
 
 sync_down_parser = argparse.ArgumentParser(prog='sync-down', description='Download and decrypt vault data')
@@ -2716,3 +2738,127 @@ class LoginStatusCommand(Command):
                 print("Not logged in")
         else:
             print("Not logged in")
+
+
+class AiSetupCommand(Command):
+    MENU_TARGETS = {
+        '1': 'm365-copilot',
+        '2': 'copilot',
+        '3': 'claude',
+        '4': 'cursor',
+        '5': 'agents',
+        '6': 'all',
+    }
+
+    NEXT_STEPS = {
+        'm365-copilot': (
+            'Next Steps for Microsoft 365 Copilot / Copilot Studio:\n'
+            '  1. Open Microsoft Copilot Studio (or M365 Copilot Agent Builder).\n'
+            '  2. Under "Knowledge" (or "Instructions"), upload the generated KEEPER_COMMANDER_SKILL.md file.\n'
+            '  3. Ask Copilot questions like: "How do I list all users with PAM permissions in Keeper Commander?"'
+        ),
+        'copilot': (
+            'Next Steps for GitHub Copilot (VS Code / JetBrains / CLI):\n'
+            '  1. Open this folder in VS Code with the GitHub Copilot extension enabled.\n'
+            '  2. Copilot Chat automatically reads .github/copilot-instructions.md for every prompt.\n'
+            '  3. Ask Copilot in Agent/Terminal mode: "Run a Keeper report of users who haven\'t logged in for 90 days."'
+        ),
+        'claude': (
+            'Next Steps for Claude Code:\n'
+            '  1. Claude Code automatically loads global skills from ~/.claude/skills/keeper-commander/SKILL.md.\n'
+            '  2. Ask Claude in any terminal: "Audit our Keeper roles and list all users with PAM permissions."'
+        ),
+        'cursor': (
+            'Next Steps for Cursor:\n'
+            '  1. Open this folder in Cursor.\n'
+            '  2. Cursor Agent automatically applies .cursor/rules/keeper-commander.mdc when running Keeper commands.'
+        ),
+        'agents': (
+            'Next Steps for Codex / Antigravity / Gemini CLI:\n'
+            '  1. Your agent automatically discovers .agents/skills/keeper-commander/SKILL.md in this workspace.\n'
+            '  2. Ask your agent in plain English to run any Keeper Enterprise, PAM, or Vault workflow.'
+        ),
+        'all': (
+            'Next Steps:\n'
+            '  - GitHub Copilot (.github/copilot-instructions.md), Cursor (.cursor/rules/), and Agents (.agents/skills/) '
+            'are now configured in this folder.'
+        ),
+    }
+
+    def get_parser(self):
+        return ai_setup_parser
+
+    def is_authorised(self):
+        return False
+
+    @staticmethod
+    def load_skill_markdown() -> str:
+        from .. import resources
+        skill_path = os.path.join(os.path.dirname(resources.__file__), 'SKILL.md')
+        if not os.path.isfile(skill_path):
+            repo_skill = os.path.abspath(
+                os.path.join(os.path.dirname(__file__), '..', '..', '.agents', 'skills', 'keeper-commander', 'SKILL.md')
+            )
+            skill_path = repo_skill
+        with open(skill_path, encoding='utf-8') as f:
+            return f.read()
+
+    def execute(self, params, **kwargs):
+        content = self.load_skill_markdown()
+        if kwargs.get('print_stdout'):
+            print(content)
+            return content
+
+        custom_output = kwargs.get('output')
+        target = kwargs.get('target')
+
+        if not custom_output and not target:
+            print('\nConfigure Keeper Commander for your AI Assistant:')
+            print('  1. Microsoft 365 Copilot / Copilot Studio (exports KEEPER_COMMANDER_SKILL.md)')
+            print('  2. GitHub Copilot in VS Code              (.github/copilot-instructions.md)')
+            print('  3. Claude Code                            (~/.claude/skills/keeper-commander/SKILL.md)')
+            print('  4. Cursor                                 (.cursor/rules/keeper-commander.mdc)')
+            print('  5. Codex / Antigravity / Gemini CLI       (.agents/skills/keeper-commander/SKILL.md)')
+            print('  6. All workspace formats                  (.github, .cursor, and .agents)')
+            choice = input('Select an option [1-6, or q to cancel]: ').strip().lower()
+            if choice in {'q', 'quit', ''}:
+                return []
+            target = self.MENU_TARGETS.get(choice)
+            if not target:
+                logging.warning('Invalid selection: %s', choice)
+                return []
+
+        if custom_output:
+            dest_paths = [os.path.expanduser(custom_output)]
+            target_key = 'm365-copilot'
+        else:
+            target_key = target.lower()
+            target_map = {
+                'm365-copilot': ['KEEPER_COMMANDER_SKILL.md'],
+                'copilot': [os.path.join('.github', 'copilot-instructions.md')],
+                'claude': [os.path.expanduser(os.path.join('~', '.claude', 'skills', 'keeper-commander', 'SKILL.md'))],
+                'cursor': [os.path.join('.cursor', 'rules', 'keeper-commander.mdc')],
+                'agents': [os.path.join('.agents', 'skills', 'keeper-commander', 'SKILL.md')],
+            }
+            if target_key == 'all':
+                dest_paths = (
+                    target_map['copilot'] + target_map['cursor'] + target_map['agents']
+                )
+            else:
+                dest_paths = target_map.get(target_key, target_map['agents'])
+
+        written = []
+        for dest in dest_paths:
+            parent = os.path.dirname(os.path.abspath(dest))
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(dest, 'w', encoding='utf-8') as f:
+                f.write(content)
+            written.append(dest)
+            print(f'✓ Saved Keeper Commander AI instructions to: {dest}')
+
+        next_steps = self.NEXT_STEPS.get(target_key)
+        if next_steps:
+            print(f'\n{next_steps}\n')
+        return written
+

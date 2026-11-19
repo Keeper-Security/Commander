@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionServiceEnableCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action service enable')
+    parser = argparse.ArgumentParser(
+        prog='pam action service enable',
+        description='Enable post-rotation service or scheduled-task credential updates on a PAM Machine.')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

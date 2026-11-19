@@ -23,18 +23,24 @@ from ..error import CommandError
 from ..params import KeeperParams
 from ..proto import enterprise_pb2
 
-distributor_info_parser = argparse.ArgumentParser(prog='distributor info', parents=[report_output_parser])
+distributor_info_parser = argparse.ArgumentParser(
+    prog='distributor info', parents=[report_output_parser],
+    description='Display distributor hierarchy, MSPs, and optional Managed Company details.')
 distributor_info_parser.add_argument('--reload', dest='reload', action='store_true', help='reload distributors')
 distributor_info_parser.add_argument('--mc-details', dest='mc_details', action='store_true', help='Display MC details')
 distributor_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Display verbose information')
 
-distributor_msp_info_parser = argparse.ArgumentParser(prog='distributor msp-info', parents=[report_output_parser])
+distributor_msp_info_parser = argparse.ArgumentParser(
+    prog='distributor msp-info', parents=[report_output_parser],
+    description='Display license, add-on, and Managed Company details for a specific MSP.')
 distributor_msp_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Display verbose information')
 distributor_msp_info_parser.add_argument('msp', action='store', metavar='MSP_NAME',
                                          help='Managed Company Provider identifier (name or ID).')
 
 
-distributor_license_parser = argparse.ArgumentParser(prog='distributor license')
+distributor_license_parser = argparse.ArgumentParser(
+    prog='distributor license',
+    description='View or modify allowed products, add-ons, file plans, and seat limits for an MSP.')
 distributor_license_parser.add_argument('--add-product', dest='add_product', action='append',
                                         choices=[x[1] for x in constants.MSP_PLANS],
                                         help='Allows MSP to use product. Can be repeated')

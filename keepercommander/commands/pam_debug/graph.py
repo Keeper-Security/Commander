@@ -33,7 +33,9 @@ class PAMDebugGraphCommand(PAMGatewayActionDiscoverCommandBase):
     NO_RECORD = "NO RECORD"
     OTHER = "OTHER"
 
-    parser = argparse.ArgumentParser(prog='pam action debug graph')
+    parser = argparse.ArgumentParser(
+        prog='pam action debug graph',
+        description='Render or inspect the PAM infrastructure, record-link, or jobs DAG graph.')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

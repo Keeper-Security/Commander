@@ -498,7 +498,9 @@ class PAMLegacyCommand(Command):
 
 
 class PAMCmdListJobs(Command):
-    parser = argparse.ArgumentParser(prog='pam action job-list')
+    parser = argparse.ArgumentParser(
+        prog='pam action job-list',
+        description='List running or recent jobs on a connected KeeperPAM Gateway.')
     parser.add_argument('--jobId', '-j', required=False, dest='job_id', action='store', help='ID of the Job running')
 
     def get_parser(self):
@@ -525,7 +527,9 @@ class PAMCmdListJobs(Command):
 
 
 class PAMCreateRecordRotationCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam rotation edit')
+    parser = argparse.ArgumentParser(
+        prog='pam rotation edit',
+        description='Configure credential rotation settings, schedules, and gateway links on PAM records or folders.')
     record_group = parser.add_mutually_exclusive_group(required=True)
     record_group.add_argument('--record', '-r', dest='record_name', action='store',
                               help='Record UID, name, or pattern to be rotated manually or via schedule')
@@ -1707,7 +1711,9 @@ class PAMCreateRecordRotationCommand(Command):
 
 
 class PAMListRecordRotationCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam rotation list')
+    parser = argparse.ArgumentParser(
+        prog='pam rotation list',
+        description='List all configured PAM credential rotation schedules and their status.')
     parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
                         help='Verbose output')
     parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
@@ -1911,7 +1917,9 @@ class PAMListRecordRotationCommand(Command):
 
 
 class PAMGatewayListCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-gateway')
+    parser = argparse.ArgumentParser(
+        prog='dr-gateway',
+        description='List deployed KeeperPAM Gateways, their online status, and version info.')
     parser.add_argument('--force', '-f', required=False, default=False, dest='is_force', action='store_true',
                         help='Force retrieval of gateways')
     parser.add_argument('--verbose', '-v', required=False, default=False, dest='is_verbose', action='store_true',
@@ -2283,7 +2291,9 @@ class PAMGatewayListCommand(Command):
 
 
 class PAMConfigurationListCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam config list')
+    parser = argparse.ArgumentParser(
+        prog='pam config list',
+        description='List PAM Configurations (local, AWS, Azure, GCP, Domain, Network) in the vault.')
     parser.add_argument('--config', '-c', required=False, dest='pam_configuration', action='store',
                         help='Specific PAM Configuration UID')
     parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true', help='Verbose')
@@ -2951,7 +2961,9 @@ class PamConfigurationEditMixin(RecordEditMixin):
 
 class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
     choices = ['on', 'off', 'default']
-    parser = argparse.ArgumentParser(prog='pam config new', parents=[common_parser])
+    parser = argparse.ArgumentParser(
+        prog='pam config new', parents=[common_parser],
+        description='Create a new PAM Configuration record for rotation, connections, tunneling, or discovery.')
     parser.add_argument('--connections', '-c', dest='connections', choices=choices,
                         help='Set connections permissions')
     parser.add_argument('--tunneling', '-u', dest='tunneling', choices=choices,
@@ -3089,7 +3101,9 @@ class PAMConfigurationNewCommand(Command, PamConfigurationEditMixin):
 
 class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
     choices = ['on', 'off', 'default']
-    parser = argparse.ArgumentParser(prog='pam config edit', parents=[common_parser])
+    parser = argparse.ArgumentParser(
+        prog='pam config edit', parents=[common_parser],
+        description='Update settings, gateway assignment, schedule, or environment parameters on a PAM Configuration.')
     parser.add_argument('uid', type=str, action='store', help='The Config UID to edit')
     parser.add_argument('--remove-resource-record', '-rrr', dest='remove_records', action='append',
                         help='Resource Record UID to remove')
@@ -3235,7 +3249,9 @@ class PAMConfigurationEditCommand(Command, PamConfigurationEditMixin):
 
 
 class PAMConfigurationRemoveCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam config remove')
+    parser = argparse.ArgumentParser(
+        prog='pam config remove',
+        description='Delete a PAM Configuration record by UID.')
     parser.add_argument('uid', type=str, action='store',
                         help='PAM Configuration UID. To view all rotation settings with their UIDs, use command '
                              '`pam config list`')
@@ -3308,8 +3324,10 @@ class PAMConfigurationRemoveCommand(Command):
 
 
 class PAMRouterGetRotationInfo(Command):
-    parser = argparse.ArgumentParser(prog='dr-router-get-rotation-info-parser',
-                                         parents=[json_output_parser])
+    parser = argparse.ArgumentParser(
+        prog='dr-router-get-rotation-info-parser',
+        parents=[json_output_parser],
+        description='Retrieve rotation status and schedule metadata for a PAM record from the router.')
     parser.add_argument('--record-uid', '-r', required=True, dest='record_uid', action='store',
                         help='Record UID to rotate')
 
@@ -3747,7 +3765,9 @@ class PAMScriptDeleteCommand(Command):
 
 
 class PAMGatewayActionJobCancelCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam-action-job-cancel-command')
+    parser = argparse.ArgumentParser(
+        prog='pam-action-job-cancel-command',
+        description='Cancel a running gateway job by Job ID.')
     parser.add_argument('job_id')
 
     def get_parser(self):
@@ -3771,7 +3791,9 @@ class PAMGatewayActionJobCancelCommand(Command):
 
 
 class PAMGatewayActionJobCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam-action-job-command')
+    parser = argparse.ArgumentParser(
+        prog='pam-action-job-command',
+        description='Query status and output of a gateway job by Job ID.')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid', action='store',
                         help='Gateway UID. Needed only if there are more than one gateway running')
     parser.add_argument('job_id')
@@ -3866,7 +3888,9 @@ def ensure_gateway_management_allowed(params):
 
 
 class PAMGatewayActionRotateCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam action rotate')
+    parser = argparse.ArgumentParser(
+        prog='pam action rotate',
+        description='Trigger an on-demand credential rotation for a PAM record or folder.')
     parser.add_argument('--record-uid', '-r', dest='record_uid', action='store',
                         help='Record UID, path, or title to rotate (includes Nested Share Records)')
     parser.add_argument('--folder', '-f', dest='folder', action='store',
@@ -4384,7 +4408,9 @@ class PAMGatewayActionRotateCommand(Command):
 
 
 class PAMGatewayActionServerInfoCommand(Command):
-    parser = argparse.ArgumentParser(prog='dr-info-command')
+    parser = argparse.ArgumentParser(
+        prog='dr-info-command',
+        description='Display runtime version, OS, and environment details from a connected KeeperPAM Gateway.')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway_uid', action='store', help='Gateway UID')
     parser.add_argument('--verbose', '-v', required=False, dest='verbose', action='store_true', help='Verbose Output')
     parser.add_argument('--format', dest='format', action='store', choices=['text', 'json'],
@@ -4505,7 +4531,9 @@ class PAMGatewayActionDiscoverCommandBase(Command):
 
 
 class PAMGatewayRemoveCommand(Command):
-    dr_remove_controller_parser = argparse.ArgumentParser(prog='dr-remove-gateway')
+    dr_remove_controller_parser = argparse.ArgumentParser(
+        prog='dr-remove-gateway',
+        description='Remove a registered KeeperPAM Gateway by UID or name.')
     dr_remove_controller_parser.add_argument('--gateway', '-g', required=True, dest='gateway',
                                              help='UID of the Gateway', action='store')
 
@@ -4530,7 +4558,9 @@ class PAMGatewayRemoveCommand(Command):
 
 
 class PAMSetMaxInstancesCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam gateway set-max-instances')
+    parser = argparse.ArgumentParser(
+        prog='pam gateway set-max-instances',
+        description='Set the maximum number of concurrent instances allowed for a KeeperPAM Gateway.')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway',
                         help='Gateway UID or Name', action='store')
     parser.add_argument('--max-instances', '-m', required=True, dest='max_instances', type=int,
@@ -4562,7 +4592,9 @@ class PAMSetMaxInstancesCommand(Command):
 
 
 class PAMCreateGatewayCommand(Command):
-    dr_create_controller_parser = argparse.ArgumentParser(prog='dr-create-gateway')
+    dr_create_controller_parser = argparse.ArgumentParser(
+        prog='dr-create-gateway',
+        description='Create a new KeeperPAM Gateway and generate its one-time initialization token.')
     dr_create_controller_parser.add_argument('--name', '-n', required=True, dest='gateway_name',
                                              help='Name of the Gateway',
                                              action='store')
@@ -4632,7 +4664,9 @@ class PAMCreateGatewayCommand(Command):
 
 
 class PAMEditGatewayCommand(Command):
-    parser = argparse.ArgumentParser(prog='pam gateway edit')
+    parser = argparse.ArgumentParser(
+        prog='pam gateway edit',
+        description='Rename a KeeperPAM Gateway or reassign it to another enterprise node.')
     parser.add_argument('--gateway', '-g', required=False, dest='gateway',
                         help='Gateway UID or Name', action='store')
     parser.add_argument('--name', '-n', required=False, dest='gateway_name',
