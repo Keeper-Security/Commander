@@ -10,6 +10,7 @@ from ...nested_share_folder.common import get_folder_key
 from ...nested_share_folder.record_api import create_record_data_v3, record_add_v3, record_update_v3
 from ...proto import record_pb2
 from ...recordv3 import RecordV3
+from ...security_audit import get_security_data_key_type
 from .throttle_retry import (
     IMPORT_ON_EXHAUSTED,
     call_with_throttle_retry,
@@ -121,7 +122,10 @@ def execute_nsf_records_update_with_retry(
         while remaining:
             chunk = remaining[:999]
             remaining = remaining[999:]
-            rs = record_update_v3(params, chunk)
+            # The update protobufs carry `securityData` when the account has security audit / BreachWatch
+            # (`security_audit.attach_security_data`); the server then requires the key type, as the classic
+            # `api.get_records_update_request` sets it. Without it: "security data encryption key type is required".
+            rs = record_update_v3(params, chunk, security_data_key_type=get_security_data_key_type(params))
             rs_record.extend(rs.records)
         if status_type:
             report_statuses(status_type, (record_status_to_str(x.status) for x in rs_record))

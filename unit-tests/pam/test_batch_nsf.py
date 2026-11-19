@@ -258,6 +258,9 @@ class TestExecuteNsfHelpersChunking(unittest.TestCase):
             )
             self.assertEqual(len(out), 1)
             upd.assert_called_once()
+            # the key type of the security data must be sent (server: "security data encryption key type is required")
+            self.assertIn(upd.call_args.kwargs.get('security_data_key_type'),
+                          (record_pb2.ENCRYPTED_BY_PUBLIC_KEY, record_pb2.ENCRYPTED_BY_PUBLIC_KEY_ECC))
 
 
 if __name__ == '__main__':
