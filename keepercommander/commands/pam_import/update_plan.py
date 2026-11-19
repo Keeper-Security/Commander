@@ -181,6 +181,7 @@ def match_items(items: List[ImportItem], index: RecordIndex, *, config_uid: str 
             claimed[result.uid] = item
             item.uid = result.uid
             continue
+        item.known_uid = result.uid           # an error about an EXISTING record: it is in the JSON, just not compared
         errors.append(result.message)
         if result.status == STATUS_MISSING:
             missing.append(item.ident)
@@ -520,7 +521,7 @@ def assemble_plan(items: List[ImportItem], index: RecordIndex, state, errors: Li
         plan.results = diff_items(items, state, config_uid=config_uid, mode=mode, include_passwords=include_passwords,
                                   resolve=build_ref_resolver(items, index), graph_overwrite=graph_overwrite,
                                   skip_files=skip_files, errors_out=plan.errors)
-    matched = {i.uid for i in items if i.uid}
+    matched = {i.uid for i in items if i.uid} | {i.known_uid for i in items if i.known_uid}
     pam_types = set(us.RESOURCE_TYPES + us.RBI_TYPES + us.USER_TYPES)
     plan.not_in_json = [(uid, title, rtype) for uid, title, rtype, _login in scope_records
                         if uid not in matched and rtype in pam_types]

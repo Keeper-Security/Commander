@@ -51,6 +51,7 @@ class ImportItem:
     record_type: str = ''
     # filled in by the matcher
     uid: str = ''
+    known_uid: str = ''          # the vault record an ERROR match is about (never compared, but not "missing from the JSON")
     status: str = ''
     message: str = ''
     children: List['ImportItem'] = field(default_factory=list)

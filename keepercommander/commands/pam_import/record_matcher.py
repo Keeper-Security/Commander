@@ -179,18 +179,18 @@ def match_record(index: RecordIndex, *,
         if update:
             if expected_type and rec.record_type and expected_type.lower() != rec.record_type.lower():
                 return MatchResult(
-                    STATUS_ERROR, code=CODE_TYPE_MISMATCH,
+                    STATUS_ERROR, uid=rec.uid, code=CODE_TYPE_MISMATCH,
                     message=(f'record {ident}{suffix}: the JSON type "{expected_type}" differs from the vault '
                              f'record type "{rec.record_type}" (update never changes the type)'))
             if config_of is not None:
                 cfg = config_of(rec.uid)
                 if cfg and config_uid and cfg != config_uid:
                     return MatchResult(
-                        STATUS_ERROR, code=CODE_OTHER_CONFIG,
+                        STATUS_ERROR, uid=rec.uid, code=CODE_OTHER_CONFIG,
                         message=f'record {ident}{suffix} belongs to configuration {cfg}, not {config_uid}')
             if can_write is not None and can_write(rec.uid) is False:
                 return MatchResult(
-                    STATUS_ERROR, code=CODE_NO_PERMISSION,
+                    STATUS_ERROR, uid=rec.uid, code=CODE_NO_PERMISSION,
                     message=f'no write permission on record {ident}{suffix}')
         return MatchResult(STATUS_EXISTING, uid=rec.uid)
 

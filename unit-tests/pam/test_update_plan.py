@@ -185,6 +185,16 @@ class TestPlan(Quiet):
         self.assertEqual((len(plan.results), len(plan.changed), len(plan.identical)), (2, 0, 2))
         self.assertEqual(plan.not_in_json, [('X' * 22, 'Other', 'pamMachine')])
 
+    def test_a_record_with_a_match_error_is_not_reported_as_missing_from_the_json(self):
+        items, _ = load_items({'resources': [machine_json(users=[])]}, CFG)
+        errors, _ = up.match_items(items, index(), config_uid=CFG, can_write=lambda uid: False)
+        self.assertIn('no write permission', errors[0])
+        self.assertEqual(items[0].uid, '')                                  # never compared
+        self.assertEqual(items[0].known_uid, M1)
+        plan = up.assemble_plan(items, index(), state(), errors, [], config_uid=CFG, scope_records=self.SCOPE)
+        self.assertNotIn(M1, [uid for uid, _title, _type in plan.not_in_json])    # M1 IS in the JSON
+        self.assertIn('X' * 22, [uid for uid, _title, _type in plan.not_in_json])
+
     def test_record_and_graph_changes_are_counted(self):
         raw = machine_json(operating_system='windows')
         raw['pam_settings']['options'] = {'connections': 'off'}

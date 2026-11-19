@@ -172,6 +172,7 @@ class TestMatchUpdateMode(unittest.TestCase):
         index = _index(MatchRecord(UID_A, 'web'))
         r = self._match(index, title='web', can_write=lambda uid: False)
         self.assertEqual((r.status, r.code), (STATUS_ERROR, CODE_NO_PERMISSION))
+        self.assertEqual(r.uid, UID_A)                  # the record IS known: it is only not allowed
         self.assertEqual(self._match(index, title='web', can_write=lambda uid: None).status, STATUS_EXISTING)
         self.assertEqual(self._match(index, title='web', can_write=lambda uid: True).status, STATUS_EXISTING)
 
