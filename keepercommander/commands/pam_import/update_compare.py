@@ -43,6 +43,18 @@ def _graph(op: str, path: str, old: Any = None, new: Any = None, note: str = '',
                   target=us.Target(us.KIND_GRAPH, comparator=comparator or path.split('.')[0], key=path))
 
 
+def _escalation_text(value: Tuple[bool, int]) -> str:
+    """``(escalation on/off, after ms)`` of a workflow approver as the report shows it."""
+    escalation, after_ms = value
+    if not escalation:
+        return 'no escalation'
+    seconds = int(after_ms or 0) // 1000
+    for unit, size in (('d', 86400), ('h', 3600), ('m', 60)):
+        if seconds >= size and seconds % size == 0:
+            return f'escalates after {seconds // size}{unit}'
+    return f'escalates after {seconds}s' if seconds else 'escalates at once'
+
+
 # --------------------------------------------------------------------------------------------------------------
 # KeeperAI settings
 # --------------------------------------------------------------------------------------------------------------
@@ -380,8 +392,8 @@ def diff_workflow(opts: Optional[PamWorkflowOptions], raw_workflow: Any, current
             if key not in have['approvers']:
                 changes.append(_graph(OP_ADD, 'workflow.approvers', None, key, comparator='workflow'))
             elif have['approvers'][key] != value:
-                changes.append(_graph(OP_CHANGE, f'workflow.approvers.{key}', have['approvers'][key], value,
-                                      comparator='workflow'))
+                changes.append(_graph(OP_CHANGE, f'workflow.approvers.{key}', _escalation_text(have['approvers'][key]),
+                                      _escalation_text(value), comparator='workflow'))
         if mode == MODE_OVERWRITE and graph_overwrite:
             for key in have['approvers']:
                 if key not in wanted_keys:

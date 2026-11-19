@@ -269,6 +269,15 @@ class TestWorkflow(unittest.TestCase):
         self.assertEqual({(c.op, c.path) for c in changes},
                          {(ud.OP_CHANGE, 'workflow.approvers.user:a@x.com'), (ud.OP_ADD, 'workflow.approvers')})
         self.assertFalse([c for c in changes if c.op == ud.OP_REMOVE])          # merge never removes
+        esc = next(c for c in changes if c.path == 'workflow.approvers.user:a@x.com')
+        self.assertEqual((esc.old, esc.new), ('no escalation', 'escalates after 1h'))
+
+    def test_escalation_text(self):
+        self.assertEqual(uc._escalation_text((False, 0)), 'no escalation')
+        self.assertEqual(uc._escalation_text((True, 7200000)), 'escalates after 2h')
+        self.assertEqual(uc._escalation_text((True, 1800000)), 'escalates after 30m')
+        self.assertEqual(uc._escalation_text((True, 90000)), 'escalates after 90s')
+        self.assertEqual(uc._escalation_text((True, 0)), 'escalates at once')
 
     def test_team_uids_compare_across_base64_variants(self):
         # the stored one is standard base64 (+ /), the JSON one url-safe (- _): the same team

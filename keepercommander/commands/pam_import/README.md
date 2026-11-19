@@ -59,7 +59,7 @@ Brings **existing** PAM records in line with the same import JSON that `import` 
 
 **The JSON keys you wrote decide.** The comparison looks only at the keys that are written in the JSON item. A key you did not write is never reset to a default: a JSON without `"port"` does not change a port that is already in the vault.
 
-**`--mode merge` (default)** - the keys the JSON sets win, everything else in the record stays, including keys this version of Commander does not know. Lists are merged (custom fields are matched by type and label).
+**`--mode merge` (default)** - the keys the JSON sets win, everything else in the record stays, including keys this version of Commander does not know. Lists are merged (custom fields are matched by type and label; KeeperAI tags and workflow approvers are added to the existing ones), except the workflow `allowed_days` and `time_ranges`, which the JSON replaces as a whole.
 
 **`--mode overwrite`** - the record becomes what the JSON describes. The rules, exactly:
 - **Settings object (`pamSettings`, `pamRemoteBrowserSettings`):** acted on **only when the JSON item has a `pam_settings` section**. With one, the object in the vault becomes what the import would build from it: values are set (including the defaults the import adds, such as `resizeMethod`), and keys that are not part of it are **removed**, also keys a newer Vault added. **A JSON item without `pam_settings` leaves the settings object of the vault record untouched**, in both modes: not mentioning a section is not an instruction to empty it.

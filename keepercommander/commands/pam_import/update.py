@@ -62,7 +62,8 @@ WHAT IT DOES
 
 MODES (--mode)
   merge      (default) keep everything the JSON does not mention; where both set a value the JSON wins;
-                       lists are merged (union)
+                       AI tags, custom fields and workflow approvers are added to the existing ones (union);
+                       the workflow allowed_days and time_ranges are replaced by the JSON as a whole
   overwrite            the record becomes what the JSON describes:
                          - the settings object (pamSettings / pamRemoteBrowserSettings) is acted on ONLY when the
                            JSON item has a `pam_settings` section; keys not part of it are REMOVED
