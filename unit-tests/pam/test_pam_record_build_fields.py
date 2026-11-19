@@ -169,6 +169,35 @@ class TestEveryFieldFitsTheServerTemplate(unittest.TestCase):
         self.assertEqual(next(f.value for f in user.fields if f.label == 'privatePEMKey'), ['k'])
 
 
+class TestFieldLabels(unittest.TestCase):
+    """A template field without its own label gets none (``record-add --labels off``), like a record made in the Web Vault:
+    with the type name as label the Web Vault shows the raw name ("fileRef" instead of "Attachments")."""
+
+    def build(self, rtype='pamMachine'):
+        helper = TestEveryFieldFitsTheServerTemplate()
+        return helper.build(rtype, helper.load(rtype))
+
+    def test_fields_without_a_template_label_have_no_label(self):
+        record = self.build()
+        labels = {f.type: f.label for f in record.fields}
+        for field_type in ('fileRef', 'pamHostname', 'oneTimeCode', 'pamSettings', 'trafficEncryptionSeed'):
+            self.assertEqual(labels[field_type], '', field_type)
+
+    def test_the_template_labels_are_kept(self):
+        record = self.build()
+        labels = {f.label for f in record.fields}
+        self.assertTrue({'operatingSystem', 'instanceName', 'rotationScripts'} <= labels)
+
+    def test_both_import_paths_ask_for_labels_off(self):
+        obj = TestEveryFieldFitsTheServerTemplate().load('pamMachine')
+        self.assertEqual(build_record_add_kwargs(obj, FOLDER)['labels'], 'off')
+        from keepercommander.commands.pam_import import base
+        import inspect
+        for cls in (base.PamUserObject, base.LoginUserObject, base.PamMachineObject, base.PamDatabaseObject,
+                    base.PamDirectoryObject, base.PamRemoteBrowserObject):
+            self.assertIn('"labels": "off"', inspect.getsource(cls.create_record), cls.__name__)
+
+
 class TestCloudResourceOtp(unittest.TestCase):
     def test_otp_is_ignored_with_a_warning(self):
         from keepercommander.commands.pam_import.base import PamCloudResourceObject

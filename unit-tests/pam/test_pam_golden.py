@@ -96,7 +96,7 @@ def _typed_record_from_add_kwargs(params, kwargs: Dict[str, Any]) -> vault.Typed
         ref = rf.get('$ref')
         if not ref:
             continue
-        label = rf.get('label') or ref
+        label = rf.get('label') or ('' if (kwargs.get('labels') or 'on').lower() == 'off' else ref)
         default_value = rf.get('appFillerData') if ref == 'appFiller' else None
         field = vault.TypedField.new_field(ref, default_value, label)
         if rf.get('required'):

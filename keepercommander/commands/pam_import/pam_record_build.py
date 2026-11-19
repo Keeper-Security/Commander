@@ -61,6 +61,10 @@ def _base_kwargs(obj: PamObject, folder_uid: str, record_type: str) -> Dict[str,
         'force': True,
         'folder': folder_uid,
         'record_type': record_type,
+        # `record-add --labels off`: a template field without its own label (fileRef, pamHostname, oneTimeCode, ...)
+        # gets none, like a record made in the Web Vault. With the type name as label the Web Vault shows the raw
+        # name, e.g. "fileRef" instead of "Attachments".
+        'labels': 'off',
     }
     if obj.uid:
         args['record_uid'] = obj.uid
@@ -349,11 +353,13 @@ def pam_object_to_typed_record(
 
     record = vault.TypedRecord()
     record.type_name = record_type
+    omit_labels = (kwargs.get('labels') or 'on').lower() == 'off'
     for rf in rt_fields:
         ref = rf.get('$ref')
         if not ref:
             continue
-        label = rf.get('label') or ref
+        # same rule as RecordAddCommand.execute: the template's own label, else (labels off) none, else the type name
+        label = rf.get('label') or ('' if omit_labels else ref)
         default_value = rf.get('appFillerData') if ref == 'appFiller' else None
         field = vault.TypedField.new_field(ref, default_value, label)
         if rf.get('required'):

@@ -1203,7 +1203,8 @@ class PamUserObject():
         args = {
             "force": True,
             "folder": folder_uid,
-            "record_type": self.type
+            "record_type": self.type,
+            "labels": "off"      # a template field without its own label gets none (Web Vault shows its own name)
         }
         if self.uid: args["record_uid"] = self.uid
         if self.title: args["title"] = self.title
@@ -1323,7 +1324,8 @@ class LoginUserObject():
         args = {
             "force": True,
             "folder": folder_uid,
-            "record_type": self.type
+            "record_type": self.type,
+            "labels": "off"      # a template field without its own label gets none (Web Vault shows its own name)
         }
         if self.uid: args["record_uid"] = self.uid
         if self.title: args["title"] = self.title
@@ -1658,7 +1660,8 @@ class PamMachineObject():
         args = {
             "force": True,
             "folder": folder_uid,
-            "record_type": self.type
+            "record_type": self.type,
+            "labels": "off"      # a template field without its own label gets none (Web Vault shows its own name)
         }
         if self.uid: args["record_uid"] = self.uid
         if self.title: args["title"] = self.title
@@ -1873,7 +1876,8 @@ class PamDatabaseObject():
         args = {
             "force": True,
             "folder": folder_uid,
-            "record_type": self.type
+            "record_type": self.type,
+            "labels": "off"      # a template field without its own label gets none (Web Vault shows its own name)
         }
         if self.uid: args["record_uid"] = self.uid
         if self.title: args["title"] = self.title
@@ -2041,7 +2045,8 @@ class PamDirectoryObject():
         args = {
             "force": True,
             "folder": folder_uid,
-            "record_type": self.type
+            "record_type": self.type,
+            "labels": "off"      # a template field without its own label gets none (Web Vault shows its own name)
         }
         if self.uid: args["record_uid"] = self.uid
         if self.title: args["title"] = self.title
@@ -2168,7 +2173,8 @@ class PamRemoteBrowserObject():
         args = {
             "force": True,
             "folder": folder_uid,
-            "record_type": self.type
+            "record_type": self.type,
+            "labels": "off"      # a template field without its own label gets none (Web Vault shows its own name)
         }
         if self.uid: args["record_uid"] = self.uid
         if self.title: args["title"] = self.title
