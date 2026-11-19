@@ -846,8 +846,10 @@ def _get_user_access_state(params, record_uid, email):
         logger.debug("Could not fetch record accesses for '%s': %s", record_uid, exc)
         return None, None
     accesses = [a for a in result.get('record_accesses', [])
-                if a.get('record_uid') == record_uid and not a.get('owner', False)]
-    user_rows = [a for a in accesses if a.get('access_type') in (None, '', 'AT_USER')]
+                if a.get('record_uid') == record_uid
+                and not a.get('owner', False)
+                and a.get('access_type') in (None, '', 'AT_USER', 'AT_TEAM')]
+    user_rows = [a for a in accesses if a.get('access_type') != 'AT_TEAM']
     email_cf = email.casefold()
     rows = [a for a in user_rows if (a.get('accessor_name') or '').casefold() == email_cf]
     if not rows and user_rows:
