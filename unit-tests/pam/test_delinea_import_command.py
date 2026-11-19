@@ -315,7 +315,8 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
             self.run_quiet(self.orchestrator())
         self.assertIn('2 resources and 2 users', prompt.call_args[0][0])
         fallback.assert_not_called()
-        self.assertTrue(os.path.exists(DEFAULT_IMPORT_JSON))
+        # File is not written when user declines (no --dry-run or --output-file flag)
+        self.assertFalse(os.path.exists(DEFAULT_IMPORT_JSON))
 
     def test_import_uses_unredacted_document(self):
         orchestrator = self.orchestrator(yes=True, use_nsf=True)

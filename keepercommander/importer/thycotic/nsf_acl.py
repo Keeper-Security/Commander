@@ -13,21 +13,110 @@
 from typing import Optional, Dict, Tuple, List, Any, Set
 import logging
 
-ROLE_MATRIX = {
-    ('owner', 'owner'): 'full-manager',
-    ('owner', 'edit'): 'full-manager',
-    ('owner', 'view'): 'viewer',
-    ('owner', 'list'): 'viewer',
-    ('edit', 'owner'): 'content-manager',
-    ('edit', 'edit'): 'content-manager',
-    ('edit', 'view'): 'viewer',
-    ('edit', 'list'): 'viewer',
-    ('add secret', 'owner'): 'content-manager',
-    ('add secret', 'view'): 'viewer',
-    ('add secret', 'list'): 'viewer',
-    ('view', 'view'): 'viewer',
-    ('view', 'list'): 'viewer',
+FOLDER_ROLE_MAP = {
+    'owner': 'full-manager',
+    'edit': 'content-manager',
+    'add secret': 'content-manager',
+    'view': 'viewer',
 }
+
+SECRET_ROLE_MAP = {
+    'list': 'viewer',
+    'view': 'viewer',
+    'edit': 'content-manager',
+    'owner': 'full-manager',
+}
+
+# Higher wins when the same email appears more than once (user rows and groups).
+ROLE_WEIGHT = {
+    'full-manager': 3,
+    'content-manager': 2,
+    'viewer': 1,
+}
+
+
+def thycotic_folder_role_to_nsf_role(folder_access_role_name):
+    # type: (Optional[str]) -> Optional[str]
+    """Map a Delinea folder access role (folder permission only) to an NSF folder role."""
+    if not folder_access_role_name:
+        return None
+    return FOLDER_ROLE_MAP.get(folder_access_role_name.strip().lower())
+
+
+def thycotic_secret_role_to_nsf_role(secret_access_role_name):
+    # type: (Optional[str]) -> Optional[str]
+    """Map Delinea secret access role to NSF role (secret-level overrides).
+
+    API returns Owner/Edit/View/List only; extended flags are separate fields.
+    List maps to viewer. Unknown roles return None (no viewer fallback).
+    """
+    if not secret_access_role_name:
+        return None
+    return SECRET_ROLE_MAP.get(secret_access_role_name.strip().lower())
+
+
+def _keep_highest_role(roles, email, role):
+    # type: (Dict[str, str], str, str) -> None
+    """Keep the higher-weight role for *email* (no downgrade)."""
+    current = roles.get(email)
+    if current is None or ROLE_WEIGHT.get(role, 0) > ROLE_WEIGHT.get(current, 0):
+        roles[email] = role
+
+
+def _roles_by_email(perm_rows, role_of, users_by_id, groups_by_id, group_filter=None,
+                    old_domain=None, new_domain=None):
+    # type: (List[Dict], Any, Dict[int, Dict], Dict[int, Dict], Any, Optional[str], Optional[str]) -> Dict[str, str]
+    from ..importer import replace_email_domain
+
+    users_by_id = users_by_id or {}
+    groups_by_id = groups_by_id or {}
+    group_roles = {}  # type: Dict[str, str]
+    user_roles = {}  # type: Dict[str, str]
+    for row in perm_rows or []:
+        role = role_of(row)
+        if not role:
+            continue
+        user_id = row.get('userId') or 0
+        group_id = row.get('groupId') or 0
+        if user_id > 0:
+            email = (users_by_id.get(user_id) or {}).get('emailAddress')
+            if email:
+                email_normalized = replace_email_domain(email, old_domain, new_domain).lower()
+                _keep_highest_role(user_roles, email_normalized, role)
+        elif group_id > 0 and group_id in groups_by_id:
+            group = groups_by_id[group_id]
+            if group_filter is not None and not group_filter(group):
+                continue
+            for member_id in group.get('users', []) or []:
+                email = (users_by_id.get(member_id) or {}).get('emailAddress')
+                if email:
+                    email_normalized = replace_email_domain(email, old_domain, new_domain).lower()
+                    _keep_highest_role(group_roles, email_normalized, role)
+    # Merge: highest role wins; on a tie, a direct user row beats a group grant.
+    for email, role in user_roles.items():
+        current = group_roles.get(email)
+        if current is None or ROLE_WEIGHT.get(role, 0) >= ROLE_WEIGHT.get(current, 0):
+            group_roles[email] = role
+    return group_roles
+
+
+def folder_roles_by_email(perm_rows, users_by_id, groups_by_id, group_filter=None,
+                          old_domain=None, new_domain=None):
+    # type: (List[Dict], Dict[int, Dict], Dict[int, Dict], Any, Optional[str], Optional[str]) -> Dict[str, str]
+    """{email: NSF folder role} from Delinea folder permission rows (folderAccessRoleName only)."""
+    return _roles_by_email(
+        perm_rows, lambda r: thycotic_folder_role_to_nsf_role(r.get('folderAccessRoleName')),
+        users_by_id, groups_by_id, group_filter, old_domain, new_domain)
+
+
+def record_roles_by_email(perm_rows, users_by_id, groups_by_id, old_domain=None, new_domain=None,
+                          group_filter=None):
+    # type: (List[Dict], Dict[int, Dict], Dict[int, Dict], Optional[str], Optional[str], Any) -> Dict[str, str]
+    """{email: NSF record role} from Delinea permission rows (secretAccessRoleName only)."""
+    return _roles_by_email(
+        perm_rows, lambda r: thycotic_secret_role_to_nsf_role(r.get('secretAccessRoleName')),
+        users_by_id, groups_by_id, group_filter, old_domain, new_domain)
+
 
 def _permission_principal_key(perm_row):
     # type: (Dict[str, Any]) -> Optional[Tuple[str, int]]
@@ -68,9 +157,16 @@ def parse_secret_inherit_permissions(secret):
     """
     Return True if the secret inherits folder permissions (Delinea default).
 
-    Checks several API field names; missing field means inherit.
+    Secret Server exposes this as ``enableInheritPermissions`` on
+    ``/v1/secrets/{id}`` and ``/v2/secrets/{id}``. Older field names are
+    still checked. Missing field means inherit.
     """
-    for key in ('inheritPermissions', 'inheritSecretPermissions', 'inheritsPermissions'):
+    for key in (
+        'enableInheritPermissions',
+        'inheritPermissions',
+        'inheritSecretPermissions',
+        'inheritsPermissions',
+    ):
         if key not in secret:
             continue
         raw = secret.get(key)
@@ -84,112 +180,32 @@ def parse_secret_inherit_permissions(secret):
     return True
 
 
-def thycotic_roles_to_nsf_role(folder_access_role_name, secret_access_role_name):
-    # type: (Optional[str], Optional[str]) -> Optional[str]
-    """
-    Map Delinea folder + secret access roles to NSF role.
-
-    Args:
-        folder_access_role_name: Delinea folder access role (e.g., 'Owner', 'Edit', 'View', 'List')
-        secret_access_role_name: Delinea secret access role (e.g., 'Owner', 'Edit', 'View', 'List')
-
-    Returns:
-        NSF role name or None if no grant is warranted.
-    """
-    if not secret_access_role_name:
-        return None
-
-    folder_role = folder_access_role_name.lower() if folder_access_role_name else ''
-    secret_role = secret_access_role_name.lower()
-
-    # Lookup in existing mapping
-    if (folder_role, secret_role) in ROLE_MATRIX:
-        return ROLE_MATRIX.get((folder_role, secret_role))
-
-    # Dynamic rule: Secret role wins when View folder has elevated secret access
-    if folder_role == 'view' and secret_role in ('edit', 'owner'):
-        return thycotic_secret_role_to_nsf_role(secret_access_role_name)
-
-    # Dynamic Rule: no folder access (None or empty) + any secret role → use secret role
-    if not folder_role:
-        return thycotic_secret_role_to_nsf_role(secret_access_role_name)
-
-    # Any folder + List secret → viewer (List has no requestor UI equivalent in Keeper)
-    if secret_role == 'list':
-        return 'viewer'
-
-    # No secret access → no grant
-    return None
-
-
-def thycotic_secret_role_to_nsf_role(secret_access_role_name):
-    # type: (Optional[str]) -> Optional[str]
-    """
-    Map Delinea secret-only access role to NSF role (for secret-level overrides).
-
-    Targets Keeper documented NSF roles only. List maps to viewer (List has no
-    requestor UI equivalent in Keeper).
-
-    Args:
-        secret_access_role_name: Delinea secret access role
-
-    Returns:
-        NSF role name or None.
-    """
-    if not secret_access_role_name:
-        return None
-
-    role = secret_access_role_name.lower()
-
-    if role == 'list':
-        return 'viewer'
-    elif role == 'view':
-        return 'viewer'
-    elif role == 'edit':
-        return 'content-manager'
-    elif role == 'owner':
-        return 'full-manager'
-
-    return None
-
-
-def is_lossy_folder_secret_pair(folder_access_role_name, secret_access_role_name):
-    # type: (Optional[str], Optional[str]) -> bool
-    """
-    Check if folder + secret ACL pair is lossy (information loss in NSF role mapping).
-
-    Lossy: Owner/Edit folder but View secret (grants only viewer, loses folder permission).
-    """
-    if not folder_access_role_name or not secret_access_role_name:
-        return False
-
-    folder_role = folder_access_role_name.lower()
-    secret_role = secret_access_role_name.lower()
-
-    return folder_role in ('owner', 'edit') and secret_role == 'view'
-
-
 def diff_secret_acl(folder_roles_by_email, secret_roles_by_email):
     # type: (Dict[str, str], Dict[str, str]) -> List[Tuple[str, str]]
-    """
-    Find secrets where the NSF role differs from the folder role.
-
-    Args:
-        folder_roles_by_email: {email: nsf_role} from folder grants
-        secret_roles_by_email: {email: nsf_role} from secret-only grants
-
-    Returns:
-        [(email, nsf_role), ...] where secret role differs from folder role (skip no-ops).
-    """
+    """Return [(email, nsf_role), ...] where the secret role differs from the folder role."""
     deltas = []
-
     for email, secret_role in secret_roles_by_email.items():
-        folder_role = folder_roles_by_email.get(email)
-
-        if secret_role != folder_role:
+        if secret_role != folder_roles_by_email.get(email):
             deltas.append((email, secret_role))
-
     return deltas
+
+
+def revoked_folder_emails(folder_roles_by_email, secret_roles_by_email):
+    # type: (Dict[str, str], Dict[str, str]) -> List[str]
+    """Emails on the folder ACL omitted from a non-inheriting secret ACL.
+
+    Keeper NSF has no deny/no-access record share, so folder cascade would keep
+    these principals on the record. Callers must warn; they cannot revoke via share.
+    """
+    folder_roles = folder_roles_by_email or {}
+    secret_roles = secret_roles_by_email or {}
+    return sorted(email for email in folder_roles if email not in secret_roles)
+
+
+REVOKED_ACCESS_ACTION = (
+    'Removed from this secret in Delinea, but Keeper NSF cannot deny access while the '
+    'user still has the folder role — remédiate manually (separate folder / remove folder grant)'
+)
 
 
 def secret_owner_emails_from_perm_rows(perm_rows, users_by_id, old_domain=None, new_domain=None):
@@ -207,27 +223,17 @@ def secret_owner_emails_from_perm_rows(perm_rows, users_by_id, old_domain=None, 
             continue
         email = users_by_id[user_id].get('emailAddress')
         if email:
-            owners.add(replace_email_domain(email, old_domain, new_domain))
+            owners.add(replace_email_domain(email, old_domain, new_domain).lower())
     return owners
 
 
-def nsf_record_shares_for_secret_acl(secret_roles_by_email, folder_roles_by_email,
-                                     secret_inherits_folder_permissions=True):
-    # type: (Dict[str, str], Dict[str, str], bool) -> List[Tuple[str, str]]
-    """
-    Build NSF direct record shares from Delinea secret permission rows.
-
-    When the secret's ``inheritPermissions`` is false (Delinea Sharing tab:
-    "Inherit permissions" unchecked), every mapped secret grant becomes a
-    direct record share. When the secret inherits folder permissions, only
-    roles that differ from the folder baseline are returned (deltas).
-    """
-    if secret_inherits_folder_permissions is False:
-        return list(secret_roles_by_email.items())
-    return diff_secret_acl(folder_roles_by_email or {}, secret_roles_by_email)
+def nsf_record_shares_for_secret_acl(record_roles_by_email, folder_roles_by_email):
+    # type: (Dict[str, str], Dict[str, str]) -> List[Tuple[str, str]]
+    """Direct shares where the record role differs from the folder role (or no folder role)."""
+    return diff_secret_acl(folder_roles_by_email or {}, record_roles_by_email or {})
 
 
 def nsf_acl_log(message, *args, **kwargs):
     # type: (str, Any, Any) -> None
     """NSF ACL trace (visible when logging level is DEBUG)."""
-    logging.debug('[NSF-ACL] ' + message, *args, **kwargs)
+    logging.debug(message, *args, **kwargs)

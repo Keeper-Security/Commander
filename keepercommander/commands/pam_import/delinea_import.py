@@ -272,8 +272,10 @@ class DelineaImportOrchestrator:
             except Exception as exc:
                 self.findings.add('Secret permission', str(secret_id), f'Could not be read: {exc}')
                 continue
-            if not PermissionMapper.is_override(secret, secret_rows, folder_rows[folder_id]):
+            if not PermissionMapper.is_override(secret, secret_rows, folder_rows.get(folder_id, [])):
                 continue
+            self.permissions.record_revoked_override(
+                folder_rows.get(folder_id, []), secret_rows, mapped.title)
             grants = self.permissions.secret_grants(secret_rows)
             if not grants:
                 continue

@@ -244,33 +244,43 @@ When importing with `--nsf`, Delinea permissions are intelligently mapped to NSF
 
 #### Role Mapping
 
-Delinea roles map to documented Keeper NSF roles only (no requestor, which has no UI equivalent):
+Delinea roles map to documented Keeper NSF roles only (no requestor, which has no UI equivalent). The folder role and the record role are mapped separately.
 
-| Delinea Folder | Delinea Secret | NSF Role |
-|---|---|---|
-| Owner | Owner | full-manager |
-| Owner | Edit | full-manager |
-| Owner | View | viewer (lossy) |
-| Owner | List | viewer |
-| Edit | Owner | content-manager |
-| Edit | Edit | content-manager |
-| Edit | View | viewer (lossy) |
-| Edit | List | viewer |
-| View | View | viewer |
-| View | List | viewer |
-| Any | List | viewer |
+**Folder role** (from the Delinea *Folder Permissions* column only):
 
-**Special Cases:**
-- **Delinea List → Keeper Viewer**: List has no UI equivalent in Keeper; mapped to viewer for visibility
-- **(Lossy) Owner/Edit + View → Viewer**: Higher folder permission discarded when secret is View-only
-- **Secret roles override folder roles**: When a secret has different permissions than its folder, a direct record share is created with the secret-level role
+| Delinea Folder | NSF Folder Role |
+|---|---|
+| Owner | full-manager |
+| Edit | content-manager |
+| Add Secret | content-manager |
+| View | viewer |
 
-**Note:** The mapping preserves or downgrades permissions; never grants more than Delinea did.
+**Record role** (from the Delinea *Secret Permissions* column):
+
+| Delinea Secret | NSF Record Role |
+|---|---|
+| Owner | full-manager |
+| Edit | content-manager |
+| View | viewer |
+| List | viewer |
+
+Where the record role comes from:
+- **Secret inherits permissions** (`enableInheritPermissions: true` on `/v1/secrets/{id}` or `/v2/secrets/{id}`): the secret role on the folder's ACL (the folder that grants access, or its nearest ancestor with its own permissions)
+- **Secret does not inherit** (`enableInheritPermissions: false`): the secret's own permissions (`/v1/secret-permissions`). If the flag is missing, a secret whose ACL differs from its folder's is still treated as not inheriting.
+- **Secret with no folder**: the secret's own permissions
+
+**Direct record shares** are created only when a user's record role differs from the role they get on the record's Keeper folder, or when the user has no folder role (not on the folder, or the secret has no folder). The record stays in its folder; Keeper applies the record-level role over the folder role. Group members covered by a team folder grant are compared at the team's role, and the importing user is never shared to.
+
+**Revocation gap (warned, not auto-fixed):** If a secret breaks inheritance and **removes** a user/group that still has the folder role, Keeper NSF has no deny/no-access record share. Import logs a warning and lists those principals in the end-of-import NSF ACL summary — remédiate manually (move the secret or adjust folder membership).
+
+Example: folder Owner + secret View gives full-manager on the folder and a viewer share on each record; folder Edit + secret Edit gives content-manager on the folder and no record share.
+
+**Note:** The Keeper web vault also lists a directly shared record at the root of the recipient's My Vault when they can see its folder too.
 
 #### What Gets Created
 
-1. **Folder-level permissions**: Delinea folder ACL becomes NSF role grants
-2. **Secret-level overrides**: Secrets with different ACL than their folder get direct record shares
+1. **Folder-level permissions**: Delinea folder permissions become NSF folder role grants
+2. **Record-level permissions**: Direct record shares where the secret role differs from the folder role
 3. **Team expansion**: Delinea groups expand to Keeper team membership
 4. **Domain rewriting**: Optional email domain migration for all permissions
 
