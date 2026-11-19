@@ -19,7 +19,7 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 | `service-status` | Display current service status |
 | `service-config-add` | Add new API configuration and command access settings |
 | `service-docker-setup` | Automated Docker service mode setup with KSM configuration |
-| `service-now-app-setup` | Docker service mode setup for the ServiceNow MID Server |
+| `service-now-app-setup` | Automated ServiceNow MID Server integration setup with Commander Service Mode |
 | `slack-app-setup` | Automated Slack App integration setup with Commander Service Mode |
 | `teams-app-setup` | Automated Teams App integration setup with Commander Service Mode |
 | `gchat-app-setup` | Automated Google Chat App integration setup with Commander Service Mode |

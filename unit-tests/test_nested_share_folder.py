@@ -393,15 +393,9 @@ class TestCommandHelpers(TestCase):
             NestedShareRecordShortcutKeepCommand._resolve_record(
                 'Duplicate Shortcut',
                 params.nested_share_records,
-                params.nested_share_record_data,
-                params=params)
-        with self.assertRaises(CommandError):
-            NestedShareRecordShortcutKeepCommand._resolve_record(
-                'Duplicate Shortcut',
-                params.nested_share_records,
-                params.nested_share_record_data)
+                params)
 
-    def test_shortcut_record_resolution_keeps_legacy_helper_signature(self):
+    def test_shortcut_record_resolution_resolves_unique_title(self):
         from keepercommander.commands.nested_share_folder.record_commands import (
             NestedShareRecordShortcutKeepCommand,
         )
@@ -412,9 +406,13 @@ class TestCommandHelpers(TestCase):
             record_uid: {'data_json': {'title': 'Unique Shortcut'}},
         }
 
+        params = _make_params(
+            nested_share_records=records,
+            nested_share_record_data=record_data,
+        )
         self.assertEqual(
             NestedShareRecordShortcutKeepCommand._resolve_record(
-                'Unique Shortcut', records, record_data),
+                'Unique Shortcut', records, params),
             record_uid,
         )
 
