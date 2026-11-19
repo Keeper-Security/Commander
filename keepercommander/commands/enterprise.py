@@ -74,6 +74,8 @@ def register_commands(commands):
     commands['audit-report'] = aram.AuditReportCommand()
     commands['aging-report'] = aram.AgingReportCommand()
     commands['user-report'] = UserReportCommand()
+    commands['pam-users'] = PamUsersCommand()
+    commands['ksm-users'] = KsmUsersCommand()
     commands['action-report'] = ActionReportCommand()
     commands['audit-alert'] = audit_alerts.AuditAlerts()
     commands['nhi-report'] = nhi_report.NhiReportCommand()
@@ -93,10 +95,13 @@ def register_command_info(aliases, command_info):
     aliases['er'] = 'enterprise-role'
     aliases['et'] = 'enterprise-team'
     aliases['esr'] = 'external-shares-report'
+    aliases['ku'] = 'ksm-users'
     aliases['nr'] = 'nhi-report'
+    aliases['pu'] = 'pam-users'
     aliases['tu'] = 'transfer-user'
 
-    for p in [enterprise_data_parser, enterprise_info_parser, enterprise_node_parser, enterprise_user_parser,
+    for p in [enterprise_data_parser, enterprise_info_parser, pam_users_parser, ksm_users_parser,
+              enterprise_node_parser, enterprise_user_parser,
               enterprise_role_parser, enterprise_team_parser, transfer_user_parser,
               enterprise_push_parser, team_approve_parser, device_approve_parser,
               aram.audit_log_parser, aram.audit_report_parser, aram.aging_report_parser, aram.action_report_parser,
@@ -113,10 +118,12 @@ def register_command_info(aliases, command_info):
 SUPPORTED_NODE_COLUMNS = ['parent_node', 'parent_id', 'user_count', 'users', 'team_count', 'teams', 'role_count', 'roles',
                           'provisioning', 'isolated']
 SUPPORTED_USER_COLUMNS = ['name', 'status', 'transfer_status', 'node', 'team_count', 'teams', 'role_count',
-                          'roles', 'alias', '2fa_enabled', 'job_title']
+                          'roles', 'pam_roles', 'ksm_roles', 'enforcement_count', 'enforcements',
+                          'pam_enforcements', 'ksm_enforcements', 'alias', '2fa_enabled', 'job_title']
 SUPPORTED_TEAM_COLUMNS = ['restricts', 'node', 'user_count', 'users', 'queued_user_count', 'queued_users', 'role_count', 'roles']
 SUPPORTED_ROLE_COLUMNS = ['visible_below', 'default_role', 'admin', 'node', 'user_count', 'users', 'team_count', 'teams',
-                          'enforcement_count', 'enforcements', 'managed_node_count', 'managed_nodes', 'managed_nodes_permissions']
+                          'enforcement_count', 'enforcements', 'pam_enforcements', 'ksm_enforcements',
+                          'managed_node_count', 'managed_nodes', 'managed_nodes_permissions']
 # Always present in the output row/header, regardless of --columns; not selectable so excluded from validation.
 BASE_NODE_COLUMNS = {'node_id', 'name'}
 BASE_USER_COLUMNS = {'user_id', 'email'}
@@ -137,6 +144,10 @@ enterprise_info_parser.add_argument('-r', '--roles', dest='roles', action='store
 enterprise_info_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
 enterprise_info_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='minimize screen output')
 enterprise_info_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
+enterprise_info_parser.add_argument('--pam', dest='pam', action='store_true',
+                                    help='filter users or roles to those with PAM enforcement permissions')
+enterprise_info_parser.add_argument('--ksm', dest='ksm', action='store_true',
+                                    help='filter users or roles to those with KSM enforcement permissions')
 enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                     help='comma-separated list of available columns per argument:' +
                                          '\n for `nodes` (%s)' % ', '.join(SUPPORTED_NODE_COLUMNS) +
@@ -146,6 +157,24 @@ enterprise_info_parser.add_argument('--columns', dest='columns', action='store',
                                     )
 enterprise_info_parser.add_argument('pattern', nargs='?', type=str,
                                     help='search pattern. applicable to users, teams, and roles.')
+
+pam_users_parser = argparse.ArgumentParser(prog='pam-users', parents=[report_output_parser],
+                                           description='List enterprise users with PAM role enforcement permissions')
+pam_users_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
+pam_users_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='minimize screen output')
+pam_users_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
+pam_users_parser.add_argument('--columns', dest='columns', action='store',
+                              help='comma-separated list of user columns (default: name,status,node,pam_roles,pam_enforcements)')
+pam_users_parser.add_argument('pattern', nargs='?', type=str, help='optional search pattern')
+
+ksm_users_parser = argparse.ArgumentParser(prog='ksm-users', parents=[report_output_parser],
+                                           description='List enterprise users with KSM role enforcement permissions')
+ksm_users_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print ids')
+ksm_users_parser.add_argument('-q', '--quiet', dest='quiet', action='store_true', help='minimize screen output')
+ksm_users_parser.add_argument('--node', dest='node', action='store', help='limit results to node (name or ID)')
+ksm_users_parser.add_argument('--columns', dest='columns', action='store',
+                              help='comma-separated list of user columns (default: name,status,node,ksm_roles,ksm_enforcements)')
+ksm_users_parser.add_argument('pattern', nargs='?', type=str, help='optional search pattern')
 
 
 enterprise_node_parser = argparse.ArgumentParser(prog='enterprise-node', description='Manage an enterprise node')
@@ -545,6 +574,8 @@ class EnterpriseInfoCommand(EnterpriseCommand):
         show_users = kwargs.get('users') or False
         show_teams = kwargs.get('teams') or False
         show_roles = kwargs.get('roles') or False
+        if (kwargs.get('pam') or kwargs.get('ksm')) and not any((show_nodes, show_users, show_teams, show_roles)):
+            show_users = True
 
         def user_email(user_id):
             if user_id in users:
@@ -658,6 +689,35 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         break
                 columns.update((x.strip() for x in raw_columns.split(',')))
             pattern = (kwargs.get('pattern') or '').lower()
+
+            def format_enforcements_column(enforcements):
+                if kwargs.get('format') == 'json':
+                    formatted_enforcements = {}
+                    for k, v in enforcements.items():
+                        enforcement_type = constants.ENFORCEMENTS.get(k)
+                        if enforcement_type == 'two_factor_duration':
+                            formatted_enforcements[k] = constants.format_two_factor_duration(v)
+                        elif enforcement_type == 'record_types':
+                            try:
+                                rto = v if isinstance(v, dict) else json.loads(v)
+                                if params.record_type_cache:
+                                    record_types = []
+                                    for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
+                                        if record_type_id in params.record_type_cache:
+                                            rtc = json.loads(params.record_type_cache[record_type_id])
+                                            if '$id' in rtc:
+                                                record_types.append(rtc['$id'])
+                                    formatted_enforcements[k] = ', '.join(record_types)
+                                else:
+                                    formatted_enforcements[k] = v
+                            except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
+                                logging.debug('Failed to format record_types enforcement %s: %s', k, e)
+                                formatted_enforcements[k] = v
+                        else:
+                            formatted_enforcements[k] = v
+                    return formatted_enforcements
+                return list(enforcements.keys())
+
             if show_nodes:
                 supported_columns = SUPPORTED_NODE_COLUMNS
                 if len(columns) == 0:
@@ -764,9 +824,16 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                     headers = [string.capwords(x.replace('_', ' ')) for x in headers]
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
             elif show_users:
+                pam_only = bool(kwargs.get('pam'))
+                ksm_only = bool(kwargs.get('ksm'))
                 supported_columns = SUPPORTED_USER_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('name', 'status', 'transfer_status', 'node'))
+                    if pam_only:
+                        columns.update(('name', 'status', 'node', 'pam_roles', 'pam_enforcements'))
+                    elif ksm_only:
+                        columns.update(('name', 'status', 'node', 'ksm_roles', 'ksm_enforcements'))
+                    else:
+                        columns.update(('name', 'status', 'transfer_status', 'node'))
                 else:
                     wc = columns.difference(supported_columns, BASE_USER_COLUMNS)
                     if len(wc) > 0:
@@ -793,6 +860,13 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                 user_teams[enterprise_user_id] = set()
                             user_teams[enterprise_user_id].add(team_uid)
 
+                role_enforcements = {}  # type: Dict[int, dict]
+                if 'role_enforcements' in params.enterprise:
+                    for re_entry in params.enterprise['role_enforcements']:
+                        role_id = re_entry.get('role_id')
+                        if role_id:
+                            role_enforcements[role_id] = re_entry.get('enforcements', {})
+
                 displayed_columns = [x for x in supported_columns if x in columns]
                 is_verbose = kwargs.get('verbose') or False
                 rows = []
@@ -801,6 +875,22 @@ class EnterpriseInfoCommand(EnterpriseCommand):
 
                     user_id = u['id']
                     email = u['username']
+                    role_ids = set()
+                    if user_id in user_roles:
+                        role_ids.update(user_roles[user_id])
+                    if user_id in user_teams:
+                        for team_uid in user_teams[user_id]:
+                            if team_uid in team_roles:
+                                role_ids.update(team_roles[team_uid])
+                    user_enforcements = {}
+                    for role_id in sorted(role_ids):
+                        for k, v in role_enforcements.get(role_id, {}).items():
+                            if k not in user_enforcements:
+                                user_enforcements[k] = v
+                    if pam_only and not any(k.lower() in constants.PAM_ENFORCEMENTS for k in user_enforcements):
+                        continue
+                    if ksm_only and not any(k.lower() in constants.KSM_ENFORCEMENTS for k in user_enforcements):
+                        continue
                     row = [user_id, u['username']]
                     for column in displayed_columns:
                         if column == 'name':
@@ -830,16 +920,21 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                 ])
                             else:
                                 row.append([t['name'] for t in user_team_list])
-                        elif column == 'role_count' or column == 'roles':
-                            role_ids = set()
-                            if user_id in user_roles:
-                                role_ids.update(user_roles[user_id])
-                            if user_id in user_teams:
-                                for team_uid in user_teams[user_id]:
-                                    if team_uid in team_roles:
-                                        role_ids.update(team_roles[team_uid])
+                        elif column in {'role_count', 'roles', 'pam_roles', 'ksm_roles'}:
+                            if column == 'pam_roles':
+                                target_role_ids = [
+                                    r_id for r_id in role_ids
+                                    if any(k.lower() in constants.PAM_ENFORCEMENTS for k in role_enforcements.get(r_id, {}))
+                                ]
+                            elif column == 'ksm_roles':
+                                target_role_ids = [
+                                    r_id for r_id in role_ids
+                                    if any(k.lower() in constants.KSM_ENFORCEMENTS for k in role_enforcements.get(r_id, {}))
+                                ]
+                            else:
+                                target_role_ids = role_ids
                             if column == 'role_count':
-                                row.append(len(role_ids))
+                                row.append(len(target_role_ids))
                             else:
                                 if is_verbose:
                                     row.append([
@@ -847,11 +942,26 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                             'role_id': str(role_id),
                                             'role_name': roles[role_id]['name'],
                                         }
-                                        for role_id in role_ids if role_id in roles
+                                        for role_id in target_role_ids if role_id in roles
                                     ])
                                 else:
-                                    role_names = [roles[role_id]['name'] for role_id in role_ids if role_id in roles]
+                                    role_names = [roles[role_id]['name'] for role_id in target_role_ids if role_id in roles]
                                     row.append(role_names)
+                        elif column in {'enforcement_count', 'enforcements', 'pam_enforcements', 'ksm_enforcements'}:
+                            if column == 'pam_enforcements':
+                                target_enforcements = {
+                                    k: v for k, v in user_enforcements.items() if k.lower() in constants.PAM_ENFORCEMENTS
+                                }
+                            elif column == 'ksm_enforcements':
+                                target_enforcements = {
+                                    k: v for k, v in user_enforcements.items() if k.lower() in constants.KSM_ENFORCEMENTS
+                                }
+                            else:
+                                target_enforcements = user_enforcements
+                            if column == 'enforcement_count':
+                                row.append(len(target_enforcements))
+                            else:
+                                row.append(format_enforcements_column(target_enforcements))
                         elif column == 'alias':
                             row.append([x['username'] for x in params.enterprise.get('user_aliases', [])
                                         if x['enterprise_user_id'] == user_id and x['username'] != email])
@@ -860,7 +970,18 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'job_title':
                             row.append(u.get('job_title') or '')
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
+                        matches_row = any(1 for x in row if x and str(x).lower().find(pattern) >= 0)
+                        matches_pam = (
+                            pattern == 'pam'
+                            and any(c in {'enforcements', 'pam_enforcements'} for c in displayed_columns)
+                            and any(k.lower() in constants.PAM_ENFORCEMENTS for k in user_enforcements)
+                        )
+                        matches_ksm = (
+                            pattern == 'ksm'
+                            and any(c in {'enforcements', 'ksm_enforcements'} for c in displayed_columns)
+                            and any(k.lower() in constants.KSM_ENFORCEMENTS for k in user_enforcements)
+                        )
+                        if not (matches_row or matches_pam or matches_ksm):
                             continue
                     rows.append(row)
                 rows.sort(key=lambda x: x[1])
@@ -869,7 +990,13 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers = ['user_id', 'email']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
-                    headers = [field_to_title(x) for x in headers]
+                    header_overrides = {
+                        'pam_roles': 'PAM Role(s)',
+                        'ksm_roles': 'KSM Role(s)',
+                        'pam_enforcements': 'PAM Enforcements',
+                        'ksm_enforcements': 'KSM Enforcements',
+                    }
+                    headers = [header_overrides.get(x, field_to_title(x)) for x in headers]
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_teams:
@@ -940,9 +1067,16 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
 
             if show_roles:
+                pam_only = bool(kwargs.get('pam'))
+                ksm_only = bool(kwargs.get('ksm'))
                 supported_columns = SUPPORTED_ROLE_COLUMNS
                 if len(columns) == 0:
-                    columns.update(('default_role', 'admin', 'node', 'user_count'))
+                    if pam_only:
+                        columns.update(('node', 'user_count', 'team_count', 'pam_enforcements'))
+                    elif ksm_only:
+                        columns.update(('node', 'user_count', 'team_count', 'ksm_enforcements'))
+                    else:
+                        columns.update(('default_role', 'admin', 'node', 'user_count'))
                 else:
                     wc = columns.difference(supported_columns, BASE_ROLE_COLUMNS)
                     if len(wc) > 0:
@@ -996,6 +1130,10 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 for r in roles.values():
                     row = [r['id'], r['name']]
                     role_id = r['id']
+                    if pam_only and not any(k.lower() in constants.PAM_ENFORCEMENTS for k in role_enforcements.get(role_id, {})):
+                        continue
+                    if ksm_only and not any(k.lower() in constants.KSM_ENFORCEMENTS for k in role_enforcements.get(role_id, {})):
+                        continue
                     managed_nodes_list = role_managed_nodes.get(role_id, [])
                     
                     for column in displayed_columns:
@@ -1019,35 +1157,17 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                         elif column == 'enforcement_count':
                             enforcements = role_enforcements.get(role_id, {})
                             row.append(len(enforcements))
-                        elif column == 'enforcements':
+                        elif column in {'enforcements', 'pam_enforcements', 'ksm_enforcements'}:
                             enforcements = role_enforcements.get(role_id, {})
-                            if kwargs.get('format') == 'json':
-                                formatted_enforcements = {}
-                                for k, v in enforcements.items():
-                                    enforcement_type = constants.ENFORCEMENTS.get(k)
-                                    if enforcement_type == 'two_factor_duration':
-                                        formatted_enforcements[k] = constants.format_two_factor_duration(v)
-                                    elif enforcement_type == 'record_types':
-                                        try:
-                                            rto = v if isinstance(v, dict) else json.loads(v)
-                                            if params.record_type_cache:
-                                                record_types = []
-                                                for record_type_id in itertools.chain(rto.get('std') or [], rto.get('ent') or []):
-                                                    if record_type_id in params.record_type_cache:
-                                                        rtc = json.loads(params.record_type_cache[record_type_id])
-                                                        if '$id' in rtc:
-                                                            record_types.append(rtc['$id'])
-                                                formatted_enforcements[k] = ', '.join(record_types)
-                                            else:
-                                                formatted_enforcements[k] = v
-                                        except (json.JSONDecodeError, TypeError, KeyError, ValueError) as e:
-                                            logging.debug('Failed to format record_types enforcement %s: %s', k, e)
-                                            formatted_enforcements[k] = v
-                                    else:
-                                        formatted_enforcements[k] = v
-                                row.append(formatted_enforcements)
-                            else:
-                                row.append(list(enforcements.keys()))
+                            if column == 'pam_enforcements':
+                                enforcements = {
+                                    k: v for k, v in enforcements.items() if k.lower() in constants.PAM_ENFORCEMENTS
+                                }
+                            elif column == 'ksm_enforcements':
+                                enforcements = {
+                                    k: v for k, v in enforcements.items() if k.lower() in constants.KSM_ENFORCEMENTS
+                                }
+                            row.append(format_enforcements_column(enforcements))
                         elif column == 'managed_node_count':
                             row.append(len(managed_nodes_list))
                         elif column == 'managed_nodes':
@@ -1083,7 +1203,18 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                                         permissions_info.append(f"{node_name} (cascade: {cascade}): none")
                             row.append(permissions_info)
                     if pattern:
-                        if not any(1 for x in row if x and str(x).lower().find(pattern) >= 0):
+                        matches_row = any(1 for x in row if x and str(x).lower().find(pattern) >= 0)
+                        matches_pam = (
+                            pattern == 'pam'
+                            and any(c in {'enforcements', 'pam_enforcements'} for c in displayed_columns)
+                            and any(k.lower() in constants.PAM_ENFORCEMENTS for k in role_enforcements.get(role_id, {}))
+                        )
+                        matches_ksm = (
+                            pattern == 'ksm'
+                            and any(c in {'enforcements', 'ksm_enforcements'} for c in displayed_columns)
+                            and any(k.lower() in constants.KSM_ENFORCEMENTS for k in role_enforcements.get(role_id, {}))
+                        )
+                        if not (matches_row or matches_pam or matches_ksm):
                             continue
                     rows.append(row)
 
@@ -1094,8 +1225,32 @@ class EnterpriseInfoCommand(EnterpriseCommand):
                 headers = ['role_id', 'name']
                 headers.extend(displayed_columns)
                 if kwargs.get('format') != 'json':
-                    headers = [string.capwords(x.replace('_', ' ')) for x in headers]
+                    role_header_overrides = {
+                        'pam_enforcements': 'PAM Enforcements',
+                        'ksm_enforcements': 'KSM Enforcements',
+                    }
+                    headers = [role_header_overrides.get(x, string.capwords(x.replace('_', ' '))) for x in headers]
                 return dump_report_data(rows, headers, fmt=kwargs.get('format'), filename=kwargs.get('output'))
+
+
+class PamUsersCommand(EnterpriseInfoCommand):
+    def get_parser(self):
+        return pam_users_parser
+
+    def execute(self, params, **kwargs):
+        kwargs['users'] = True
+        kwargs['pam'] = True
+        return super().execute(params, **kwargs)
+
+
+class KsmUsersCommand(EnterpriseInfoCommand):
+    def get_parser(self):
+        return ksm_users_parser
+
+    def execute(self, params, **kwargs):
+        kwargs['users'] = True
+        kwargs['ksm'] = True
+        return super().execute(params, **kwargs)
 
 
 class EnterpriseNodeCommand(EnterpriseCommand):
