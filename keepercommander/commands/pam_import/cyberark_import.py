@@ -1985,6 +1985,7 @@ _DASH_TRANSLATE = str.maketrans({
 class CyberArkPAMImportCommand(Command):
     parser = argparse.ArgumentParser(
         prog="pam project cyberark-import",
+        description="Import safes, accounts, and platforms from CyberArk into KeeperPAM.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
@@ -2577,6 +2578,7 @@ class CyberArkPAMCleanupCommand(Command):
 
     parser = argparse.ArgumentParser(
         prog="pam project cyberark-cleanup",
+        description="Remove records, folders, and configurations created by a CyberArk PAM migration.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:

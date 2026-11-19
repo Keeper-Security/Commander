@@ -25,7 +25,9 @@ from ..error import CommandError
 from ..proto import breachwatch_pb2, client_pb2
 
 
-breachwatch_list_parser = argparse.ArgumentParser(prog='breachwatch-list', parents=[report_output_parser])
+breachwatch_list_parser = argparse.ArgumentParser(
+    prog='breachwatch-list', parents=[report_output_parser],
+    description='List vault records with breached or high-risk passwords detected by BreachWatch.')
 breachwatch_list_parser.add_argument('--all', '-a', dest='all', action='store_true',
                                      help='Display all breached records (default is to show only first 30 records)')
 breachwatch_list_parser.add_argument('--owned', '-o', dest='owned', action='store_true',
@@ -36,16 +38,24 @@ breachwatch_list_parser.add_argument('--numbered', '-n', action='store_true',
 #breachwatch_list_parser.add_argument('--ignored', '-i', dest='ignored', action='store_true', help='Display ignored records')
 
 
-breachwatch_password_parser = argparse.ArgumentParser(prog='breachwatch-password')
+breachwatch_password_parser = argparse.ArgumentParser(
+    prog='breachwatch-password',
+    description='Check one or more passwords against the BreachWatch breached-password database.')
 breachwatch_password_parser.add_argument('passwords', type=str, nargs='*', help='Password')
 
-breachwatch_scan_parser = argparse.ArgumentParser(prog='breachwatch-scan')
+breachwatch_scan_parser = argparse.ArgumentParser(
+    prog='breachwatch-scan',
+    description='Scan vault records against BreachWatch and sync enterprise security audit data.')
 
 
-breachwatch_ignore_parser = argparse.ArgumentParser(prog='breachwatch-ignore')
+breachwatch_ignore_parser = argparse.ArgumentParser(
+    prog='breachwatch-ignore',
+    description='Ignore BreachWatch alerts for one or more specified record UIDs.')
 breachwatch_ignore_parser.add_argument('records', type=str, nargs='+', help='Record UID to ignore')
 
-breachwatch_report_parser = argparse.ArgumentParser(prog='breachwatch-report', parents=[report_output_parser])
+breachwatch_report_parser = argparse.ArgumentParser(
+    prog='breachwatch-report', parents=[report_output_parser],
+    description='Generate an enterprise-wide summary report of BreachWatch password statuses by user.')
 
 
 def register_commands(commands):

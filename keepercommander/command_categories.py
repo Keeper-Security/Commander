@@ -98,7 +98,7 @@ COMMAND_CATEGORIES = {
         'this-device', 'login', 'login-status', 'biometric', 'whoami', 'logout',
         'help', 'sync-down', 'version', 'update', 'clear', 'history', 'quit', 'run-batch', 'generate',
         'reset-password', 'sync-security-data', 'keeper-fill', '2fa', 'create-account',
-        'run-as', 'sleep', 'server', 'proxy', 'keep-alive', 'supershell', 'notification'
+        'run-as', 'sleep', 'server', 'proxy', 'keep-alive', 'supershell', 'notification', 'ai-setup'
     },
 
     # KeeperPAM Commands

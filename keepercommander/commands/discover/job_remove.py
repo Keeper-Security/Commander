@@ -20,7 +20,9 @@ class PAMGatewayActionDiscoverJobRemoveCommand(PAMGatewayActionDiscoverCommandBa
 
     """
 
-    parser = argparse.ArgumentParser(prog='pam action discover remove')
+    parser = argparse.ArgumentParser(
+        prog='pam action discover remove',
+        description='Cancel or remove a PAM infrastructure discovery job by Job ID.')
     parser.add_argument('--job-id', '-j', required=True, dest='job_id', action='store',
                         help='Discovery job id.')
 

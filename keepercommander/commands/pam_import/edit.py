@@ -78,7 +78,9 @@ from ...subfolder import BaseFolderNode, NestedShareFolderNode
 
 
 class PAMProjectImportCommand(Command):
-    parser = argparse.ArgumentParser(prog="pam project import")
+    parser = argparse.ArgumentParser(
+        prog="pam project import",
+        description="Import a PAM project (folders, configurations, resources, and users) from JSON.")
     parser.add_argument("--name", "-n", required=False, dest="project_name", action="store", help="Project name.")
     parser.add_argument("--filename", "-f", required=False, dest="file_name", action="store", help="File to load import data from.")
     parser.add_argument("--dry-run", "-d", required=False, dest="dry_run", action="store_true", default=False, help="Test import without modifying vault.")

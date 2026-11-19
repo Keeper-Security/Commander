@@ -49,7 +49,9 @@ class TwoFaCommand(GroupCommand):
 
 
 class TfaListCommand(Command):
-    parser = argparse.ArgumentParser(prog='2fa list', parents=[report_output_parser])
+    parser = argparse.ArgumentParser(
+        prog='2fa list', parents=[report_output_parser],
+        description='List configured two-factor authentication (2FA) methods on the current account.')
 
     def get_parser(self):
         return TfaListCommand.parser

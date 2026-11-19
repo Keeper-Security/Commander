@@ -14,7 +14,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionSaasRemoveCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action saas remove')
+    parser = argparse.ArgumentParser(
+        prog='pam action saas remove',
+        description='Remove a SaaS credential rotation configuration from a PAM user record.')
 
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')

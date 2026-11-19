@@ -17,7 +17,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionServiceRemoveCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action service remove')
+    parser = argparse.ArgumentParser(
+        prog='pam action service remove',
+        description='Remove a service or scheduled-task mapping between a PAM Machine and PAM User.')
 
     # The record to base everything on.
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',

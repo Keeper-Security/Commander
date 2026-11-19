@@ -21,7 +21,9 @@ if TYPE_CHECKING:
 
 
 class PAMDebugInfoCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action debug info')
+    parser = argparse.ArgumentParser(
+        prog='pam action debug info',
+        description='Display detailed PAM graph and ACL link information for a record.')
 
     type_name_map = {
         PAM_USER: "PAM User",
