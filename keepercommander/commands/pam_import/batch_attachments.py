@@ -1,6 +1,7 @@
 """Step 1c — batched file uploads (files_add + parallel PUTs + records_update)."""
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -25,6 +26,10 @@ from ...proto import record_pb2
 from .base import PamScriptObject, resolve_script_creds
 from .pam_record_build import PamObject
 from .deferred_refs import _build_typed_record_update_pb, linked_keys_for_channel_a_refs
+from .batch_nsf import execute_nsf_records_update_with_retry
+from .nsf_helpers import refresh_stale_nsf_records, sync_down_preserving_nsf_keys
+from .record_loader import load_pam_record
+from ..pam.vault_target import is_pam_nsf_record
 
 FILES_ADD_CHUNK = 300
 UPLOAD_MAX_WORKERS = 12
@@ -338,18 +343,37 @@ def execute_batch_attachments(
     if not successes_by_parent:
         return summary
 
+    # A parent in a Nested Share Folder is written through `records/v3/update`, like Step 1b does; the classic
+    # `records_update` answered "success" for it on QA 2026-11-19 but left the record without the files. And after
+    # Step 1b an incremental sync leaves the OLD copy of such a record in the classic cache: refresh it first, or the
+    # patch is built from (and sent with the revision of) a record that no longer exists in that form.
+    nsf_parents = {uid for uid in successes_by_parent if is_pam_nsf_record(params, uid)}
+    if nsf_parents:
+        refresh_stale_nsf_records(params, sorted(nsf_parents))
+
     update_pbs: List[record_pb2.RecordUpdate] = []
     update_uids: List[str] = []
     for parent_uid, items in successes_by_parent.items():
-        existing = vault.KeeperRecord.load(params, parent_uid)
+        if parent_uid in nsf_parents:
+            existing = load_pam_record(params, parent_uid)
+        else:
+            existing = vault.KeeperRecord.load(params, parent_uid)
         if not existing or not isinstance(existing, vault.TypedRecord):
             summary.failures.append((parent_uid, 'record not found for fileRef patch'))
             continue
         try:
-            record = vault.KeeperRecord.load(params, parent_uid)
+            record = copy.deepcopy(existing) if parent_uid in nsf_parents else vault.KeeperRecord.load(params, parent_uid)
             if not record or not isinstance(record, vault.TypedRecord):
                 summary.failures.append((parent_uid, 'record not found for fileRef patch'))
                 continue
+            if parent_uid in nsf_parents:
+                from ...nested_share_folder.common import get_record_key, get_record_revision
+                existing.revision = record.revision = get_record_revision(params, parent_uid, existing.revision or 0)
+                if not record.record_key:
+                    record.record_key = existing.record_key = get_record_key(params, parent_uid, raise_on_missing=False)
+                if not record.record_key:
+                    summary.failures.append((parent_uid, 'record key not found for fileRef patch'))
+                    continue
             _apply_uploads_to_record(record, items)
             keys = dict(record_keys or {})
             for item in items:
@@ -373,7 +397,14 @@ def execute_batch_attachments(
         return summary
 
     if update_pbs:
-        results = execute_records_update_with_retry(params, update_pbs, label='Step 1c fileRef patch')
+        classic_pbs = [pb for pb, uid in zip(update_pbs, update_uids) if uid not in nsf_parents]
+        nsf_pbs = [pb for pb, uid in zip(update_pbs, update_uids) if uid in nsf_parents]
+        results = []
+        if classic_pbs:
+            results.extend(execute_records_update_with_retry(params, classic_pbs, label='Step 1c fileRef patch'))
+        if nsf_pbs:
+            results.extend(execute_nsf_records_update_with_retry(
+                params, nsf_pbs, label='Step 1c NSF fileRef patch', status_type=None))
         by_uid = {utils.base64_url_encode(r.record_uid): r for r in results if r.record_uid}
         for uid in update_uids:
             rs = by_uid.get(uid)
@@ -385,7 +416,10 @@ def execute_batch_attachments(
     if summary.failures:
         return summary
 
-    api.sync_down(params)
+    if nsf_parents:
+        sync_down_preserving_nsf_keys(params)
+    else:
+        api.sync_down(params)
     return summary
 
 

@@ -281,6 +281,38 @@ class TestExecuteBatchAttachments(unittest.TestCase):
         self.assertEqual(seen['linked'], {FILE_UID: b'\x03' * 32, script_uid: b'\x04' * 32})
         self.assertEqual(seen['refs'], {FILE_UID, script_uid})
 
+    def test_a_parent_in_a_nested_share_folder_is_patched_through_the_nsf_update(self):
+        """QA 2026-11-19: the classic records_update said "success" for an NSF parent and the files were not on the record."""
+        from keepercommander.commands.pam_import.batch_attachments import _UploadSuccess
+        mod = 'keepercommander.commands.pam_import.batch_attachments.'
+        params = MagicMock()
+        params.record_cache = {PARENT_UID: MagicMock()}
+        pending = [PendingUpload(PARENT_UID, '/tmp/a.bin', 'a.bin', 5, 'attachment')]
+        parent = vault.TypedRecord()
+        parent.record_uid = PARENT_UID
+        parent.type_name = 'pamMachine'
+        parent.record_key = b'' * 32
+        parent.revision = 5                                    # the stale classic copy
+        seen = {}
+
+        def fake_build(_params, record, existing):
+            seen['revisions'] = (record.revision, existing.revision)
+            return record_pb2.RecordUpdate()
+
+        ok = record_pb2.RecordModifyStatus()
+        ok.record_uid = utils.base64_url_decode(PARENT_UID)
+        ok.status = record_pb2.RS_SUCCESS
+        with patch(mod + '_files_add_chunk') as files_add,                 patch(mod + '_parallel_puts', return_value=([_UploadSuccess(pending[0], FILE_UID, b'' * 32)], [])),                 patch(mod + 'is_pam_nsf_record', return_value=True),                 patch(mod + 'refresh_stale_nsf_records') as refresh,                 patch(mod + 'load_pam_record', return_value=parent),                 patch('keepercommander.nested_share_folder.common.get_record_revision', return_value=99),                 patch(mod + '_build_typed_record_update_pb', side_effect=fake_build),                 patch(mod + 'execute_nsf_records_update_with_retry', return_value=[ok]) as nsf_update,                 patch(mod + 'execute_records_update_with_retry') as classic_update,                 patch(mod + 'sync_down_preserving_nsf_keys') as nsf_sync,                 patch(mod + 'api.sync_down') as plain_sync:
+            files_add.return_value = record_pb2.FilesAddResponse()
+            summary = execute_batch_attachments(params, pending)
+        self.assertEqual(summary.failures, [])
+        refresh.assert_called_once()                                   # the stale classic copy is refreshed first
+        nsf_update.assert_called_once()
+        classic_update.assert_not_called()
+        self.assertEqual(seen['revisions'], (99, 99))                  # sent with the revision the server has
+        nsf_sync.assert_called_once()
+        plain_sync.assert_not_called()
+
     def test_put_failure_aborts_before_records_update(self):
         params = MagicMock()
         params.record_cache = {PARENT_UID: MagicMock()}
