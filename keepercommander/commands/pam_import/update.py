@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from .import_items import KIND_RESOURCE, load_items
 from .ksm_scope import collect_ksm_scope
-from .nsf_helpers import find_pam_configuration, get_ksm_app_folders
+from .nsf_helpers import find_pam_configuration, get_ksm_app_folders, refresh_stale_nsf_records
 from .port_forward_validation import preflight_port_forward
 from .record_matcher import RecordIndex
 from . import update_diff as ud
@@ -289,6 +289,9 @@ class PAMProjectUpdateCommand(Command):
             describe_location=scope.describe_location, folder_label=scope.folder_label)
 
         matched = [i for i in items if i.uid]
+        # an NSF record written earlier in this session (or by another client) keeps its OLD data in the classic cache
+        # after an incremental sync: refresh it with a full sync before it is compared
+        refresh_stale_nsf_records(params, [i.uid for i in matched])
         state = read_vault_state(params, configuration.record_uid, [i.uid for i in matched],
                                  workflow_uids=[i.uid for i in matched if _wants_workflow(i)])
         plan = up.assemble_plan(items, index, state, errors, missing, config_uid=configuration.record_uid,

@@ -215,6 +215,44 @@ def sync_down_preserving_nsf_keys(params) -> None:
     restore_nsf_folder_keys(params, preserved)
 
 
+def stale_nsf_records(params, record_uids) -> List[str]:
+    """UIDs of the records whose local DATA is older than what the server has.
+
+    Found on QA 2026-11-19 (``resend_test/probe_nsf_read.py --write``): after a ``records/v3/update`` an INCREMENTAL
+    sync moves the revision in ``nested_share_records`` (here 6274004) and drops the NSF data copy
+    (``nested_share_record_data[uid]['data_json']``), but the classic ``record_cache`` copy keeps the OLD data and the
+    OLD revision (6273968), and ``load_pam_record`` then returns the old data. Only a full sync (revision 0, no token)
+    brings the new data. Such a record must not be read for a comparison, nor be the base of an update.
+    """
+    nsf_records = getattr(params, 'nested_share_records', None) or {}
+    nsf_data = getattr(params, 'nested_share_record_data', None) or {}
+    classic = getattr(params, 'record_cache', None) or {}
+    stale = []
+    for uid in record_uids:
+        nsf = nsf_records.get(uid)
+        if not nsf:
+            continue                                  # a classic record: the normal sync is enough
+        nsf_rev = int(nsf.get('revision') or 0)
+        copy = classic.get(uid)
+        if copy is not None:
+            if int(copy.get('revision') or 0) < nsf_rev:
+                stale.append(uid)
+        elif not (nsf_data.get(uid) or {}).get('data_json'):
+            stale.append(uid)                         # known to the NSF cache but no data at all
+    return stale
+
+
+def refresh_stale_nsf_records(params, record_uids) -> int:
+    """Full sync when ``stale_nsf_records`` finds any; returns how many records were stale (0 = no sync was made)."""
+    stale = stale_nsf_records(params, record_uids)
+    if stale:
+        logging.debug('%d NSF record(s) have stale local data (first: %s): full sync', len(stale), stale[0])
+        params.revision = 0
+        params.sync_down_token = b''
+        sync_down_preserving_nsf_keys(params)
+    return len(stale)
+
+
 def collect_nsf_subtree_uids(params, root_uid: str) -> List[str]:
     """Return *root_uid* plus every NSF folder nested underneath it.
 
