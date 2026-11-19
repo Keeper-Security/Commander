@@ -418,14 +418,10 @@ class FolderCdCommand(Command):
                         params, folder_name, raise_on_ambiguous=True)
                 except FolderPathAmbiguousError as e:
                     raise CommandError('cd', str(e))
-                if rs is not None:
-                    folder, pattern = rs
-                    if len(pattern) == 0:
-                        params.current_folder = folder.uid
-                    else:
-                        raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
-                else:
+                if rs is None or len(rs[1]) != 0:
                     raise CommandError('cd', 'Folder {0} not found'.format(folder_name))
+                folder, _ = rs
+                params.current_folder = folder.uid
 
 
 class FolderTreeCommand(Command):

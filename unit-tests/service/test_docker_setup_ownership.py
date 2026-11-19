@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from keepercommander import utils
+from keepercommander.error import KeeperApiError
 from keepercommander.params import KeeperParams, RecordOwner
 from keepercommander.service.docker.setup_base import DockerSetupBase
 
@@ -252,6 +253,39 @@ class TestCreateKsmAppOwnership(unittest.TestCase):
 
         uid = DockerSetupBase()._create_ksm_app(params, APP_NAME)
         self.assertEqual(uid, 'OWNED_NSF_APP')
+
+
+class TestCreateClientDevice(unittest.TestCase):
+    @patch('keepercommander.service.docker.setup_base.DockerSetupPrinter')
+    @patch('keepercommander.service.docker.setup_base.KSMCommand.add_client')
+    @patch('keepercommander.service.docker.setup_base.uuid.uuid4')
+    def test_duplicate_default_client_name_retries_with_unique_name(
+        self, mock_uuid4, mock_add_client, mock_printer
+    ):
+        mock_uuid4.return_value.hex = 'deadbeef01234567'
+        mock_add_client.side_effect = [
+            KeeperApiError('duplicate_app_client_name', 'duplicate_app_client_name'),
+            [{'config': 'generated-config'}],
+        ]
+
+        result = DockerSetupBase()._create_client_device(
+            _params(), 'APP_UID', APP_NAME
+        )
+
+        self.assertEqual(result, 'generated-config')
+        self.assertEqual(mock_add_client.call_count, 2)
+        self.assertEqual(
+            mock_add_client.call_args_list[0].kwargs['client_name'],
+            'Commander Service Mode - KSM App Client',
+        )
+        self.assertEqual(
+            mock_add_client.call_args_list[1].kwargs['client_name'],
+            'Commander Service Mode - KSM App Client deadbeef',
+        )
+        mock_printer.print_warning.assert_called_once()
+        mock_printer.print_success.assert_called_once_with(
+            'Client device created successfully'
+        )
 
 
 class TestIntegrationLookupOwnership(unittest.TestCase):
