@@ -58,14 +58,14 @@ def password_summary(plan: UpdatePlan) -> List[str]:
 
 
 def summary_line(plan: UpdatePlan) -> str:
-    total = len(plan.results)
+    total = len(plan.compared)
     changed = len(plan.changed)
     return (f'{changed} of {total} records would change (record {plan.record_changes}, graph {plan.graph_changes}); '
             f'{total - changed} identical.')
 
 
 def estimate_line(plan: UpdatePlan) -> str:
-    total = len(plan.results)
+    total = len(plan.compared)
     changed = len(plan.changed)
     return (f'{changed} of {total} records differ and need updating; {total - changed} identical; '
             f'Not in the JSON: {len(plan.not_in_json)}.')
@@ -91,6 +91,8 @@ def format_text(plan: UpdatePlan, *, verbose: bool = False, brief_tip: bool = Tr
             if r.differs:
                 lines.append(f'~ {r.title}  ({r.record_type}, uid {r.uid})')
                 lines.extend(_change_line(c) for c in r.changes)
+            elif not r.compared:
+                lines.append(f'! {r.title}  (not compared)')
             else:
                 lines.append(f'= {r.title}  (identical)')
             lines.extend(f'    ! {w}' for w in r.warnings)
@@ -118,7 +120,7 @@ def format_text(plan: UpdatePlan, *, verbose: bool = False, brief_tip: bool = Tr
 
 def to_dict(plan: UpdatePlan, *, verbose: bool = False, estimate: bool = False) -> Dict[str, Any]:
     """The ``--format json`` result: ``{summary, changes[], skipped[], errors[], warnings[]}``."""
-    total = len(plan.results)
+    total = len(plan.compared)
     summary = {
         'mode': plan.mode,
         'records': total,

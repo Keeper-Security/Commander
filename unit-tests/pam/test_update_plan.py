@@ -256,6 +256,13 @@ class TestLinkAndFiles(Quiet):
         self.assertFalse(plan.ok)
         self.assertTrue(any('not linked to this PAM configuration' in e for e in plan.errors))
         self.assertEqual(plan.results[0].changes, [])          # nothing is compared for it
+        # an uncompared resource is neither "changed" nor "identical" (the user admin1 of the fixture is still compared)
+        self.assertFalse(plan.results[0].compared)
+        self.assertNotIn(plan.results[0], plan.identical)
+        self.assertEqual(len(plan.compared), len(plan.results) - 1)
+        from keepercommander.commands.pam_import import update_report as rep
+        self.assertIn(f'{len(plan.compared)} identical', rep.summary_line(plan))
+        self.assertIn('! M1  (not compared)', rep.format_text(plan, verbose=True))
 
     def test_a_linked_resource_is_fine(self):
         self.assertTrue(self.build().ok)

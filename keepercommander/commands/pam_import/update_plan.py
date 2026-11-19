@@ -50,6 +50,7 @@ class ItemResult:
     acl_holders: Dict[str, List[str]] = field(default_factory=dict)   # {'admin': [uids], 'launch': [uids]} now
     workflow_options: Any = None                     # PamWorkflowOptions to send (stored + written keys)
     meta_version: int = 0                            # version of the stored meta edge
+    compared: bool = True                            # False: not compared (record unreadable / not linked) - neither changed nor identical
 
     @property
     def record_changes(self) -> int:
@@ -79,8 +80,12 @@ class UpdatePlan:
         return [r for r in self.results if r.differs]
 
     @property
+    def compared(self) -> List[ItemResult]:
+        return [r for r in self.results if r.compared]
+
+    @property
     def identical(self) -> List[ItemResult]:
-        return [r for r in self.results if not r.differs]
+        return [r for r in self.results if r.compared and not r.differs]
 
     @property
     def record_changes(self) -> int:
@@ -461,6 +466,7 @@ def diff_items(items: List[ImportItem], state, *, config_uid: str, mode: str = u
         results.append(result)
         if record_state is None or not record_state.data:
             result.warnings.append(f'{item.ident}: the vault record could not be read; it is not compared')
+            result.compared = False
             continue
         for err in record_state.errors:
             result.warnings.append(f'{item.ident}: {err.get("message", err)}')
@@ -482,6 +488,7 @@ def diff_items(items: List[ImportItem], state, *, config_uid: str, mode: str = u
                 # another configuration (or to none). update never links or moves a resource.
                 errors_out.append(f'record {item.ident} is not linked to this PAM configuration (it belongs to '
                                   'another configuration or none); update does not link resources')
+                result.compared = False
                 continue
             _resource_graph_changes(item, result, state, config_uid, mode, resolve, graph_overwrite)
         else:
