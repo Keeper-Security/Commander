@@ -271,9 +271,9 @@ class ImportFolderSelectionTests(unittest.TestCase):
         def entity(endpoint):
             return secrets_by_id[int(endpoint.rstrip('/').rsplit('/', 1)[-1])]
 
-        def secret(endpoint):
-            secret_data = entity(endpoint)
-            return (secret_data, None) if secret_data else (None, ('N/A', 'Not found'))
+        def secret(secret_id):
+            secret_data = secrets_by_id.get(int(secret_id))
+            return (secret_data, None, None) if secret_data else (None, 'N/A', 'Not found')
 
         input_patch = mock.patch('builtins.input', side_effect=input_error,
                                  return_value=None if input_error is not None else choice)
@@ -286,7 +286,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
             auth = auth_cls.return_value
             auth.thycotic_search.side_effect = search
             auth.thycotic_entity.side_effect = entity
-            auth.thycotic_secret.side_effect = secret
+            auth.fetch_thycotic_secret.side_effect = secret
             kwargs = {} if filter_folder is None else {'filter_folder': filter_folder}
             try:
                 records = [x for x in ThycoticImporter().do_import('user@thycotic.example', **kwargs)

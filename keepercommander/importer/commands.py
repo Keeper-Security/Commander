@@ -153,6 +153,8 @@ import_parser.add_argument('--target-node', '--node', dest='target_node', action
                            help='node name or ID for CyberArk-provisioned users, teams, and roles (default: root node)')
 import_parser.add_argument('--skip', dest='skip', action='store', type=_cyberark_skip_arg,
                            help='CyberArk only: comma-separated targets to skip: team, role, user')
+import_parser.add_argument('--checkout-comment', dest='checkout_comment', action='store', default='Checking out for Keeper Import',
+                           help='Thycotic/Delinea only: comment to add for secret with auto comment policy')
 import_parser.add_argument(
     'name', type=str,
     help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '
