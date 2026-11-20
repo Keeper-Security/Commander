@@ -71,6 +71,10 @@ aliases['c'] = 'clear'
 aliases['h'] = 'history'
 aliases['q'] = 'quit'
 
+# These commands are handled by the interactive shell rather than by a vault
+# operation. They must not be exposed as grantable Service Mode commands.
+SHELL_ONLY_COMMANDS = frozenset({'clear', 'history', 'quit'})
+
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
@@ -110,6 +114,8 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     # Group commands by category and build display info
     categorized_commands = {}
     for cmd, description in all_commands.items():
+        if not show_shell and cmd in SHELL_ONLY_COMMANDS:
+            continue
         category = get_command_category(cmd)
         if category not in categorized_commands:
             categorized_commands[category] = []
@@ -386,7 +392,10 @@ def do_command(params, command_line):
         return False
 
     if command_line.lower() == 'h' or command_line.lower() == 'history':
-        display.formatted_history(stack)
+        if getattr(params, 'service_mode', False):
+            logging.error('Command history is not available in Service Mode')
+        else:
+            display.formatted_history(stack)
         return
 
     if command_line.lower().startswith('server'):
@@ -465,7 +474,12 @@ def do_command(params, command_line):
             return
 
     # Track commands history
-    if len(stack) == 0 or stack[0] != command_line:
+    # Service Mode serves multiple API keys in one process. Never place its raw
+    # command lines (which may contain credentials) in the interactive shell's
+    # process-global history buffer.
+    if (
+            not getattr(params, 'service_mode', False)
+            and (len(stack) == 0 or stack[0] != command_line)):
         stack.insert(0, command_line)
 
     if command_line.lower() == 'c' or command_line.lower() == 'cls' or command_line.lower() == 'clear':

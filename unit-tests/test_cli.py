@@ -1,7 +1,9 @@
 from collections import OrderedDict
 import sys
+from types import SimpleNamespace
 from unittest import TestCase, mock
 
+from keepercommander import cli
 from keepercommander.commands import base
 from keepercommander.cli import do_command, read_command_with_continuation
 from data_vault import get_connected_params
@@ -49,6 +51,22 @@ class TestCommandLineInterface(TestCase):
             mock_print_dev.return_value = 'test device info'
             do_command(params, 'this-device')
             mock_print_dev.assert_called()
+
+    def test_service_mode_does_not_read_or_write_global_history(self):
+        original_stack = cli.stack[:]
+        sentinel = 'record-add password=DO-NOT-DISCLOSE'
+        try:
+            cli.stack[:] = [sentinel]
+            params = SimpleNamespace(service_mode=True)
+
+            with mock.patch('keepercommander.cli.display.formatted_history') as mock_history:
+                do_command(params, 'history')
+                mock_history.assert_not_called()
+
+            do_command(params, 'clear')
+            self.assertEqual(cli.stack, [sentinel])
+        finally:
+            cli.stack[:] = original_stack
 
     def test_line_continuation(self):
         """Test that line continuation with backslash works correctly."""
