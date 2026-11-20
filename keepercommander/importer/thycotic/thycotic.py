@@ -55,7 +55,7 @@ DELINEA_RESTRICTED_SECRET_PERMISSION = 'View Restricted Secret'
 SECRET_ACCESS_PARAMS = (
     ('autoCheckout', 'true'),
     ('autoCheckIn', 'true'),
-    ('autoComment', 'Checking out'),
+    ('autoComment', 'Checking out for Keeper import.'),
 )
 
 
