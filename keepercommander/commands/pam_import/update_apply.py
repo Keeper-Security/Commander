@@ -25,8 +25,8 @@ together with it, so both are always sent together), and ``updateServices``. One
 The workflow is a separate router API. APPLY errors are collected per resource and the run goes on (plan: error
 policy); ``update`` is run again to finish.
 
-Record fields are written by ``update_records``; NOT written yet: attachment / script files and the rotation of users
-(reported as ``not_applied``).
+Record fields are written by ``update_records`` and attachment / script files by ``update_files``; NOT written yet:
+the rotation of users (reported as ``not_applied``).
 """
 
 from __future__ import annotations
@@ -36,16 +36,14 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import update_schema as us
 from .import_items import KIND_RESOURCE
-from .update_diff import KIND_GRAPH, KIND_RECORD, OP_ADD, OP_CHANGE
+from .update_diff import KIND_GRAPH, OP_ADD, OP_CHANGE
 from .update_plan import ItemResult, UpdatePlan
 from ...keeper_dag.crypto import encrypt_aes
 from ...proto import pam_pb2
 from ...utils import base64_url_decode
 
 NOT_APPLIED_ROTATION = 'rotation changes are not applied yet'
-NOT_APPLIED_FILES = 'attachment / script file changes are not applied yet'
 
 
 @dataclass
@@ -205,7 +203,4 @@ def apply_graph(params, plan: UpdatePlan, config_uid: str, *, send: Optional[Cal
                 except Exception as err:   # pylint: disable=broad-except
                     logging.debug('workflow failed for %s: %s', result.uid, err, exc_info=True)
                     report.errors.append(f'{label}: the workflow was not written: {_short(err)}')
-        if any(c.kind == KIND_RECORD and c.target is not None and c.target.kind == us.KIND_FILES
-               for c in result.changes):
-            report.not_applied.append(f'{label}: {NOT_APPLIED_FILES}')
     return report

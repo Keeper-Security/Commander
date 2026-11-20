@@ -406,7 +406,14 @@ def _script_notes(item: ImportItem, result: ItemResult, record_state, resolve) -
     differ, as warnings: update does not change them, because that would mean uploading the file again."""
     vault = _vault_scripts(record_state)
     for script in getattr(getattr(item.obj, 'scripts', None), 'scripts', None) or []:
-        name = os.path.basename(os.path.abspath(os.path.expanduser(script.file)))
+        full = os.path.abspath(os.path.expanduser(script.file))
+        name = os.path.basename(full)
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            continue
+        if not any(f.get('name') == name and f.get('size') == size for f in record_state.files or []):
+            continue                                  # another size or a new name: the file is uploaded with the JSON's settings
         current = next((v for v in vault if v['name'] == name), None)
         if current is None:
             continue
@@ -422,7 +429,29 @@ def _script_notes(item: ImportItem, result: ItemResult, record_state, resolve) -
                                    f'{len(current["record_refs"])}, JSON {len(wanted)}){extra} - {why}')
 
 
-def _file_changes(item: ImportItem, result: ItemResult, record_state) -> None:
+@dataclass
+class FileWork:
+    """What the writer needs to add or replace one attachment / script file (carried by the file Change)."""
+    kind: str                       # 'attachment' | 'script'
+    path: str                       # absolute path on this computer
+    name: str
+    size: int
+    old_uid: str = ''               # the file record that is replaced ('' for a new name)
+    script: Any = None              # a copy of the JSON's PamScriptObject with record_refs resolved (scripts only)
+
+
+def _json_script(item: ImportItem, full: str, resolve: Callable[[str], Optional[str]]):
+    """A copy of the JSON's script object for *full*, its additional credentials resolved to UIDs."""
+    for script in getattr(getattr(item.obj, 'scripts', None), 'scripts', None) or []:
+        if script.file and os.path.abspath(os.path.expanduser(script.file)) == full:
+            found = copy.copy(script)
+            found.record_refs = sorted(set(filter(None, (resolve(c) for c in script.additional_credentials or []))))
+            return found
+    return None
+
+
+def _file_changes(item: ImportItem, result: ItemResult, record_state,
+                  resolve: Optional[Callable[[str], Optional[str]]] = None) -> None:
     """Attachments and script files: compared by name and size (the vault keeps no content hash). A file with the
     same name and size is the same file; the same name with another size is replaced; a new name is added. Files
     are never removed, in either mode (they are separate file records)."""
@@ -443,12 +472,20 @@ def _file_changes(item: ImportItem, result: ItemResult, record_state) -> None:
                                    'record could not be read')
             continue
         target = us.Target(us.KIND_FILES, note=kind)
+        script = _json_script(item, full, resolve or (lambda ref: None)) if kind == 'script' else None
+        if script is not None:
+            unresolved = [c for c in script.additional_credentials or [] if not (resolve or (lambda r: None))(c)]
+            if unresolved:
+                result.warnings.append(f'{item.ident}: script "{name}": could not resolve additional credentials: '
+                                       f'{", ".join(unresolved)}')
+        work = FileWork(kind, full, name, size, same_name[0].get('record_uid') or '' if same_name else '', script)
         if same_name:
             old = same_name[0].get('size')
             result.changes.append(ud.Change(ud.KIND_RECORD, ud.OP_CHANGE, label, f'{old} bytes', f'{size} bytes',
-                                            target=target, note='file replaced'))
+                                            target=target, note='file replaced', data=work))
         else:
-            result.changes.append(ud.Change(ud.KIND_RECORD, ud.OP_ADD, label, None, f'{size} bytes', target=target))
+            result.changes.append(ud.Change(ud.KIND_RECORD, ud.OP_ADD, label, None, f'{size} bytes', target=target,
+                                            data=work))
 
 
 def diff_items(items: List[ImportItem], state, *, config_uid: str, mode: str = ud.MODE_MERGE,
@@ -483,7 +520,7 @@ def diff_items(items: List[ImportItem], state, *, config_uid: str, mode: str = u
         result.passwords_to_write = diff.passwords_to_write
         result.passwords_on_rotating = diff.passwords_on_rotating
         if not skip_files:
-            _file_changes(item, result, record_state)
+            _file_changes(item, result, record_state, resolve)
             _script_notes(item, result, record_state, resolve)
         if item.kind == KIND_RESOURCE:
             graph = state.graphs.get(PamGraphId.PAM.value)

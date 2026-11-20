@@ -96,6 +96,7 @@ class Change:
     secret: bool = False           # password group: written only with --include-passwords
     target: Optional[us.Target] = None
     note: str = ''
+    data: Any = field(default=None, compare=False, repr=False)    # what the writer needs (a file change: FileWork)
 
     def shown(self) -> Tuple[Any, Any]:
         """(old, new) as they may be printed."""

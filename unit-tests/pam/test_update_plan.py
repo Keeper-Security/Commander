@@ -285,6 +285,22 @@ class TestLinkAndFiles(Quiet):
         self.assertEqual(got, {(ud.OP_CHANGE, 'attachment "bigger.txt"', '20 bytes', '30 bytes'),
                                (ud.OP_ADD, 'script "new.txt"', None, '5 bytes')})
 
+    def test_a_file_change_carries_what_the_writer_needs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bigger = self._file(tmp, 'bigger.txt', 30)
+            new = self._file(tmp, 'run.sh', 5)
+            raw = machine_json(users=[], attachments=[bigger],
+                               scripts=[{'file': new, 'script_command': 'bash', 'additional_credentials': ['admin1']}])
+            files = [{'record_uid': 'OLDFILE', 'name': 'bigger.txt', 'size': 20}]
+            plan = self.build(raw, st=state(files=files))
+        by_path = {c.path: c.data for c in plan.results[0].changes}
+        replaced = by_path['attachment "bigger.txt"']
+        self.assertEqual((replaced.kind, replaced.name, replaced.size, replaced.old_uid), ('attachment', 'bigger.txt', 30, 'OLDFILE'))
+        self.assertTrue(os.path.isabs(replaced.path))
+        added = by_path['script "run.sh"']
+        self.assertEqual((added.kind, added.old_uid, added.script.script_command), ('script', '', 'bash'))
+        self.assertEqual(added.script.record_refs, [U1])                        # admin1 resolved to its UID
+
     def test_a_file_that_is_missing_on_this_computer_is_a_plan_error(self):
         plan = self.build(machine_json(users=[], attachments=['/no/such/file.bin']))
         self.assertTrue(any('not found on this computer' in e and 'no/such/file.bin' in e for e in plan.errors))
@@ -325,6 +341,16 @@ class TestLinkAndFiles(Quiet):
         self.assertIn('script "run.sh": command differs (vault "sh", JSON "bash")', text)
         self.assertIn('additional credentials differ (vault 0, JSON 1)', text)
         self.assertEqual(text.count('update does not upload a file again'), 2)
+
+    def test_a_replaced_script_gets_no_not_updated_warning(self):
+        """The file has another size, so it is uploaded WITH the command / credentials of the JSON: nothing is "not updated"."""
+        with tempfile.TemporaryDirectory() as tmp:
+            script = self._file(tmp, 'run.sh', 9)
+            raw = machine_json(users=[], scripts=[{'file': script, 'script_command': 'bash', 'additional_credentials': []}])
+            plan = self.build(raw, st=self._script_state('run.sh', command='sh', refs=[U1], size=5))
+        machine = plan.results[0]
+        self.assertEqual([c.path for c in machine.changes], ['script "run.sh"'])
+        self.assertEqual([w for w in machine.warnings if 'script' in w], [])
 
     def test_a_script_with_the_same_settings_is_silent(self):
         with tempfile.TemporaryDirectory() as tmp:

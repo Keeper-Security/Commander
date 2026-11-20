@@ -152,6 +152,105 @@ class TestApplyUploadsToRecord(unittest.TestCase):
         self.assertEqual(entry['recordRef'], ['UUUUUUUUUUUUUUUUUUUUUA'])
 
 
+class TestReplaceUploads(unittest.TestCase):
+    """`pam project update`: an upload that `replaces` a file record takes its place in the record."""
+
+    def _upload(self, kind, old, uid='NNNNNNNNNNNNNNNNNNNNNA', script=None):
+        from keepercommander.commands.pam_import.batch_attachments import _UploadSuccess
+        return _UploadSuccess(PendingUpload(PARENT_UID, '/a', 'a', 5, kind, script=script, replaces=old), uid, b'\x01' * 32)
+
+    def test_an_attachment_takes_the_position_of_the_old_file(self):
+        record = vault.TypedRecord()
+        record.fields.append(vault.TypedField.new_field('fileRef', ['AAA', 'OLD', 'CCC'], ''))
+        _apply_uploads_to_record(record, [self._upload('attachment', 'OLD')])
+        self.assertEqual(record.get_typed_field('fileRef').value, ['AAA', 'NNNNNNNNNNNNNNNNNNNNNA', 'CCC'])
+
+    def test_an_attachment_in_the_custom_section_is_replaced_there(self):
+        record = vault.TypedRecord()
+        record.custom.append(vault.TypedField.new_field('fileRef', ['OLD'], 'fileRef'))
+        _apply_uploads_to_record(record, [self._upload('attachment', 'OLD')])
+        self.assertEqual(record.custom[0].value, ['NNNNNNNNNNNNNNNNNNNNNA'])
+        self.assertEqual(record.fields, [])                                      # no second field is made
+
+    def test_a_replace_whose_old_file_is_gone_appends(self):
+        record = vault.TypedRecord()
+        record.fields.append(vault.TypedField.new_field('fileRef', ['AAA'], ''))
+        _apply_uploads_to_record(record, [self._upload('attachment', 'OLD')])
+        self.assertEqual(record.get_typed_field('fileRef').value, ['AAA', 'NNNNNNNNNNNNNNNNNNNNNA'])
+
+    def test_a_script_entry_is_swapped_in_place_with_the_command_of_the_json(self):
+        record = vault.TypedRecord()
+        record.fields.append(vault.TypedField.new_field('script', [
+            {'fileRef': 'KEEP', 'recordRef': [], 'command': 'sh'},
+            {'fileRef': 'OLD', 'recordRef': ['U0'], 'command': 'sh'}], 'rotationScripts'))
+        script = PamScriptObject()
+        script.script_command = 'bash'
+        script.record_refs = ['U1']
+        _apply_uploads_to_record(record, [self._upload('script', 'OLD', script=script)])
+        value = next(f for f in record.fields if f.type == 'script').value
+        self.assertEqual(value, [{'fileRef': 'KEEP', 'recordRef': [], 'command': 'sh'},
+                                 {'fileRef': 'NNNNNNNNNNNNNNNNNNNNNA', 'recordRef': ['U1'], 'command': 'bash'}])
+
+
+    def test_the_record_links_follow_the_swap(self):
+        """The new file record is linked to the record (KSM reaches files through the links), the replaced one is unlinked."""
+        import copy
+        from keepercommander.commands.pam_import.deferred_refs import _build_typed_record_update_pb
+        new_uid = 'NNNNNNNNNNNNNNNNNNNNNA'
+        old_uid = 'OOOOOOOOOOOOOOOOOOOOOA'
+        keep_uid = 'KKKKKKKKKKKKKKKKKKKKKA'
+        existing = vault.TypedRecord()
+        existing.record_uid = PARENT_UID
+        existing.type_name = 'pamMachine'
+        existing.record_key = b'\x07' * 32
+        existing.revision = 3
+        existing.fields.append(vault.TypedField.new_field('fileRef', [keep_uid, old_uid], ''))
+        record = copy.deepcopy(existing)
+        _apply_uploads_to_record(record, [self._upload('attachment', old_uid, uid=new_uid)])
+        record.linked_keys = {new_uid: b'\x05' * 32}
+        params = MagicMock()
+        params.enterprise_ec_key = None
+        pb = _build_typed_record_update_pb(params, record, existing)
+        self.assertEqual([utils.base64_url_encode(l.record_uid) for l in pb.record_links_add], [new_uid])
+        self.assertEqual([utils.base64_url_encode(u) for u in pb.record_links_remove], [old_uid])
+
+
+class TestPartialRun(unittest.TestCase):
+    """partial=True (update): the parent whose upload failed is left out, the others are patched."""
+
+    def test_the_other_parent_is_still_patched(self):
+        from keepercommander.commands.pam_import.batch_attachments import _UploadSuccess
+        mod = 'keepercommander.commands.pam_import.batch_attachments.'
+        other = 'OOOOOOOOOOOOOOOOOOOOOA'
+        params = MagicMock()
+        params.record_cache = {PARENT_UID: MagicMock(), other: MagicMock()}
+        pending = [PendingUpload(PARENT_UID, '/tmp/a.bin', 'a.bin', 5, 'attachment'),
+                   PendingUpload(other, '/tmp/b.bin', 'b.bin', 5, 'attachment')]
+        existing = vault.TypedRecord()
+        existing.record_uid = PARENT_UID
+        existing.record_key = b'\x07' * 32
+        ok = record_pb2.RecordModifyStatus()
+        ok.record_uid = utils.base64_url_decode(PARENT_UID)
+        ok.status = record_pb2.RS_SUCCESS
+        built = []
+
+        def fake_build(_params, record, _existing):
+            built.append(record)
+            return record_pb2.RecordUpdate()
+
+        puts = ([_UploadSuccess(pending[0], FILE_UID, b'\x03' * 32)], [(other, 'PUT upload failed')])
+        for partial, expect_built in ((True, 1), (False, 0)):
+            del built[:]
+            with patch(mod + '_files_add_chunk') as files_add, patch(mod + '_parallel_puts', return_value=puts), \
+                    patch('keepercommander.vault.KeeperRecord.load', return_value=existing), \
+                    patch(mod + '_build_typed_record_update_pb', side_effect=fake_build), \
+                    patch(mod + 'execute_records_update_with_retry', return_value=[ok]), patch(mod + 'api.sync_down'):
+                files_add.return_value = record_pb2.FilesAddResponse()
+                summary = execute_batch_attachments(params, pending, partial=partial)
+            self.assertEqual(summary.failures, [(other, 'PUT upload failed')])
+            self.assertEqual(len(built), expect_built, partial)
+
+
 class TestFilesAddIsScript(unittest.TestCase):
     """A rotation script file must be flagged is_script in files_add (as the sequential import does)."""
 

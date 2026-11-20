@@ -35,6 +35,7 @@ from .port_forward_validation import preflight_port_forward
 from .record_matcher import RecordIndex
 from .update_apply import apply_graph
 from .update_records import apply_records
+from .update_files import apply_files
 from . import update_diff as ud
 from . import update_plan as up
 from . import update_report as report
@@ -72,7 +73,9 @@ MODES (--mode)
                          - custom fields are acted on ONLY when the JSON item has a `custom` list
                          - known fields the JSON does not set are removed (never title, host, port, URL, secrets)
                          - graph settings are not removed yet (that rule is still to be decided)
-  Never touched in either mode: record uid / type / folder, locked, service_names, attachments.
+  Never touched in either mode: record uid / type / folder, locked, service_names. Attachment / script files are
+  compared by name and size: a new name is uploaded and added, the same name with another size is uploaded and
+  replaces the old reference; files are never removed.
 
 PASSWORDS (--include-passwords)
   By default passwords are skipped (rotation may have changed them in the vault). If some differ you get one
@@ -326,4 +329,5 @@ class PAMProjectUpdateCommand(Command):
         outcome.applied.extend(records.applied)
         outcome.errors.extend(records.errors)
         outcome.warnings.extend(records.warnings)
+        outcome.extend(apply_files(params, plan))           # last: it needs the record fields written and synced
         return outcome

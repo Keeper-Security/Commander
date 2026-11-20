@@ -48,6 +48,7 @@ class PendingUpload:
     size: int
     kind: UploadKind
     script: Optional[PamScriptObject] = None
+    replaces: str = ''          # `pam project update`: UID of the file record this upload takes the place of
 
 
 @dataclass
@@ -252,38 +253,51 @@ def _apply_uploads_to_record(
     record: vault.TypedRecord,
     uploads: List[_UploadSuccess],
 ) -> None:
-    attachment_uids: List[str] = []
+    # An upload that `replaces` a file record takes its place (same position); one without it is appended.
     for item in uploads:
-        if item.pending.kind == 'attachment':
-            attachment_uids.append(item.file_uid)
-
-    if attachment_uids:
+        if item.pending.kind != 'attachment':
+            continue
+        old = item.pending.replaces
+        field = next((f for f in list(record.fields) + list(record.custom)
+                      if f.type == 'fileRef' and old and old in (f.value or [])), None) if old else None
+        if field is not None:
+            values = list(field.value or [])
+            if item.file_uid not in values:
+                values[values.index(old)] = item.file_uid
+            else:
+                values.remove(old)
+            field.value = values
+            continue
         field = record.get_typed_field('fileRef')
         if not field:
             field = vault.TypedField.new_field('fileRef', [], '')
             record.fields.append(field)
         values = list(field.value or [])
-        for uid in attachment_uids:
-            if uid not in values:
-                values.append(uid)
+        if item.file_uid not in values:
+            values.append(item.file_uid)
         field.value = values
 
-    script_uploads = [u for u in uploads if u.pending.kind == 'script']
-    if script_uploads:
+    for item in (u for u in uploads if u.pending.kind == 'script'):
+        script = item.pending.script
+        entry = {
+            'fileRef': item.file_uid,
+            'recordRef': list(script.record_refs) if script and script.record_refs else [],
+            'command': script.script_command if script and script.script_command else '',
+        }
+        old = item.pending.replaces
+        holder = next((f for f in list(record.fields) + list(record.custom)
+                       if f.type == 'script' and isinstance(f.value, list)
+                       and any(isinstance(v, dict) and v.get('fileRef') == old for v in f.value)), None) if old else None
+        if holder is not None:
+            holder.value = [entry if isinstance(v, dict) and v.get('fileRef') == old else v for v in holder.value]
+            continue
         script_field = next((f for f in record.fields if f.type == 'script'), None)
         if not script_field:
             script_field = vault.TypedField.new_field('script', [], 'rotationScripts')
             record.fields.append(script_field)
         if not isinstance(script_field.value, list):
             script_field.value = []
-        for item in script_uploads:
-            script = item.pending.script
-            entry = {
-                'fileRef': item.file_uid,
-                'recordRef': list(script.record_refs) if script and script.record_refs else [],
-                'command': script.script_command if script and script.script_command else '',
-            }
-            script_field.value.append(entry)
+        script_field.value.append(entry)
 
 
 def execute_batch_attachments(
@@ -292,8 +306,13 @@ def execute_batch_attachments(
     *,
     record_keys: Optional[Dict[str, bytes]] = None,
     max_workers: int = UPLOAD_MAX_WORKERS,
+    partial: bool = False,
 ) -> BatchAttachmentSummary:
-    """Run global files_add (300/chunk), parallel PUTs, batch records_update."""
+    """Run global files_add (300/chunk), parallel PUTs, batch records_update.
+
+    *partial* (`pam project update`): a parent whose upload or patch failed is left out and reported in
+    ``summary.failures``; the other parents are patched anyway. Without it the first failure stops the whole run
+    before any record is patched (the import)."""
     summary = BatchAttachmentSummary()
     if not pending:
         return summary
@@ -338,7 +357,10 @@ def execute_batch_attachments(
             successes_by_parent.setdefault(item.pending.parent_uid, []).append(item)
 
     if summary.failures:
-        return summary
+        if not partial:
+            return summary
+        for parent_uid, _ in summary.failures:
+            successes_by_parent.pop(parent_uid, None)       # its files are uploaded but stay unreferenced
 
     if not successes_by_parent:
         return summary
@@ -393,7 +415,7 @@ def execute_batch_attachments(
             logging.error(f'Step 1c patch prepare failed for {parent_uid}: {err}', exc_info=True)
             summary.failures.append((parent_uid, str(err)))
 
-    if summary.failures:
+    if summary.failures and not partial:
         return summary
 
     if update_pbs:
@@ -413,7 +435,7 @@ def execute_batch_attachments(
             elif rs.status != record_pb2.RS_SUCCESS:
                 summary.failures.append((uid, imp_exp.record_status_to_str(rs.status)))
 
-    if summary.failures:
+    if summary.failures and not partial:
         return summary
 
     if nsf_parents:
