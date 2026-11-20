@@ -18,13 +18,20 @@ blob), and only ``enabled`` (``disabled``), ``schedule`` and ``pwdComplexity`` t
 service accounts is sent (absent = no change); the rotation type, configuration and resource stay as they are.
 
 Written here: the rotation of a ``general`` user (the credential belongs to a machine). NOT written yet, and reported
-as such: a user that has NO rotation in the vault yet (it needs the admin and the resource, like the import), and the
-``iam_user`` / ``scripts_only`` / ``saas`` profiles (the rotation cache does not say whether a rotation is a NOOP, and
-a wrong guess would change the profile; use ``pam rotation edit``).
+as such: the ``iam_user`` / ``scripts_only`` / ``saas`` profiles (the rotation cache does not say whether a rotation is
+a NOOP, and a wrong guess would change the profile; use ``pam rotation edit``).
 
 ``pam rotation edit`` also sets the "rotation allowed" flag of the machine when a user is enabled or disabled, through
-a direct graph write. update does not: that flag is ``pam_settings.options.rotation`` of the machine and is written
-with the machine's graph settings.
+a direct graph write. update does not for a user that has a rotation: that flag is ``pam_settings.options.rotation``
+of the machine and is written with the machine's graph settings.
+
+A user that has NO rotation yet (an ADD of the whole rotation) is written the way the import writes it: through the
+``pam rotation edit`` command (``batch_step2._apply_rotation`` arguments), because the user -> machine link
+(``belongs_to``) cannot be written through ``configure_resource``. It needs the machine and an administrative
+credential on the machine (already in the vault, or set by the graph settings of the same run); without them the
+rotation is reported as NOT WRITTEN YET. Like the import, the command sets the machine's "rotation allowed" flag from
+``enabled`` of that user. The admin is passed to the command, which uses it only when
+the machine has none.
 """
 
 from __future__ import annotations
@@ -34,14 +41,17 @@ import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from . import update_compare as uc
-from .update_apply import ApplyReport
+from .update_apply import ApplyReport, credential_args
 from .update_diff import KIND_GRAPH, OP_ADD, Change
-from .update_plan import ItemResult, UpdatePlan
+from .update_plan import ItemResult, RotationAdd, UpdatePlan
 from ... import crypto, utils
 from ...proto import router_pb2
 
-NOT_APPLIED_ADD = ('a rotation the user does not have yet is not written yet '
-                   '(use `pam project extend` or `pam rotation edit`)')
+NOT_APPLIED_NO_MACHINE = ('a rotation the user does not have yet is not written yet: the machine of the user '
+                          'is not known (use `pam rotation edit`)')
+NOT_APPLIED_NO_ADMIN = ('a rotation the user does not have yet is not written yet: the machine has no '
+                        'administrative credential (set administrative_credentials in the JSON of the machine, '
+                        'or use `pam rotation edit`)')
 NOT_APPLIED_PROFILE = 'the {profile} rotation profile is not written yet (use `pam rotation edit`)'
 
 
@@ -138,11 +148,49 @@ def _short(err: Exception) -> str:
     return str(err).strip().splitlines()[0][:300] if str(err).strip() else err.__class__.__name__
 
 
+def machine_admin(plan: UpdatePlan, add: RotationAdd) -> str:
+    """The admin the machine has after the graph writes of this run: the one the plan sets, else the one it has now."""
+    for result in plan.results:
+        if result.uid == add.machine_uid:
+            _, admin = credential_args(result)
+            if admin:
+                return admin
+    return add.admin_uid
+
+
+def add_arguments(result: ItemResult, add: RotationAdd, admin: str, config_uid: str) -> Dict[str, Any]:
+    """The ``pam rotation edit`` arguments of the import's ``_apply_rotation`` for the user of *result*."""
+    from .batch_step2 import _rotation_common_args       # pylint: disable=import-outside-toplevel,protected-access
+    args: Dict[str, Any] = {'force': True, 'config': config_uid, 'record_name': result.uid, 'admin': admin,
+                            'resource': add.machine_uid}
+    args.update(_rotation_common_args(result.item.obj))
+    return args
+
+
+def _default_add(params) -> Callable[[Dict[str, Any], str], Any]:
+    from ..discoveryrotation import PAMCreateRecordRotationCommand      # lazy: circular import at module level
+    from .rotation_throttle import RotationThrottle
+    from .throttle_retry import call_with_throttle_retry, rest_fail_on_throttle
+    command = PAMCreateRecordRotationCommand()
+    throttle = RotationThrottle()
+
+    def add(args, label):
+        throttle.before_call()
+        return call_with_throttle_retry(lambda: command.execute(params, silent=True, **args), max_retries=5,
+                                        label=f'rotation {label}', fail_on_throttle=rest_fail_on_throttle(params))
+    return add
+
+
 def apply_rotations(params, plan: UpdatePlan, *, send: Optional[Callable] = None,
-                    record_key: Optional[Callable[[str], Optional[bytes]]] = None) -> ApplyReport:
-    """Write the rotation changes of the existing users of *plan*; collect errors and go on."""
+                    record_key: Optional[Callable[[str], Optional[bytes]]] = None,
+                    add: Optional[Callable[[Dict[str, Any], str], Any]] = None) -> ApplyReport:
+    """Write the rotation changes of the users of *plan*; collect errors and go on.
+
+    *send* (``set_record_rotation``, a user that has a rotation) and *add* (``pam rotation edit``, a user that has
+    none) are the calls to the server (replaceable in tests)."""
     report = ApplyReport()
     send_request = send
+    add_rotation = add
     for result in plan.results:
         changes = rotation_changes(result)
         if not changes:
@@ -150,8 +198,26 @@ def apply_rotations(params, plan: UpdatePlan, *, send: Optional[Callable] = None
         label = result.title or result.uid
         rotation = getattr(result.item.obj, 'rotation_settings', None)
         profile = str(getattr(rotation, 'rotation', '') or '').lower()
-        if any(c.op == OP_ADD and c.path == 'rotation' for c in changes):
-            report.not_applied.append(f'{label}: {NOT_APPLIED_ADD}')
+        added = next((c for c in changes if c.op == OP_ADD and c.path == 'rotation'), None)
+        if added is not None:
+            if profile != 'general':
+                report.not_applied.append(f'{label}: ' + NOT_APPLIED_PROFILE.format(profile=profile or 'unknown'))
+                continue
+            info = added.data if isinstance(added.data, RotationAdd) else RotationAdd('')
+            if not info.machine_uid:
+                report.not_applied.append(f'{label}: {NOT_APPLIED_NO_MACHINE}')
+                continue
+            admin = machine_admin(plan, info)
+            if not admin:
+                report.not_applied.append(f'{label}: {NOT_APPLIED_NO_ADMIN}')
+                continue
+            try:
+                add_rotation = add_rotation or _default_add(params)
+                add_rotation(add_arguments(result, info, admin, plan.config_uid), label)
+                report.applied.append(f'{label}: rotation (added)')
+            except Exception as err:        # pylint: disable=broad-except
+                logging.debug('rotation add failed for %s: %s', result.uid, err, exc_info=True)
+                report.errors.append(f'{label}: rotation was not written: {_short(err)}')
             continue
         entry = (params.record_rotation_cache or {}).get(result.uid)
         if profile != 'general':

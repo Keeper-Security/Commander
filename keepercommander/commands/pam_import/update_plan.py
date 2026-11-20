@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import copy
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from . import update_compare as uc
@@ -350,6 +350,12 @@ def _user_rotation_changes(item: ImportItem, result: ItemResult, state, config_u
     changes, warnings = uc.diff_rotation(rotation, raw_rotation.keys(), record.rotation if record else None,
                                          expected_resource_uid=machine_uid or '', expected_config_uid=config_uid,
                                          title=item.title)
+    graph = state.graphs.get(PamGraphId.PAM.value)
+    admins = (uc.acl_holders(graph.edges_of_type(machine_uid, 'acl'), machine_uid)['admin']
+              if graph is not None and machine_uid else [])
+    # An added rotation carries what the writer needs: the machine and the admin the machine has now.
+    changes = [replace(c, data=RotationAdd(machine_uid or '', admins[0] if admins else ''))
+               if c.op == ud.OP_ADD and c.path == 'rotation' else c for c in changes]
     result.changes.extend(changes)
     result.warnings.extend(warnings)
 
@@ -427,6 +433,13 @@ def _script_notes(item: ImportItem, result: ItemResult, record_state, resolve) -
             extra = f' (could not resolve: {", ".join(unresolved)})' if unresolved else ''
             result.warnings.append(f'{item.ident}: script "{name}": additional credentials differ (vault '
                                    f'{len(current["record_refs"])}, JSON {len(wanted)}){extra} - {why}')
+
+
+@dataclass
+class RotationAdd:
+    """What the writer needs to add the rotation of a user that has none (carried by the ``rotation`` ADD change)."""
+    machine_uid: str                # the machine the user belongs to ('' = not known)
+    admin_uid: str = ''             # the administrative credential the machine has in the vault now ('' = none)
 
 
 @dataclass

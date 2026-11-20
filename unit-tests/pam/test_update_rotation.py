@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -36,12 +37,14 @@ def vault_rotation(entry):
             'pwd_complexity': dict(STORED_RULES)}
 
 
-def make_plan(rotation_json, entry=None, rotation_state='entry'):
+def make_plan(rotation_json, entry=None, rotation_state='entry', json_admin=True, **state_args):
     raw = tp.machine_json()
     raw['users'][0]['rotation_settings'] = rotation_json
+    if not json_admin:
+        raw['pam_settings']['connection'].pop('administrative_credentials')
     items, _ = load_items({'resources': [raw]}, tp.CFG)
     entry = entry or stored_entry()
-    state = tp.state(rotation=vault_rotation(entry) if rotation_state == 'entry' else rotation_state)
+    state = tp.state(rotation=vault_rotation(entry) if rotation_state == 'entry' else rotation_state, **state_args)
     return up.build_plan(items, tp.index(), state, config_uid=tp.CFG, scope_records=[]), entry
 
 
@@ -120,11 +123,63 @@ class TestApplyRotations(unittest.TestCase):
         self.assertIn('admin1: rotation was not written: RRC_BAD_REQUEST schedule in the past', report.errors[0])
         self.assertFalse(params.sync_data)
 
-    def test_a_user_without_a_rotation_is_not_written_yet(self):
-        report, send, _ = self.run_rotations(SAME, rotation_state=None)
-        self.assertEqual(send.requests, [])
-        self.assertEqual(len(report.not_applied), 1)
-        self.assertIn('a rotation the user does not have yet', report.not_applied[0])
+    def run_add(self, rotation_json, add=None, **plan_args):
+        plan, _ = make_plan(rotation_json, rotation_state=None, **plan_args)
+        send, added = Sender(), []
+        report = ur.apply_rotations(params_for(None), plan, send=send, record_key=lambda uid: KEY,
+                                    add=add or (lambda args, label: added.append((args, label))))
+        return report, send, added
+
+    def test_a_user_without_a_rotation_gets_it_through_the_rotation_command(self):
+        report, send, added = self.run_add(SAME)
+        self.assertEqual((report.errors, report.not_applied), ([], []))
+        self.assertEqual(report.applied, ['admin1: rotation (added)'])
+        self.assertEqual(send.requests, [])                    # not set_record_rotation: the command links the user
+        args, label = added[0]
+        self.assertEqual(label, 'admin1')
+        self.assertEqual((args['config'], args['record_name'], args['resource'], args['admin']),
+                         (tp.CFG, tp.U1, tp.M1, tp.U1))
+        self.assertTrue(args['force'])
+        self.assertEqual((args['enable'], args['schedule_cron_data'], args['pwd_complexity']),
+                         (True, ['0 30 18 * * ?'], '32,5,5,5,5'))
+
+    def test_the_admin_set_by_the_same_run_is_enough(self):
+        plan, _ = make_plan(SAME, rotation_state=None, acl_admin=None)    # the vault machine has no admin yet
+        added = []
+        report = ur.apply_rotations(params_for(None), plan, add=lambda args, label: added.append(args))
+        self.assertEqual((report.errors, report.not_applied), ([], []))
+        self.assertEqual(added[0]['admin'], tp.U1)
+
+    def test_a_machine_without_an_admin_is_not_written_yet(self):
+        report, _, added = self.run_add(SAME, json_admin=False, acl_admin=None)
+        self.assertEqual(added, [])
+        self.assertIn('the machine has no administrative credential', report.not_applied[0])
+
+    def test_an_unknown_machine_is_not_written_yet(self):
+        plan, _ = make_plan(SAME, rotation_state=None)
+        for result in plan.results:
+            result.changes[:] = [c if c.path != 'rotation' else replace(c, data=None) for c in result.changes]
+        added = []
+        report = ur.apply_rotations(params_for(None), plan, add=lambda args, label: added.append(args))
+        self.assertEqual(added, [])
+        self.assertIn('the machine of the user is not known', report.not_applied[0])
+
+    def test_a_rejected_add_is_an_error_for_that_user(self):
+        def fail(args, label):
+            raise RuntimeError('does not have admin credentials')
+        report, _, _ = self.run_add(SAME, add=fail)
+        self.assertEqual(report.applied, [])
+        self.assertIn('admin1: rotation was not written: does not have admin credentials', report.errors[0])
+
+    def test_an_added_rotation_of_another_profile_is_not_written_yet(self):
+        report, _, added = self.run_add(dict(SAME, rotation='iam_user'))
+        self.assertEqual(added, [])
+        self.assertIn('iam_user rotation profile is not written yet', report.not_applied[0])
+
+    def test_the_plan_names_the_machine_and_its_admin_in_the_added_rotation(self):
+        plan, _ = make_plan(SAME, rotation_state=None)
+        change = next(c for r in plan.results for c in ur.rotation_changes(r) if c.path == 'rotation')
+        self.assertEqual(change.data, up.RotationAdd(tp.M1, tp.U1))
 
     def test_other_profiles_are_not_written_yet(self):
         report, send, _ = self.run_rotations(dict(SAME, rotation='iam_user', enabled='off'),
