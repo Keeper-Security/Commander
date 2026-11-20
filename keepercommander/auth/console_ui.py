@@ -3,6 +3,8 @@ import getpass
 import logging
 import pyperclip
 import re
+import shutil
+import subprocess
 import sys
 import webbrowser
 from typing import Optional, List
@@ -41,6 +43,36 @@ def _fail_headless_auth(step):
             'Re-run Commander/Docker setup from this network, then restart the service.'
         )
     step.cancel()
+
+
+def _has_default_linux_browser() -> bool:
+    """Return whether Linux has a configured default browser.
+
+    On WSL, Python's ``webbrowser`` module can select ``xdg-open`` even when
+    no Windows/Linux browser integration is configured.  Calling
+    ``open_new_tab`` in that state can block indefinitely.  Keep the probe
+    bounded and treat an unavailable ``xdg-settings`` executable as unknown,
+    preserving the existing behavior on minimal non-WSL Linux installations.
+    """
+    if not sys.platform.startswith('linux'):
+        return True
+
+    xdg_settings = shutil.which('xdg-settings')
+    if not xdg_settings:
+        return True
+
+    try:
+        result = subprocess.run(
+            [xdg_settings, 'get', 'default-web-browser'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 class ConsoleLoginUi(login_steps.LoginUi):
@@ -331,13 +363,15 @@ class ConsoleLoginUi(login_steps.LoginUi):
             _fail_headless_auth(step)
             return
         try:
-            wb = webbrowser.get()
+            wb = None if not _has_default_linux_browser() else webbrowser.get()
             wrappers = set('xdg-open|gvfs-open|gnome-open|x-www-browser|www-browser'.split('|'))
             browsers = set(webbrowser._browsers if hasattr(webbrowser, '_browsers') else {})
             standalones = browsers - wrappers
-            if browsers and not standalones:     # show browser-launch option only if effectively supported
+            if not wb or (browsers and not standalones):
+                # Do not expose the option when only xdg-open is available
+                # without a configured default browser.
                 wb = None
-        except:
+        except Exception:
             wb = None
 
         sp_url = step.sso_login_url
