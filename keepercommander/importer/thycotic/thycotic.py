@@ -2343,12 +2343,14 @@ class ThycoticAuth:
         return rs.status_code, message
 
     def thycotic_secret(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
-        """Read a secret, adding checkout parameters only if the plain read fails.
+        """Read a secret, always sending checkout parameters.
+
+        The checkout parameters include autoCheckIn, so secrets with an
+        auto-checkout policy are checked back in after the read.
 
         Returns (secret, None) on success, or (None, (status, message)) describing
-        the last failed attempt.
+        the failure.
         """
-        secret = None
         checkout = with_secret_access_params(endpoint)
         logging.info('Reading "%s" with checkout parameters', checkout)
         try:

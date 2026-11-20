@@ -132,42 +132,36 @@ class TestThycoticSecret(unittest.TestCase):
         sleep.start()
         self.addCleanup(sleep.stop)
 
-    def test_plain_read_succeeds_without_checkout(self):
+    def test_secret_read_always_sends_checkout_params(self):
         with mock.patch(REQUESTS_GET, return_value=_response(200, '{"id": 42}', {'id': 42})) as get:
             secret, error = _auth().thycotic_secret('/v1/secrets/42')
         self.assertEqual(secret, {'id': 42})
         self.assertIsNone(error)
         self.assertEqual(get.call_count, 1)
-        self.assertTrue(get.call_args[0][0].endswith('/api/v1/secrets/42'))
-        self.assertNotIn('autoCheckout', get.call_args[0][0])
+        self.assertTrue(get.call_args[0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
 
-    def test_checkout_params_added_only_after_plain_read_fails(self):
-        denied = _response(400, '{"message": "Checkout required"}', {'message': 'Checkout required'})
+    def test_no_plain_read_is_attempted(self):
         ok = _response(200, '{"id": 42}', {'id': 42})
-        with mock.patch(REQUESTS_GET, side_effect=[denied, ok]) as get:
-            secret, error = _auth().thycotic_secret('/v1/secrets/42')
-        self.assertEqual(secret, {'id': 42})
-        self.assertIsNone(error)
-        first_url = get.call_args_list[0][0][0]
-        retry_url = get.call_args_list[1][0][0]
-        self.assertNotIn('autoCheckout', first_url)
-        self.assertTrue(retry_url.endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
+        with mock.patch(REQUESTS_GET, return_value=ok) as get:
+            _auth().thycotic_secret('/v1/secrets/42')
+        for call in get.call_args_list:
+            self.assertIn('autoCheckout=true', call[0][0])
+            self.assertIn('autoCheckIn=true', call[0][0])
 
-    def test_checkout_retry_keeps_existing_query_params(self):
-        denied = _response(400, '{"message": "Comment required"}', {'message': 'Comment required'})
+    def test_checkout_read_keeps_existing_query_params(self):
         ok = _response(200, '{"id": 42}', {'id': 42})
-        with mock.patch(REQUESTS_GET, side_effect=[denied, ok]) as get:
+        with mock.patch(REQUESTS_GET, return_value=ok) as get:
             _auth().thycotic_secret('/v1/secrets/42?includeInactive=true')
-        retry_url = get.call_args_list[1][0][0]
-        self.assertTrue(retry_url.endswith(f'/api/v1/secrets/42?includeInactive=true&{CHECKOUT_QUERY}'))
+        self.assertEqual(get.call_count, 1)
+        self.assertTrue(get.call_args[0][0].endswith(f'/api/v1/secrets/42?includeInactive=true&{CHECKOUT_QUERY}'))
 
-    def test_returns_error_when_both_reads_fail(self):
+    def test_returns_error_when_checkout_read_fails(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
             secret, error = _auth().thycotic_secret('/v1/secrets/42')
         self.assertIsNone(secret)
         self.assertEqual(error, (403, 'Access denied'))
-        self.assertEqual(get.call_count, 2)
+        self.assertEqual(get.call_count, 1)
 
     def test_error_uses_body_when_response_is_not_json(self):
         html = _response(502, '<html>Bad Gateway</html>', reason='Bad Gateway')
@@ -177,27 +171,23 @@ class TestThycoticSecret(unittest.TestCase):
         self.assertEqual(error, (502, '<html>Bad Gateway</html>'))
 
     def test_error_reports_network_failure(self):
-        with mock.patch(REQUESTS_GET, side_effect=requests.exceptions.ConnectionError('refused')):
+        with mock.patch(REQUESTS_GET, side_effect=requests.exceptions.ConnectionError('refused')) as get:
             secret, error = _auth().thycotic_secret('/v1/secrets/42')
         self.assertIsNone(secret)
         self.assertEqual(error, ('N/A', 'refused'))
+        # _read_entity retries once on a network error; both attempts use checkout params.
+        self.assertEqual(get.call_count, 2)
+        for call in get.call_args_list:
+            self.assertIn('autoCheckout=true', call[0][0])
 
     def test_error_reports_exception_on_checkout_read(self):
         auth = _auth()
-        with mock.patch.object(auth, 'ensure_auth_token', side_effect=Exception('refresh failed')):
+        with mock.patch.object(auth, 'ensure_auth_token', side_effect=Exception('refresh failed')), \
+                mock.patch(REQUESTS_GET) as get:
             secret, error = auth.thycotic_secret('/v1/secrets/42')
         self.assertIsNone(secret)
         self.assertEqual(error, ('N/A', 'refresh failed'))
-
-    def test_checkout_retry_runs_when_plain_read_raises(self):
-        auth = _auth()
-        ok = _response(200, '{"id": 42}', {'id': 42})
-        with mock.patch.object(auth, 'ensure_auth_token', side_effect=[Exception('refresh failed'), None]), \
-                mock.patch(REQUESTS_GET, return_value=ok) as get:
-            secret, _ = auth.thycotic_secret('/v1/secrets/42')
-        self.assertEqual(secret, {'id': 42})
-        self.assertEqual(get.call_count, 1)
-        self.assertIn('autoCheckout=true', get.call_args[0][0])
+        get.assert_not_called()
 
 
 class TestThycoticSecretGet(unittest.TestCase):
