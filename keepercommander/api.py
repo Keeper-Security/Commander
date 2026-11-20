@@ -302,8 +302,8 @@ def get_shared_folder(params, shared_folder_uid):   # type: (KeeperParams, str) 
     sf.load(cached_sf, cached_sf['revision'])
     return sf
 
-def get_share_objects(params):  # type: (KeeperParams) -> Dict[str, Dict[str, Any]]
-    if not params.share_object_cache:
+def get_share_objects(params, sync=False):  # type: (KeeperParams, Bool) -> Dict[str, Dict[str, Any]]
+    if not params.share_object_cache or sync is True:
         rq = GetShareObjectsRequest()
         rs = communicate_rest(params, rq, 'vault/get_share_objects', rs_type=GetShareObjectsResponse)
         users_by_type = dict(
