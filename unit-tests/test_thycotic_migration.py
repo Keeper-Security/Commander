@@ -173,18 +173,20 @@ class TestFetchThycoticSecret(unittest.TestCase):
 
     def test_plain_read_success_does_not_check_out(self):
         with mock.patch(REQUESTS_GET, return_value=_response(200, '{"id": 42}', {'id': 42})) as get:
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertEqual(secret, {'id': 42})
-        self.assertIsNone(error)
+        self.assertIsNone(status)
+        self.assertIsNone(message)
         self.assertEqual(get.call_count, 1)
         self.assertTrue(get.call_args[0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
 
     def test_retries_with_checkout_when_checkout_required(self):
         ok = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), ok]) as get:
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertEqual(secret, {'id': 42})
-        self.assertIsNone(error)
+        self.assertIsNone(status)
+        self.assertIsNone(message)
         self.assertEqual(get.call_count, 2)
         self.assertTrue(get.call_args_list[0][0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
         self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
@@ -192,38 +194,43 @@ class TestFetchThycoticSecret(unittest.TestCase):
     def test_returns_error_when_checkout_retry_fails(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), denied]):
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
-        self.assertEqual(error, (403, 'Access denied'))
+        self.assertEqual(status, 403)
+        self.assertEqual(message, 'Access denied')
 
     def test_other_400_error_is_not_retried(self):
         bad = _response(400, '{"message": "Bad request"}', {'message': 'Bad request'})
         with mock.patch(REQUESTS_GET, return_value=bad) as get:
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
-        self.assertEqual(error, (400, 'Bad request'))
+        self.assertEqual(status, 400)
+        self.assertEqual(message, 'Bad request')
         self.assertEqual(get.call_count, 1)
 
     def test_returns_error_when_plain_read_fails(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
-        self.assertEqual(error, (403, 'Access denied'))
+        self.assertEqual(status, 403)
+        self.assertEqual(message, 'Access denied')
         self.assertEqual(get.call_count, 1)
 
     def test_error_uses_body_when_response_is_not_json(self):
         html = _response(502, '<html>Bad Gateway</html>', reason='Bad Gateway')
         with mock.patch(REQUESTS_GET, return_value=html):
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
-        self.assertEqual(error, (502, '<html>Bad Gateway</html>'))
+        self.assertEqual(status, 502)
+        self.assertEqual(message, '<html>Bad Gateway</html>')
 
     def test_error_reports_network_failure(self):
         with mock.patch(REQUESTS_GET, side_effect=requests.exceptions.ConnectionError('refused')) as get:
-            secret, error = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
-        self.assertEqual(error, ('N/A', 'refused'))
+        self.assertEqual(status, 'N/A')
+        self.assertEqual(message, 'refused')
         # _read_entity retries once on a network error; no checkout retry follows.
         self.assertEqual(get.call_count, 2)
         for call in get.call_args_list:
@@ -233,9 +240,10 @@ class TestFetchThycoticSecret(unittest.TestCase):
         auth = _auth()
         with mock.patch.object(auth, 'ensure_auth_token', side_effect=Exception('refresh failed')), \
                 mock.patch(REQUESTS_GET) as get:
-            secret, error = auth.fetch_thycotic_secret(42)
+            secret, status, message = auth.fetch_thycotic_secret(42)
         self.assertIsNone(secret)
-        self.assertEqual(error, ('N/A', 'refresh failed'))
+        self.assertEqual(status, 'N/A')
+        self.assertEqual(message, 'refresh failed')
         get.assert_not_called()
 
 

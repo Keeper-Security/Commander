@@ -778,7 +778,9 @@ class ThycoticMixin:
     def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
         # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
         """Fetch one secret and its permission rows. Runs on a worker thread."""
-        secret = auth.fetch_thycotic_secret(secret_id)
+        secret, status, message = auth.fetch_thycotic_secret(secret_id)
+        if status is not None:
+            raise RuntimeError(f'failed to fetch secret ({status}): {message}')
         if not isinstance(secret, dict):
             return None, []
         secret['id'] = secret.get('id') or secret_id
@@ -1818,9 +1820,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         skipped_secrets = []
         skipped_fields = []
         for secret_id in secrets_ids:
-            secret, error = auth.fetch_thycotic_secret(secret_id)
+            secret, status, message = auth.fetch_thycotic_secret(secret_id)
             if secret is None:
-                status, message = error or ('N/A', 'Empty response')
                 skipped_secrets.append({'ID': secret_id, 'Status': status, 'Message': message})
                 continue
             secrets.append(secret)
@@ -2371,40 +2372,46 @@ class ThycoticAuth:
             message = (rs.text or '').strip().replace('\n', ' ')[:300] or rs.reason or ''
         return rs.status_code, message
 
-    def fetch_thycotic_secret(self, secret_id):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
-        """Read a secret, always sending checkout parameters.
+    def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
+        """Read a secret, checking it out only when the server requires it.
 
-        The checkout parameters include autoCheckIn, so secrets with an
-        auto-checkout policy are checked back in after the read.
+        The secret is first read without checkout (autoCheckout=false,
+        noAutoCheckout=true). If the server answers 400 API_SecretRequiresCheckout,
+        the read is retried with autoCheckout and autoCheckIn, so the secret is
+        checked back in after the read.
 
-        Returns (secret, None) on success, or (None, (status, message)) describing
-        the failure.
+        Returns (secret, None, None) on success, or (None, status, message)
+        describing the failure.
         """
         try:
-            secret, error = self._read_entity_with_checkout(secret_id, enabled=False)
-            if error.status_code == 400 and error.message == CHECKOUT_ERROR:
+            secret, status, message = self._read_entity_with_checkout(secret_id, enabled=False)
+            if status == 400 and message == CHECKOUT_ERROR:
                 return self._read_entity_with_checkout(secret_id, enabled=True)
-            return secret, error
+            return secret, status, message
         except Exception as e:
-            return None, ('N/A', str(e))
-    
+            return None, 'N/A', str(e)
 
     def _read_entity_with_checkout(self, secret_id, enabled=False):
+        # type: (Any, bool) -> Tuple[Optional[dict], Any, Optional[str]]
+        endpoint = f'/v1/secrets/{secret_id}'
         try:
-            endpoint = with_secret_access_params(f'/v1/secrets/{secret_id}', enabled)
+            endpoint = with_secret_access_params(endpoint, enabled)
             logging.info('Reading "%s" with checkout parameters', endpoint)
-            secret, error = self._read_entity(endpoint)
-            if secret is not None:
-                return secret, None
-            return None, error
+            return self._read_entity(endpoint)
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
-            return None, ('N/A', str(e))
+            return None, 'N/A', str(e)
 
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
-        return self._read_entity(endpoint)[0]
+        entity, _, _ = self._read_entity(endpoint)
+        return entity
 
-    def _read_entity(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
+    def _read_entity(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Any, Optional[str]]
+        """GET an API endpoint and parse the JSON body.
+
+        Returns (entity, None, None) on success, or (None, status, message)
+        describing the failure. status is 'N/A' when no HTTP response was received.
+        """
         self.ensure_auth_token()
         headers = {
             'Accept': 'application/json',
@@ -2420,15 +2427,16 @@ class ThycoticAuth:
             except Exception as e:
                 logging.warning('Another "%s" error: %s', endpoint, str(e))
                 time.sleep(10)
-                return None, ('N/A', str(e))
+                return None, 'N/A', str(e)
         if rs.status_code != 200:
             self._log_thycotic_response(endpoint, rs, f'returned {rs.status_code}')
-            return None, self.response_error(rs)
+            status, message = self.response_error(rs)
+            return None, status, message
         try:
-            return rs.json(), None
+            return rs.json(), None, None
         except ValueError as e:
             self._log_thycotic_response(endpoint, rs, f'invalid JSON: {e}')
-            return None, (rs.status_code, 'Response is not valid JSON')
+            return None, rs.status_code, 'Response is not valid JSON'
 
     def thycotic_get(self, endpoint):    # type: (str) -> requests.Response
         self.ensure_auth_token()
@@ -2452,8 +2460,9 @@ class ThycoticAuth:
         try:
             default_endpoint = with_secret_access_params(endpoint, enabled=False)
             logging.info('Reading "%s" with checkout parameters', default_endpoint)
-            response= self.thycotic_get(default_endpoint)
-            if response.status_code == 400 and response.message == CHECKOUT_ERROR:
+            response = self.thycotic_get(default_endpoint)
+            if response.status_code == 400 and self._json_message(response) == CHECKOUT_ERROR:
+                response.close()
                 updated_endpoint = with_secret_access_params(endpoint, enabled=True)
                 logging.info('Reading "%s" with checkout parameters', updated_endpoint)
                 response = self.thycotic_get(updated_endpoint)
