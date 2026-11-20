@@ -36,6 +36,7 @@ from .record_matcher import RecordIndex
 from .update_apply import apply_graph
 from .update_records import apply_records
 from .update_files import apply_files
+from .update_rotation import apply_rotations
 from . import update_diff as ud
 from . import update_plan as up
 from . import update_report as report
@@ -329,5 +330,6 @@ class PAMProjectUpdateCommand(Command):
         outcome.applied.extend(records.applied)
         outcome.errors.extend(records.errors)
         outcome.warnings.extend(records.warnings)
-        outcome.extend(apply_files(params, plan))           # last: it needs the record fields written and synced
+        outcome.extend(apply_files(params, plan))           # it needs the record fields written and synced
+        outcome.extend(apply_rotations(params, plan))
         return outcome

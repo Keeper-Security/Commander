@@ -263,9 +263,15 @@ def diff_rotation(rotation: PamRotationSettingsObject, explicit: Iterable[str], 
                    'password_complexity': rotation.password_complexity}
         return [_graph(OP_ADD, 'rotation', None, {k: v for k, v in summary.items() if v}, comparator='rotation')], []
 
-    expected_resource = expected_resource_uid if rotation.rotation == 'general' else expected_config_uid
+    # A general rotation belongs to its machine. The other profiles have no machine: the vault stores an EMPTY resource
+    # for a NOOP (scripts_only) rotation (seen on QA 2026-11-19) and the configuration for an IAM one, so both mean "no
+    # machine"; only a machine UID there is a real mismatch.
     mismatch = []
-    if expected_resource and current.get('resource_uid') != expected_resource:
+    stored_resource = current.get('resource_uid') or ''
+    if rotation.rotation == 'general':
+        if expected_resource_uid and stored_resource != expected_resource_uid:
+            mismatch.append('owner (resource)')
+    elif stored_resource not in ('', expected_config_uid):
         mismatch.append('owner (resource)')
     if expected_config_uid and current.get('configuration_uid') != expected_config_uid:
         mismatch.append('configuration')

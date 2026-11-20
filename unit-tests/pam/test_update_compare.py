@@ -207,6 +207,29 @@ class TestRotation(unittest.TestCase):
         self.assertEqual(uc.diff_rotation(obj, explicit, cur, expected_resource_uid='MACH', expected_config_uid='CFG'),
                          ([], []))
 
+    def test_a_noop_rotation_has_an_empty_resource_in_the_vault(self):
+        """QA 2026-11-19: a scripts_only rotation read back with an empty resource was reported as an owner mismatch."""
+        obj, explicit = rotation(rotation='scripts_only')
+        for resource in ('', 'CFG'):
+            cur = stored(resource_uid=resource)
+            self.assertEqual(uc.diff_rotation(obj, explicit, cur, expected_resource_uid='MACH', expected_config_uid='CFG'),
+                             ([], []), resource)
+        changes, warnings = uc.diff_rotation(obj, {'rotation', 'enabled'}, stored(resource_uid='', disabled=True),
+                                             expected_resource_uid='MACH', expected_config_uid='CFG')
+        self.assertEqual(([c.path for c in changes], warnings), (['rotation.enabled'], []))
+
+    def test_a_machine_rotation_where_the_json_says_noop_is_still_a_mismatch(self):
+        obj, explicit = rotation(rotation='scripts_only')
+        changes, warnings = uc.diff_rotation(obj, explicit, stored(resource_uid='MACH'),
+                                             expected_resource_uid='MACH', expected_config_uid='CFG', title='u')
+        self.assertEqual(changes, [])
+        self.assertIn('owner (resource)', warnings[0])
+
+    def test_a_general_json_on_an_empty_resource_is_still_a_mismatch(self):
+        changes, warnings = self.diff(stored(resource_uid=''), enabled='off')
+        self.assertEqual(changes, [])
+        self.assertIn('owner (resource)', warnings[0])
+
     def test_no_rotation_in_the_vault_is_one_add(self):
         changes, warnings = self.diff(None)
         change, = changes

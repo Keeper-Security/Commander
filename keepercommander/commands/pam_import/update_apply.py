@@ -25,8 +25,8 @@ together with it, so both are always sent together), and ``updateServices``. One
 The workflow is a separate router API. APPLY errors are collected per resource and the run goes on (plan: error
 policy); ``update`` is run again to finish.
 
-Record fields are written by ``update_records`` and attachment / script files by ``update_files``; NOT written yet:
-the rotation of users (reported as ``not_applied``).
+Record fields are written by ``update_records``, attachment / script files by ``update_files`` and the rotation of
+users by ``update_rotation``.
 """
 
 from __future__ import annotations
@@ -43,7 +43,6 @@ from ...keeper_dag.crypto import encrypt_aes
 from ...proto import pam_pb2
 from ...utils import base64_url_decode
 
-NOT_APPLIED_ROTATION = 'rotation changes are not applied yet'
 
 
 @dataclass
@@ -180,10 +179,7 @@ def apply_graph(params, plan: UpdatePlan, config_uid: str, *, send: Optional[Cal
             continue
         label = result.title or result.uid
         graph_changes = [c for c in result.changes if c.kind == KIND_GRAPH]
-        if result.item.kind != KIND_RESOURCE:
-            if any(_comparator(c) == 'rotation' for c in graph_changes):
-                report.not_applied.append(f'{label}: {NOT_APPLIED_ROTATION}')
-        else:
+        if result.item.kind == KIND_RESOURCE:        # the rotation of a user is written by update_rotation
             try:
                 rq = build_resource_request(params, config_uid, result)
             except ValueError as err:

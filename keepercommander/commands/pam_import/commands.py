@@ -24,7 +24,7 @@ class PAMProjectCommand(GroupCommand):
         self.register_command("export", PAMProjectExportCommand(), "Export PAM project to JSON for re-import", "x")
         self.register_command("extend", PAMProjectExtendCommand(), "Extend PAM Project by importing additional data", "e")
         self.register_command("update", PAMProjectUpdateCommand(),
-                              "Update existing PAM records from an import JSON (preview: -d / --estimate only)", "u")
+                              "Update existing PAM records from an import JSON", "u")
         self.register_command("kcm-import", PAMProjectKCMImportCommand(), "Import from KCM/Guacamole database", "k")
         self.register_command("kcm-cleanup", PAMProjectKCMCleanupCommand(), "Remove a KCM-imported project", "K")
         self.register_command("cyberark-import", CyberArkPAMImportCommand(), "Import CyberArk accounts as PAM records", "ci")
