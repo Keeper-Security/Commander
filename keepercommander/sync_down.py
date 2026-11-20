@@ -107,6 +107,7 @@ def _sync_down_impl(params, record_types=False):   # type: (KeeperParams, bool) 
             params.record_rotation_cache.clear()
             params.meta_data_cache.clear()
             params.shared_folder_cache.clear()
+            params.share_object_cache.clear()
             params.team_cache.clear()
             params.available_team_cache = None
             params.subfolder_cache.clear()

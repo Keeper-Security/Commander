@@ -1985,7 +1985,7 @@ class RecordListTeamCommand(Command):
         show_all_teams = kwargs.get('all')
         show_team_users = kwargs.get('verbose') or kwargs.get('very_verbose', False)
         fetch_missing_users = kwargs.get('very_verbose', False)
-        share_targets = api.get_share_objects(params)
+        share_targets = api.get_share_objects(params, True)
         teams = share_targets.get('teams', {})
         orgs = share_targets.get('enterprises', {})
         enterprise_id = params.license.get('enterprise_id') if params.license else None
