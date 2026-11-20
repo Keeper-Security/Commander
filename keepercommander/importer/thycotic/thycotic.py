@@ -2349,21 +2349,13 @@ class ThycoticAuth:
         the last failed attempt.
         """
         secret = None
-        first_error = None
-        try:
-            secret, first_error = self._read_entity(endpoint)
-        except Exception as e:
-            logging.info('"%s" error: %s', endpoint, str(e))
-            first_error = ('N/A', str(e))
-        if secret is not None:
-            return secret, None
         checkout = with_secret_access_params(endpoint)
         logging.info('Reading "%s" with checkout parameters', checkout)
         try:
             secret, error = self._read_entity(checkout)
             if secret is not None:
                 return secret, None
-            return None, error or first_error
+            return None, error
         except Exception as e:
             logging.info('"%s" error: %s', checkout, str(e))
             return None, ('N/A', str(e))
