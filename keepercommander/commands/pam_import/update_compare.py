@@ -246,14 +246,67 @@ def _complexity_wanted(text: str) -> Optional[Tuple[int, ...]]:
     return nums if len(nums) == 5 else None
 
 
+def vault_rotation_profile(acl_edges: Iterable[Any], user_uid: str, config_uid: str, machine_uid: str = '') -> str:
+    """The profile of a rotation, from the ACL edges of the PAM graph (the rotation cache has no NOOP flag):
+
+    * ``user -> PAM configuration``: ``iam_user`` (``is_iam_user``), ``saas`` (NOOP + a SaaS record list),
+      ``scripts_only`` (NOOP);
+    * ``iam_saas``: ``is_iam_user`` AND a SaaS record list on that edge, and ``general_saas``: a SaaS record list on the
+      ``user -> machine`` edge. These are the "IAM User + SaaS Account" / "General + SaaS Account" states the Web Vault
+      calls UNSUPPORTED (``UnsupportedRotationProfile`` in ``vault/js/lib/types/record-rotation.ts``; it refuses to save
+      them, ``PasswordRotationSettings.tsx``: "Please select a supported rotation profile"). They are never rewritten
+      here: a request without ``saasConfiguration`` could drop the SaaS record;
+    * '' = the edges say nothing (a ``general`` rotation, or no rotation)."""
+    acl_edges = list(acl_edges)             # read twice below
+    for edge in acl_edges:
+        if (_edge_attr(edge, 'tail') != user_uid or _edge_attr(edge, 'head') != config_uid
+                or str(_edge_attr(edge, 'edge_type') or 'acl') != 'acl'):
+            continue
+        contents = _edge_attr(edge, 'contents') or {}
+        settings = contents.get('rotation_settings') or {}
+        if contents.get('is_iam_user'):
+            return 'iam_saas' if settings.get('saas_record_uid_list') else 'iam_user'
+        if settings.get('noop'):
+            return 'saas' if settings.get('saas_record_uid_list') else 'scripts_only'
+    if machine_uid:
+        for edge in acl_edges:
+            if (_edge_attr(edge, 'tail') == user_uid and _edge_attr(edge, 'head') == machine_uid
+                    and str(_edge_attr(edge, 'edge_type') or 'acl') == 'acl'
+                    and ((_edge_attr(edge, 'contents') or {}).get('rotation_settings') or {}).get('saas_record_uid_list')):
+                return 'general_saas'
+    return ''
+
+
+def vault_saas_uids(acl_edges: Iterable[Any], user_uid: str, config_uid: str) -> List[str]:
+    """The SaaS configuration record(s) of a ``saas`` rotation: ``rotation_settings.saas_record_uid_list`` of the same
+    ``user -> PAM configuration`` ACL edge (the router stores the ``saasConfiguration`` of the request there).
+
+    A rotation has exactly ONE SaaS record in every supported client, so the writer refuses a list of any other length
+    (see ``update_rotation``): the Web Vault sends one ``saasConfiguration`` from one ``saasConfigUid``
+    (``vault/js/lib/record-rotation.ts``), its profile editor has a single SaaS Configuration dropdown
+    (``PasswordRotationSettings.tsx``), and it reads only ``saas_record_uid_list[0]`` (``lib/pam/dag-pam-link.ts``)."""
+    for edge in acl_edges:
+        if (_edge_attr(edge, 'tail') != user_uid or _edge_attr(edge, 'head') != config_uid
+                or str(_edge_attr(edge, 'edge_type') or 'acl') != 'acl'):
+            continue
+        settings = (_edge_attr(edge, 'contents') or {}).get('rotation_settings') or {}
+        if settings.get('noop') and settings.get('saas_record_uid_list'):
+            return [str(uid) for uid in settings['saas_record_uid_list']]
+    return []
+
+
 def diff_rotation(rotation: PamRotationSettingsObject, explicit: Iterable[str], current: Optional[Dict[str, Any]], *,
-                  expected_resource_uid: str = '', expected_config_uid: str = '', title: str = ''
-                  ) -> Tuple[List[Change], List[str]]:
+                  expected_resource_uid: str = '', expected_config_uid: str = '', title: str = '',
+                  vault_profile: Optional[str] = None, json_saas_uid: str = '',
+                  vault_saas: Optional[List[str]] = None) -> Tuple[List[Change], List[str]]:
     """Rotation of one pamUser. *explicit* = the keys written under ``rotation_settings``; *current* is
     ``record_state.rotation_info`` (None = the user has no rotation).
 
     The rotation TYPE (who owns the credential: ``general`` -> the machine, the others -> the configuration) and the
-    configuration are identity: a mismatch is a warning and the user's rotation is left as it is.
+    configuration are identity: a mismatch is a warning and the user's rotation is left as it is. *vault_profile* is
+    ``vault_rotation_profile`` (None = not known): when known, a non-general JSON profile must be the vault's.
+    *json_saas_uid* / *vault_saas*: the SaaS record the JSON names (resolved) and the one(s) the vault rotation uses.
+    Which SaaS record a rotation uses is identity too: update never moves it, so a different one is a warning.
     """
     explicit = set(explicit)
     who = f'"{title}": ' if title else ''
@@ -275,6 +328,15 @@ def diff_rotation(rotation: PamRotationSettingsObject, explicit: Iterable[str], 
         mismatch.append('owner (resource)')
     if expected_config_uid and current.get('configuration_uid') != expected_config_uid:
         mismatch.append('configuration')
+    if vault_profile is not None and (
+            (rotation.rotation != 'general' and vault_profile != rotation.rotation)
+            or (rotation.rotation == 'general' and vault_profile in ('iam_saas', 'general_saas'))):
+        # a general JSON is checked only against the SaaS combinations (any other profile is caught by the owner check)
+        mismatch.append(f'type (the vault has "{vault_profile or "general"}")')
+    if (rotation.rotation == 'saas' and vault_profile == 'saas' and json_saas_uid and vault_saas
+            and json_saas_uid not in vault_saas):
+        mismatch.append(f'SaaS configuration (the vault rotation uses "{", ".join(vault_saas)}", the JSON names '
+                        f'"{json_saas_uid}")')
     if mismatch:
         return [], [f'{who}rotation {" and ".join(mismatch)} differs from the JSON (type "{rotation.rotation}"); '
                     'update does not move a rotation - left as it is (use `pam rotation edit`)']

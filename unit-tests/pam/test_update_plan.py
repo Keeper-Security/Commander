@@ -55,12 +55,20 @@ def index():
                         MatchRecord(uid=U1, title='admin1', record_type='pamUser', login='root')])
 
 
-def state(user=None, meta=META, rotation=IDLE_ROTATION, acl_admin=U1, linked=True, files=()):
+def state(user=None, meta=META, rotation=IDLE_ROTATION, acl_admin=U1, linked=True, files=(), user_acl=None,
+          user_machine_acl=None):
     edges = [CurrentEdge(M1, CFG, 'link', None, None)] if linked else []
     if meta is not None:
         edges.append(CurrentEdge(M1, M1, 'data', 'meta', meta))
     if acl_admin:
-        edges.append(CurrentEdge(acl_admin, M1, 'acl', None, {'is_admin': True}))
+        contents = {'is_admin': True}
+        if acl_admin == U1 and user_machine_acl:      # the same user -> machine edge also carries the rotation settings
+            contents.update(user_machine_acl)
+        edges.append(CurrentEdge(acl_admin, M1, 'acl', None, contents))
+    elif user_machine_acl is not None:
+        edges.append(CurrentEdge(U1, M1, 'acl', None, user_machine_acl))
+    if user_acl is not None:        # the ACL edge user -> PAM configuration (IAM / NOOP / SaaS rotations)
+        edges.append(CurrentEdge(U1, CFG, 'acl', None, user_acl))
     graph = GraphState(PamGraphId.PAM.value, edges)
     return VaultState(
         config_uid=CFG, graphs={PamGraphId.PAM.value: graph},

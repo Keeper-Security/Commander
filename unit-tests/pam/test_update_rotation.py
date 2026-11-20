@@ -15,6 +15,7 @@ from keepercommander import crypto, utils  # noqa: E402
 from keepercommander.commands.pam_import import update_plan as up  # noqa: E402
 from keepercommander.commands.pam_import import update_rotation as ur  # noqa: E402
 from keepercommander.commands.pam_import.import_items import load_items  # noqa: E402
+from keepercommander.commands.pam_import.record_matcher import MatchRecord, RecordIndex  # noqa: E402
 
 import test_update_plan as tp  # noqa: E402
 
@@ -171,21 +172,175 @@ class TestApplyRotations(unittest.TestCase):
         self.assertEqual(report.applied, [])
         self.assertIn('admin1: rotation was not written: does not have admin credentials', report.errors[0])
 
-    def test_an_added_rotation_of_another_profile_is_not_written_yet(self):
+    def test_an_added_profile_rotation_of_a_nested_user_is_not_written_yet(self):
         report, _, added = self.run_add(dict(SAME, rotation='iam_user'))
         self.assertEqual(added, [])
-        self.assertIn('iam_user rotation profile is not written yet', report.not_applied[0])
+        self.assertIn('must be a top-level user', report.not_applied[0])
+        self.assertIn('top-level "pam_data.users"', report.not_applied[0])          # tells what to do about it
 
     def test_the_plan_names_the_machine_and_its_admin_in_the_added_rotation(self):
         plan, _ = make_plan(SAME, rotation_state=None)
         change = next(c for r in plan.results for c in ur.rotation_changes(r) if c.path == 'rotation')
         self.assertEqual(change.data, up.RotationAdd(tp.M1, tp.U1))
 
-    def test_other_profiles_are_not_written_yet(self):
-        report, send, _ = self.run_rotations(dict(SAME, rotation='iam_user', enabled='off'),
-                                             entry=stored_entry(resource_uid=tp.CFG))
+    # ---- iam_user / scripts_only / saas: top-level users, the profile of the vault rotation comes from the graph ----
+    IAM_ACL = {'is_iam_user': True, 'belongs_to': True}
+    NOOP_ACL = {'rotation_settings': {'noop': True}}
+    SAAS_ACL = {'rotation_settings': {'noop': True, 'saas_record_uid_list': ['S' * 22]}}
+
+    @staticmethod
+    def profile_json(profile, **over):
+        data = {'rotation': profile, 'enabled': 'on', 'schedule': {'type': 'cron', 'cron': '0 30 18 * * ?'},
+                'password_complexity': '32,5,5,5,5'}
+        if profile == 'saas':
+            data['saas_config'] = 'saas-cfg'
+        data.update(over)
+        return data
+
+    def global_plan(self, rotation_json, entry=None, rotation_state='entry', saas_records=(), **state_args):
+        user = {'type': 'pamUser', 'title': 'admin1', 'login': 'root', 'password': 'pw',
+                'rotation_settings': rotation_json}
+        items, _ = load_items({'users': [user]}, tp.CFG)
+        entry = entry or stored_entry(resource_uid='')
+        state = tp.state(rotation=vault_rotation(entry) if rotation_state == 'entry' else rotation_state, **state_args)
+        index = tp.index()
+        if saas_records:                # SaaS configuration records of the vault: (uid, title)
+            index = RecordIndex([MatchRecord(uid=tp.M1, title='M1', record_type='pamMachine'),
+                                 MatchRecord(uid=tp.U1, title='admin1', record_type='pamUser', login='root')]
+                                + [MatchRecord(uid=uid, title=name, record_type='saasConfiguration')
+                                   for uid, name in saas_records])
+        return up.build_plan(items, index, state, config_uid=tp.CFG, scope_records=[]), entry
+
+    def run_global(self, rotation_json, entry=None, rotation_state='entry', **state_args):
+        plan, entry = self.global_plan(rotation_json, entry, rotation_state, **state_args)
+        send, added = Sender(), []
+        report = ur.apply_rotations(params_for(entry if rotation_state == 'entry' else None), plan, send=send,
+                                    record_key=lambda uid: KEY, add=lambda args, label: added.append(args))
+        return plan, report, send, added
+
+    def test_an_iam_user_change_keeps_the_profile(self):
+        plan, report, send, _ = self.run_global(self.profile_json('iam_user', enabled='off'),
+                                                entry=stored_entry(resource_uid=tp.CFG), user_acl=self.IAM_ACL)
+        self.assertEqual((report.errors, report.not_applied), ([], []))
+        self.assertEqual(plan.results[0].vault_rotation_profile, 'iam_user')
+        rq = send.requests[0]
+        self.assertEqual((bytes(rq.resourceUid), rq.noop, rq.disabled), (b'', False, True))   # no machine, not NOOP
+        self.assertEqual(bytes(rq.configurationUid), utils.base64_url_decode(tp.CFG))
+        self.assertEqual(rq.revision, 7)
+
+    def test_a_scripts_only_change_is_sent_as_noop(self):
+        _, report, send, _ = self.run_global(self.profile_json('scripts_only', enabled='off'),
+                                             entry=stored_entry(resource_uid=''), user_acl=self.NOOP_ACL)
+        self.assertEqual((report.errors, report.not_applied), ([], []))
+        self.assertEqual(report.applied, ['admin1: rotation (1)'])
+        rq = send.requests[0]
+        self.assertEqual((bytes(rq.resourceUid), rq.noop, rq.disabled), (b'', True, True))
+        entry = stored_entry()
+        self.assertEqual(rq.schedule, entry['schedule'])                       # what did not change is sent back as stored
+
+    def test_a_json_profile_that_is_not_the_vault_profile_is_a_warning_and_nothing_is_written(self):
+        for json_profile, acl in (('scripts_only', self.SAAS_ACL), ('iam_user', self.NOOP_ACL),
+                                  ('scripts_only', None), ('iam_user', self.SAAS_ACL)):
+            plan, report, send, _ = self.run_global(self.profile_json(json_profile, enabled='off'),
+                                                    entry=stored_entry(resource_uid=''), user_acl=acl)
+            self.assertEqual((send.requests, report.applied, report.not_applied), ([], [], []), (json_profile, acl))
+            self.assertTrue(any('rotation type' in w for w in plan.results[0].warnings), plan.results[0].warnings)
+
+    def test_a_saas_change_names_the_saas_record_again(self):
+        plan, report, send, _ = self.run_global(self.profile_json('saas', enabled='off'),
+                                                entry=stored_entry(resource_uid=''), user_acl=self.SAAS_ACL)
+        self.assertEqual((report.errors, report.not_applied), ([], []))
+        self.assertEqual(report.applied, ['admin1: rotation (1)'])
+        self.assertEqual(plan.results[0].vault_saas_uids, ['S' * 22])
+        rq = send.requests[0]
+        self.assertEqual((bytes(rq.resourceUid), rq.noop, rq.disabled), (b'', True, True))
+        self.assertEqual(bytes(rq.saasConfiguration), utils.base64_url_decode('S' * 22))   # else the router drops it
+        self.assertEqual(rq.revision, 7)
+
+    def test_the_saas_record_the_json_names_must_be_the_one_the_vault_rotation_uses(self):
+        same = ('S' * 22, 'saas-cfg')
+        _, report, send, _ = self.run_global(self.profile_json('saas', enabled='off'), entry=stored_entry(resource_uid=''),
+                                             user_acl=self.SAAS_ACL, saas_records=[same])
+        self.assertEqual((report.errors, report.not_applied, len(send.requests)), ([], [], 1))     # same record: written
+        # another SaaS record: identity mismatch - a warning, nothing written (update never moves a rotation)
+        plan, report, send, _ = self.run_global(self.profile_json('saas', enabled='off'), entry=stored_entry(resource_uid=''),
+                                                user_acl=self.SAAS_ACL, saas_records=[('T' * 22, 'saas-cfg')])
+        self.assertEqual((send.requests, report.applied, report.not_applied), ([], [], []))
+        self.assertTrue(any('SaaS configuration' in w and 'T' * 22 in w and 'S' * 22 in w for w in plan.results[0].warnings),
+                        plan.results[0].warnings)
+        # a reference update cannot find: the rotation is still written, and the warning says the record was not compared
+        plan, report, send, _ = self.run_global(self.profile_json('saas', enabled='off'), entry=stored_entry(resource_uid=''),
+                                                user_acl=self.SAAS_ACL)
+        self.assertEqual(len(send.requests), 1)
+        self.assertTrue(any('not compared' in w for w in plan.results[0].warnings), plan.results[0].warnings)
+
+    def test_a_saas_rotation_that_does_not_name_exactly_one_record_is_not_written(self):
+        two = {'rotation_settings': {'noop': True, 'saas_record_uid_list': ['S' * 22, 'T' * 22]}}
+        _, report, send, _ = self.run_global(self.profile_json('saas', enabled='off'),
+                                             entry=stored_entry(resource_uid=''), user_acl=two)
         self.assertEqual(send.requests, [])
-        self.assertIn('iam_user rotation profile is not written yet', report.not_applied[0])
+        self.assertIn('names 2 SaaS configuration records', report.not_applied[0])
+
+    def test_a_profile_the_graph_did_not_confirm_is_not_written(self):
+        plan, entry = self.global_plan(self.profile_json('scripts_only', enabled='off'),
+                                       entry=stored_entry(resource_uid=''), user_acl=self.NOOP_ACL)
+        plan.results[0].vault_rotation_profile = None                      # the graph could not be read
+        send = Sender()
+        report = ur.apply_rotations(params_for(entry), plan, send=send, record_key=lambda uid: KEY)
+        self.assertEqual(send.requests, [])
+        self.assertIn('could not be read from the PAM graph', report.not_applied[0])    # says WHY, not "profile not written"
+
+    def test_the_web_vault_unsupported_saas_combinations_are_never_rewritten(self):
+        """"IAM User + SaaS Account" / "General + SaaS Account": the Web Vault refuses to save them; a request without
+        saasConfiguration could drop the SaaS record, so update only warns."""
+        iam_saas = {'is_iam_user': True, 'rotation_settings': {'noop': True, 'saas_record_uid_list': ['S' * 22]}}
+        for json_profile in ('iam_user', 'saas'):
+            plan, report, send, _ = self.run_global(self.profile_json(json_profile, enabled='off'),
+                                                    entry=stored_entry(resource_uid=''), user_acl=iam_saas)
+            self.assertEqual((send.requests, report.applied, report.not_applied), ([], [], []), json_profile)
+            self.assertEqual(plan.results[0].vault_rotation_profile, 'iam_saas')
+            self.assertTrue(any('the vault has "iam_saas"' in w for w in plan.results[0].warnings))
+        # General + SaaS: the SaaS list sits on the user -> machine edge of a general rotation
+        plain, _ = make_plan(dict(SAME, enabled='off'))
+        self.assertEqual(len(ur.rotation_changes(plain.results[-1])), 1)       # without the SaaS list the JSON is written
+        with_saas, entry = make_plan(dict(SAME, enabled='off'),
+                                     user_machine_acl={'rotation_settings': {'saas_record_uid_list': ['S' * 22]}})
+        send = Sender()
+        report = ur.apply_rotations(params_for(entry), with_saas, send=send, record_key=lambda uid: KEY)
+        self.assertEqual((send.requests, report.applied, report.not_applied), ([], [], []))
+        self.assertEqual(with_saas.results[-1].vault_rotation_profile, 'general_saas')
+        self.assertTrue(any('the vault has "general_saas"' in w for r in with_saas.results for w in r.warnings))
+
+    def test_an_added_iam_user_or_scripts_only_rotation_uses_the_import_arguments(self):
+        for profile in ('iam_user', 'scripts_only'):
+            _, report, send, added = self.run_global(self.profile_json(profile), rotation_state=None)
+            self.assertEqual((report.errors, report.not_applied), ([], []), profile)
+            self.assertEqual(report.applied, ['admin1: rotation (added)'])
+            self.assertEqual(send.requests, [])
+            args = added[0]
+            self.assertEqual((args['config'], args['record_name'], args['rotation_profile'], args['force']),
+                             (tp.CFG, tp.U1, profile, True))
+            self.assertNotIn('admin', args)                                # no machine, no admin
+            self.assertNotIn('resource', args)
+            self.assertEqual((args['enable'], args['schedule_cron_data'], args['pwd_complexity']),
+                             (True, ['0 30 18 * * ?'], '32,5,5,5,5'))
+
+    def test_an_added_saas_rotation_carries_the_saas_configuration(self):
+        from unittest import mock
+        with mock.patch('keepercommander.commands.pam_import.batch_step2.resolve_saas_config_uid',
+                        return_value='S' * 22) as resolve:
+            _, report, _, added = self.run_global(self.profile_json('saas'), rotation_state=None)
+        resolve.assert_called_once_with(mock.ANY, 'saas-cfg', [])
+        self.assertEqual((report.errors, report.not_applied), ([], []))
+        self.assertEqual((added[0]['rotation_profile'], added[0]['saas_config_uid'], added[0]['saas_in_request']),
+                         ('saas', 'S' * 22, True))
+
+    def test_an_added_saas_rotation_without_a_usable_saas_configuration_is_an_error(self):
+        from unittest import mock
+        with mock.patch('keepercommander.commands.pam_import.batch_step2.resolve_saas_config_uid', return_value=''):
+            _, report, _, added = self.run_global(self.profile_json('saas'), rotation_state=None)
+        self.assertEqual(added, [])
+        self.assertIn('not a single SaaS configuration record', report.errors[0])
 
     def test_a_general_json_on_a_noop_vault_rotation_is_not_written(self):
         plan, entry = make_plan(dict(SAME, enabled='off'))

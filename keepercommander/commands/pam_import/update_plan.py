@@ -51,6 +51,8 @@ class ItemResult:
     acl_holders: Dict[str, List[str]] = field(default_factory=dict)   # {'admin': [uids], 'launch': [uids]} now
     workflow_options: Any = None                     # PamWorkflowOptions to send (stored + written keys)
     meta_version: int = 0                            # version of the stored meta edge
+    vault_rotation_profile: Optional[str] = None     # profile of the vault rotation from the graph ('' = general / none); None = not read
+    vault_saas_uids: List[str] = field(default_factory=list)    # the SaaS configuration record(s) of a saas rotation (graph)
     compared: bool = True                            # False: not compared (record unreadable / not linked) - neither changed nor identical
 
     @property
@@ -347,14 +349,27 @@ def _user_rotation_changes(item: ImportItem, result: ItemResult, state, config_u
         machine_uid = item.parent.uid
     else:
         machine_uid = resolve(rotation.resource) or ''
+    graph = state.graphs.get(PamGraphId.PAM.value)
+    # The rotation cache has no NOOP flag; the profile of the vault rotation is in the user -> configuration ACL edge.
+    if graph is not None and record is not None and record.rotation is not None:
+        result.vault_rotation_profile = uc.vault_rotation_profile(graph.edges_of_type(result.uid, 'acl'),
+                                                                  result.uid, config_uid, machine_uid or '')
+        result.vault_saas_uids = uc.vault_saas_uids(graph.edges_of_type(result.uid, 'acl'), result.uid, config_uid)
+    json_saas_uid = ''
+    saas_ref = str(getattr(rotation, 'saas_config', '') or '').strip()
+    if rotation.rotation == 'saas' and saas_ref and result.vault_saas_uids:
+        json_saas_uid = resolve(saas_ref) or ''
     changes, warnings = uc.diff_rotation(rotation, raw_rotation.keys(), record.rotation if record else None,
                                          expected_resource_uid=machine_uid or '', expected_config_uid=config_uid,
-                                         title=item.title)
-    graph = state.graphs.get(PamGraphId.PAM.value)
+                                         title=item.title, vault_profile=result.vault_rotation_profile,
+                                         json_saas_uid=json_saas_uid, vault_saas=result.vault_saas_uids)
+    if rotation.rotation == 'saas' and saas_ref and result.vault_saas_uids and not json_saas_uid:
+        warnings.append(f'"{item.title}": saas_config "{saas_ref}" is not a record update can find, so the SaaS '
+                        'configuration of the rotation is not compared')
     admins = (uc.acl_holders(graph.edges_of_type(machine_uid, 'acl'), machine_uid)['admin']
               if graph is not None and machine_uid else [])
     # An added rotation carries what the writer needs: the machine and the admin the machine has now.
-    changes = [replace(c, data=RotationAdd(machine_uid or '', admins[0] if admins else ''))
+    changes = [replace(c, data=RotationAdd(machine_uid or '', admins[0] if admins else '', item.parent is None))
                if c.op == ud.OP_ADD and c.path == 'rotation' else c for c in changes]
     result.changes.extend(changes)
     result.warnings.extend(warnings)
@@ -440,6 +455,7 @@ class RotationAdd:
     """What the writer needs to add the rotation of a user that has none (carried by the ``rotation`` ADD change)."""
     machine_uid: str                # the machine the user belongs to ('' = not known)
     admin_uid: str = ''             # the administrative credential the machine has in the vault now ('' = none)
+    global_user: bool = False       # a top-level user (not nested under a machine): the only kind iam_user / scripts_only / saas can be
 
 
 @dataclass

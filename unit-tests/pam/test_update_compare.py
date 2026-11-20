@@ -218,6 +218,79 @@ class TestRotation(unittest.TestCase):
                                              expected_resource_uid='MACH', expected_config_uid='CFG')
         self.assertEqual(([c.path for c in changes], warnings), (['rotation.enabled'], []))
 
+    def test_the_vault_profile_is_read_from_the_user_to_configuration_acl_edge(self):
+        def edge(contents, tail='U', head='CFG', edge_type='acl'):
+            return {'tail': tail, 'head': head, 'edge_type': edge_type, 'contents': contents}
+        profile = lambda *edges: uc.vault_rotation_profile(edges, 'U', 'CFG')       # noqa: E731
+        self.assertEqual(profile(edge({'is_iam_user': True, 'belongs_to': True})), 'iam_user')
+        self.assertEqual(profile(edge({'rotation_settings': {'noop': True}})), 'scripts_only')
+        self.assertEqual(profile(edge({'rotation_settings': {'noop': True, 'saas_record_uid_list': ['S']}})), 'saas')
+        self.assertEqual(profile(edge({'rotation_settings': {'noop': True, 'saas_record_uid_list': []}})), 'scripts_only')
+        self.assertEqual(profile(edge({'belongs_to': True})), '')                          # general / nothing
+        self.assertEqual(profile(), '')
+        # another user, another head, or another edge type does not count
+        self.assertEqual(profile(edge({'is_iam_user': True}, tail='OTHER'), edge({'is_iam_user': True}, head='MACH'),
+                                 edge({'is_iam_user': True}, edge_type='link')), '')
+
+    def test_a_different_saas_record_is_a_warning(self):
+        obj, explicit = rotation(rotation='saas', enabled='off')
+        cur = stored(resource_uid='')
+        args = dict(expected_resource_uid='MACH', expected_config_uid='CFG', title='u', vault_profile='saas')
+        changes, warnings = uc.diff_rotation(obj, explicit, cur, json_saas_uid='NEW', vault_saas=['OLD'], **args)
+        self.assertEqual(changes, [])
+        self.assertIn('SaaS configuration (the vault rotation uses "OLD", the JSON names "NEW")', warnings[0])
+        for json_uid, vault in (('OLD', ['OLD']), ('', ['OLD']), ('NEW', []), ('NEW', None)):   # same / not known: compared as before
+            changes, warnings = uc.diff_rotation(obj, explicit, cur, json_saas_uid=json_uid, vault_saas=vault, **args)
+            self.assertEqual((len(changes), warnings), (1, []), (json_uid, vault))
+
+    def test_the_unsupported_saas_combinations_are_told_apart(self):
+        def edge(contents, tail='U', head='CFG'):
+            return {'tail': tail, 'head': head, 'edge_type': 'acl', 'contents': contents}
+        saas = {'saas_record_uid_list': ['S']}
+        # IAM User + SaaS Account: is_iam_user AND a SaaS list on the configuration edge
+        self.assertEqual(uc.vault_rotation_profile([edge({'is_iam_user': True, 'rotation_settings': saas})],
+                                                   'U', 'CFG', 'MACH'), 'iam_saas')
+        # General + SaaS Account: the SaaS list is on the user -> machine edge (only looked at with a machine)
+        machine_edge = edge({'belongs_to': True, 'rotation_settings': saas}, head='MACH')
+        self.assertEqual(uc.vault_rotation_profile([machine_edge], 'U', 'CFG', 'MACH'), 'general_saas')
+        self.assertEqual(uc.vault_rotation_profile([machine_edge], 'U', 'CFG'), '')
+        self.assertEqual(uc.vault_rotation_profile([edge({'belongs_to': True}, head='MACH')], 'U', 'CFG', 'MACH'), '')
+        # a general JSON is checked against the combinations only; any other profile is caught by the owner check
+        obj, explicit = rotation(enabled='off')
+        for vault in ('iam_saas', 'general_saas'):
+            changes, warnings = uc.diff_rotation(obj, explicit, stored(), expected_resource_uid='MACH',
+                                                 expected_config_uid='CFG', vault_profile=vault)
+            self.assertEqual(changes, [], vault)
+            self.assertIn(f'type (the vault has "{vault}")', warnings[0])
+        changes, warnings = uc.diff_rotation(obj, explicit, stored(), expected_resource_uid='MACH',
+                                             expected_config_uid='CFG', vault_profile='')
+        self.assertEqual((len(changes), warnings), (1, []))
+
+    def test_the_saas_record_is_read_from_the_same_edge(self):
+        saas = {'tail': 'U', 'head': 'CFG', 'edge_type': 'acl',
+                'contents': {'rotation_settings': {'noop': True, 'saas_record_uid_list': ['S1', 'S2']}}}
+        self.assertEqual(uc.vault_saas_uids([saas], 'U', 'CFG'), ['S1', 'S2'])
+        self.assertEqual(uc.vault_saas_uids([saas], 'OTHER', 'CFG'), [])
+        self.assertEqual(uc.vault_saas_uids([dict(saas, head='MACH')], 'U', 'CFG'), [])
+        self.assertEqual(uc.vault_saas_uids([dict(saas, edge_type='link')], 'U', 'CFG'), [])
+        noop = dict(saas, contents={'rotation_settings': {'noop': True}})
+        self.assertEqual(uc.vault_saas_uids([noop], 'U', 'CFG'), [])
+
+    def test_a_json_profile_that_is_not_the_vault_profile_is_a_warning(self):
+        obj, explicit = rotation(rotation='scripts_only', enabled='off')
+        cur = stored(resource_uid='')
+        for vault in ('saas', 'iam_user', ''):
+            changes, warnings = uc.diff_rotation(obj, explicit, cur, expected_resource_uid='MACH',
+                                                 expected_config_uid='CFG', title='u', vault_profile=vault)
+            self.assertEqual(changes, [], vault)
+            self.assertIn(f'rotation type (the vault has "{vault or "general"}")', warnings[0])
+        changes, warnings = uc.diff_rotation(obj, explicit, cur, expected_resource_uid='MACH', expected_config_uid='CFG',
+                                             vault_profile='scripts_only')
+        self.assertEqual(warnings, [])
+        self.assertEqual([c.path for c in changes], ['rotation.enabled'])
+        # an unknown vault profile (the graph was not read) compares as before; a general JSON is not checked here
+        self.assertEqual(uc.diff_rotation(obj, {'rotation'}, cur, expected_config_uid='CFG', vault_profile=None), ([], []))
+
     def test_a_machine_rotation_where_the_json_says_noop_is_still_a_mismatch(self):
         obj, explicit = rotation(rotation='scripts_only')
         changes, warnings = uc.diff_rotation(obj, explicit, stored(resource_uid='MACH'),
