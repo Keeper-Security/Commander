@@ -48,22 +48,41 @@ from ... import record_types, vault, api
 # or the lookup still omits them.
 DELINEA_RESTRICTED_SECRET_PERMISSION = 'View Restricted Secret'
 
-# Sent on GET /v1/secrets/{id} and /v1/secrets/{id}/fields/{slug} only when a
-# plain read fails. For secrets that require checkout or a comment, they check
-# the secret out, read it, check it back in, and supply the comment. Secrets
-# that do not need them are read without a checkout or an audit comment.
-SECRET_ACCESS_PARAMS = (
-    ('autoCheckout', 'true'),
-    ('autoCheckIn', 'true'),
-    ('autoComment', 'Checking out'),
-)
 
-
-SECRET_ACCESS_PARAM_NAMES = frozenset(name for name, _ in SECRET_ACCESS_PARAMS)
 
 # SSH key validation limits (in bytes when decoded)
 SSH_KEY_MIN_LENGTH = 30
 SSH_KEY_MAX_LENGTH = 5000
+
+CHECKOUT_ERROR = 'API_SecretRequiresCheckout'
+
+# Sent on GET /v1/secrets/{id} and /v1/secrets/{id}/fields/{slug} only when a
+# plain read fails. For secrets that require checkout or a comment, they check
+# the secret out, read it, check it back in, and supply the comment. Secrets
+# that do not need them are read without a checkout or an audit comment.
+_SECRET_ACCESS_COMMENT = 'Checking out'
+
+
+def _build_secret_access_params(enabled):
+    # type: (bool) -> Tuple[Tuple[str, str], ...]
+    checkout = 'true' if enabled else 'false'
+    params = [('autoCheckout', checkout)]
+    if enabled:
+        params.append(('autoCheckIn', 'true'))
+    params.append(('autoComment', _SECRET_ACCESS_COMMENT))
+    if not enabled:
+        params.append(('noAutoCheckout', 'true'))
+    return tuple(params)
+
+
+_SECRET_ACCESS_PARAMS = {
+    True: _build_secret_access_params(True),
+    False: _build_secret_access_params(False),
+}
+_SECRET_ACCESS_PARAM_NAMES = {
+    enabled: frozenset(name for name, _ in params)
+    for enabled, params in _SECRET_ACCESS_PARAMS.items()
+}
 
 
 def _replace_query(endpoint, params):
@@ -72,17 +91,27 @@ def _replace_query(endpoint, params):
     parts = urlparse(endpoint)
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
+def get_secret_access_params(enabled=False):
+    # type: (bool) -> List[Tuple[str, str]]
+    return _SECRET_ACCESS_PARAMS[bool(enabled)]
 
-def with_secret_access_params(endpoint):
+
+def get_secret_access_param_names(enabled=False):
+    # type: (bool) -> List[str]
+    return _SECRET_ACCESS_PARAM_NAMES[bool(enabled)]
+
+def with_secret_access_params(endpoint, enabled=False):
     # type: (str) -> str
     """Add checkout and comment parameters to a secret read URL.
 
     Existing query parameters are kept. Any existing checkout or comment
     parameter is replaced, not duplicated.
     """
+    checkout_params = get_secret_access_params(enabled)
+    checkout_param_names = get_secret_access_param_names(enabled)
     query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
-    params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
-    params.extend(SECRET_ACCESS_PARAMS)
+    params = [(k, v) for k, v in query if k not in checkout_param_names]
+    params.extend(checkout_params)
     return _replace_query(endpoint, params)
 
 
@@ -2351,15 +2380,25 @@ class ThycoticAuth:
         Returns (secret, None) on success, or (None, (status, message)) describing
         the failure.
         """
-        checkout = with_secret_access_params(f'/v1/secrets/{secret_id}')
-        logging.info('Reading "%s" with checkout parameters', checkout)
         try:
-            secret, error = self._read_entity(checkout)
+            secret, error = self._read_entity_with_checkout(secret_id, enabled=False)
+            if error.status_code == 400 and error.message == CHECKOUT_ERROR:
+                return self._read_entity_with_checkout(secret_id, enabled=True)
+            return secret, error
+        except Exception as e:
+            return None, ('N/A', str(e))
+    
+
+    def _read_entity_with_checkout(self, secret_id, enabled=False):
+        try:
+            endpoint = with_secret_access_params(f'/v1/secrets/{secret_id}', enabled)
+            logging.info('Reading "%s" with checkout parameters', endpoint)
+            secret, error = self._read_entity(endpoint)
             if secret is not None:
                 return secret, None
             return None, error
         except Exception as e:
-            logging.info('"%s" error: %s', checkout, str(e))
+            logging.info('"%s" error: %s', endpoint, str(e))
             return None, ('N/A', str(e))
 
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
@@ -2409,12 +2448,18 @@ class ThycoticAuth:
 
         This handles restricted secrets that require checkout parameters.
         """
+        response = None
         try:
-            checkout = with_secret_access_params(endpoint)
-            logging.info('Reading "%s" with checkout parameters', checkout)
-            return self.thycotic_get(checkout)
+            default_endpoint = with_secret_access_params(endpoint, enabled=False)
+            logging.info('Reading "%s" with checkout parameters', default_endpoint)
+            response= self.thycotic_get(default_endpoint)
+            if response.status_code == 400 and response.message == CHECKOUT_ERROR:
+                updated_endpoint = with_secret_access_params(endpoint, enabled=True)
+                logging.info('Reading "%s" with checkout parameters', updated_endpoint)
+                response = self.thycotic_get(updated_endpoint)
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
+        return response
 
 
 class ThycoticAttachment(Attachment):
