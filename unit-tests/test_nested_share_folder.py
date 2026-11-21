@@ -2008,6 +2008,39 @@ class TestNestedShareFolderSharingCommands(TestCase):
         mock_share.assert_called_once()
 
     @patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3')
+    def test_share_record_owner_transfer_skips_already_owned_in_multi_record_run(self, mock_accesses):
+        """A record already owned by the target must not abort the rest of a folder run."""
+        from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand
+        target = 'purchases@example.com'
+        owned, other = 'ownedUid', 'otherUid'
+        owners = {owned: target, other: 'someone@example.com'}
+        mock_accesses.side_effect = lambda params, uids: {'record_accesses': [{
+            'record_uid': uids[0], 'accessor_name': owners[uids[0]],
+            'access_type': 'AT_USER', 'owner': True}]}
+        ok = ({'results': [{'record_uid': other, 'success': True, 'message': ''}]}, 'owner')
+        cmd = NestedShareRecordShareCommand()
+        with mock.patch.object(NestedShareRecordShareCommand, '_resolve_record_uids',
+                               return_value=[owned, other]), \
+                mock.patch('keepercommander.commands.nested_share_folder.sharing_commands.'
+                           'check_record_share_permission'), \
+                mock.patch.object(NestedShareRecordShareCommand, '_dispatch',
+                                  return_value=ok) as mock_dispatch, \
+                self.assertLogs(level='WARNING') as logs:
+            cmd.execute(_make_params(), record='folderUid', email=[target],
+                        action='owner', recursive=True)
+        mock_dispatch.assert_called_once()
+        self.assertEqual(mock_dispatch.call_args[0][2], other)
+        self.assertTrue(any('Skipping record' in m and 'already owns' in m for m in logs.output))
+
+        # Single-record run keeps raising.
+        with mock.patch.object(NestedShareRecordShareCommand, '_resolve_record_uids',
+                               return_value=[owned]), \
+                mock.patch('keepercommander.commands.nested_share_folder.sharing_commands.'
+                           'check_record_share_permission'):
+            with self.assertRaises(CommandError):
+                cmd.execute(_make_params(), record=owned, email=[target], action='owner')
+
+    @patch('keepercommander.nested_share_folder.record_api.get_record_accesses_v3')
     @patch('keepercommander.nested_share_folder.record_api.share_record_v3')
     def test_share_record_rejects_grant_to_owner(self, mock_share, mock_accesses):
         from keepercommander.commands.nested_share_folder import NestedShareRecordShareCommand

@@ -107,9 +107,17 @@ class NestedShareRecordShareCommand(Command):
         with command_error_handler('nsf-share-record'):
             for email in emails:
                 for record_uid in record_uids:
-                    raise_if_record_share_target_is_owner(
-                        params, record_uid, email, 'nsf-share-record',
-                        is_ownership_transfer=(action == 'owner'))
+                    try:
+                        raise_if_record_share_target_is_owner(
+                            params, record_uid, email, 'nsf-share-record',
+                            is_ownership_transfer=(action == 'owner'))
+                    except CommandError as e:
+                        if len(record_uids) == 1:
+                            raise
+                        # Multi-record run (folder / -R): skip the record the
+                        # target already owns instead of aborting the rest.
+                        logging.warning("Skipping record '%s': %s", record_uid, e)
+                        continue
                     try:
                         result, effective_action = self._dispatch(
                             params, action, record_uid, email, access_role_type, expiration,
