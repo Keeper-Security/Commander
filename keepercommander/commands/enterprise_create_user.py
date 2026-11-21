@@ -38,6 +38,10 @@ register_parser = argparse.ArgumentParser(prog='create-user', description='Creat
 register_parser.add_argument('--name', dest='name', action='store', help='user name')
 register_parser.add_argument('--node', dest='node', action='store', help='node name or node ID')
 register_parser.add_argument('--folder', dest='folder', action='store', help='folder name or UID to store password record')
+register_parser.add_argument('--add-role', '--role', dest='add_role', action='append',
+                             help='role name or role ID to assign to the created user (can be repeated)')
+register_parser.add_argument('--format', dest='format', action='store', choices=['table', 'json'], default='table',
+                             help='output format')
 register_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='print verbose information')
 register_parser.add_argument('email', help='email')
 register_parser.error = raise_parse_exception
@@ -52,6 +56,11 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         return register_parser
 
     def execute(self, params, **kwargs):
+        if not params.enterprise:
+            api.query_enterprise(params)
+        if not params.enterprise:
+            raise CommandError('create-user', 'This command is only available for Administrators of Keeper.')
+
         node_name = kwargs.get('node')
         nodes = list(self.resolve_nodes(params, node_name))
         if len(nodes) == 0:
@@ -65,6 +74,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
         email = kwargs.get('email')
         if not email:
             logging.warning('Email parameter is required..')
+            return
         email_pattern = re.compile(EMAIL_PATTERN)
         match = email_pattern.match(email)
         if not match:
@@ -130,6 +140,43 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
                         f'Learn more about domain reservation here:\n{email_provisioning_doc}')
         api.query_enterprise(params)
 
+        assigned_roles = []
+        add_roles = kwargs.get('add_role')
+        if add_roles:
+            if isinstance(add_roles, str):
+                add_roles = [add_roles]
+            matched_roles = []
+            seen_role_ids = set()
+            for role_ref in add_roles:
+                role_ref_str = str(role_ref).strip()
+                matches = [
+                    r for r in params.enterprise.get('roles', [])
+                    if str(r.get('role_id')) == role_ref_str
+                    or ((r.get('data') or {}).get('displayname') or '').lower() == role_ref_str.lower()
+                ]
+                if len(matches) == 1:
+                    role_obj = matches[0]
+                    if role_obj['role_id'] not in seen_role_ids:
+                        seen_role_ids.add(role_obj['role_id'])
+                        matched_roles.append(role_obj)
+                elif len(matches) > 1:
+                    logging.warning('Multiple roles match "%s". Use Role ID. Skipping.', role_ref_str)
+                else:
+                    logging.warning('Role "%s" cannot be resolved. Skipping.', role_ref_str)
+
+            if matched_roles:
+                role_batch = self.get_role_users_change_batch(params, matched_roles, [email], None, force=True)
+                if role_batch:
+                    api.execute_batch(params, role_batch)
+                    api.query_enterprise(params)
+                    assigned_roles = [
+                        {
+                            'role_id': r['role_id'],
+                            'name': (r.get('data') or {}).get('displayname') or str(r['role_id']),
+                        }
+                        for r in matched_roles
+                    ]
+
         login_facade = vault_extensions.LoginFacade()
         ots_command = OneTimeShareCreateCommand()
 
@@ -158,6 +205,20 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
             record_management.update_record(params, record)
             api.sync_down(params)
 
+        if kwargs.get('format') == 'json':
+            result = {
+                'enterprise_user_id': enterprise_user_id,
+                'email': email,
+                'name': displayname or email,
+                'node_id': node_id,
+                'record_uid': record.record_uid,
+                'vault_login_url': login_facade.url,
+                'one_time_share_url': ots_url,
+            }
+            if assigned_roles:
+                result['roles'] = assigned_roles
+            return json.dumps(result, indent=2)
+
         if kwargs.get('verbose') is True:
             print(f'The account {login_facade.login} has been created. Login details below:')
             print(f'{"Vault Login URL:":>24s} {login_facade.url}')
@@ -172,6 +233,7 @@ class CreateEnterpriseUserCommand(EnterpriseCommand, RecordMixin):
             if ots_url:
                 print(f'{"One-Time Share Link:":>24s} {ots_url}')
             print(f'{"Note:":>24s} {login_facade.notes}')
+            return record.record_uid
         else:
             logging.info('User \"%s\" credentials are stored to record \"%s\"', login_facade.login, login_facade.title)
             return record.record_uid
