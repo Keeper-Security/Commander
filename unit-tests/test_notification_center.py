@@ -169,6 +169,28 @@ class TestPedmApprovalNotification(unittest.TestCase):
             details = notification._get_pedm_approval_details(self.params, self.notification)
         self.assertIn('not accessible', details['error'])
 
+    def _entry(self, approval_status):
+        entry = notification_center.NotificationEntry('x')
+        entry.notification = self.notification
+        entry.approval_status = approval_status
+        return entry
+
+    def test_router_status_replaces_pending_notification_status(self):
+        envelope = notification_center.get_pedm_approval(self.notification)
+        current = {(42, self.approval_uid): pedm_pb2.ApprovalEnvelope(status=pedm_pb2.ApprovalStatusNode(approvalStatus=pedm_pb2.AST_ESCALATED))}
+        self.assertEqual(('escalated', True), notification._list_status(self._entry(NC.NAS_UNSPECIFIED), current, envelope))
+
+    def test_regular_notification_expired_at_escalation_stays_expired(self):
+        envelope = notification_center.get_pedm_approval(self.notification)
+        current = {(42, self.approval_uid): pedm_pb2.ApprovalEnvelope(status=pedm_pb2.ApprovalStatusNode(approvalStatus=pedm_pb2.AST_ESCALATED))}
+        self.assertEqual(('expired', False), notification._list_status(self._entry(NC.NAS_EXPIRED), current, envelope))
+
+    def test_escalated_notification_is_marked(self):
+        envelope = notification_center.get_pedm_approval(self.notification)
+        envelope.is_escalated = True
+        self.notification.encryptedData.data = envelope.SerializeToString()
+        self.assertTrue(notification_center.get_message(self.params, self._entry(NC.NAS_UNSPECIFIED)).endswith('(escalated)'))
+
     def test_deny_sends_msp_approval_action(self):
         with mock.patch('keepercommander.api.execute_router', side_effect=self._execute_router):
             notification._act_pedm_approval(self.params, self.notification, deny=True)

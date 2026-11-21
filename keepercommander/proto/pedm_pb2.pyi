@@ -23,6 +23,11 @@ class ApprovalStatusType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     AST_EXPIRED: _ClassVar[ApprovalStatusType]
     AST_ESCALATED: _ClassVar[ApprovalStatusType]
 
+class AudienceType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
+    __slots__ = ()
+    AUT_UNSPECIFIED: _ClassVar[AudienceType]
+    AUT_TEAM: _ClassVar[AudienceType]
+
 class NavigationDirection(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     __slots__ = ()
     NAVIGATION_DIRECTION_UNSPECIFIED: _ClassVar[NavigationDirection]
@@ -38,6 +43,8 @@ AST_APPROVED: ApprovalStatusType
 AST_DENIED: ApprovalStatusType
 AST_EXPIRED: ApprovalStatusType
 AST_ESCALATED: ApprovalStatusType
+AUT_UNSPECIFIED: AudienceType
+AUT_TEAM: AudienceType
 NAVIGATION_DIRECTION_UNSPECIFIED: NavigationDirection
 NAVIGATION_DIRECTION_BACKWARD: NavigationDirection
 NAVIGATION_DIRECTION_FORWARD: NavigationDirection
@@ -364,6 +371,100 @@ class ApprovalNode(_message.Message):
     created: int
     def __init__(self, approvalUid: _Optional[bytes] = ..., approvalType: _Optional[int] = ..., agentUid: _Optional[bytes] = ..., accountInfo: _Optional[bytes] = ..., applicationInfo: _Optional[bytes] = ..., justification: _Optional[bytes] = ..., expireIn: _Optional[int] = ..., created: _Optional[int] = ...) -> None: ...
 
+class AudienceRef(_message.Message):
+    __slots__ = ("audienceType", "audienceUid")
+    AUDIENCETYPE_FIELD_NUMBER: _ClassVar[int]
+    AUDIENCEUID_FIELD_NUMBER: _ClassVar[int]
+    audienceType: AudienceType
+    audienceUid: bytes
+    def __init__(self, audienceType: _Optional[_Union[AudienceType, str]] = ..., audienceUid: _Optional[bytes] = ...) -> None: ...
+
+class AudienceApprovalRef(_message.Message):
+    __slots__ = ("approvalUid", "audience")
+    APPROVALUID_FIELD_NUMBER: _ClassVar[int]
+    AUDIENCE_FIELD_NUMBER: _ClassVar[int]
+    approvalUid: bytes
+    audience: AudienceRef
+    def __init__(self, approvalUid: _Optional[bytes] = ..., audience: _Optional[_Union[AudienceRef, _Mapping]] = ...) -> None: ...
+
+class GetAudienceApprovalsRequest(_message.Message):
+    __slots__ = ("refs",)
+    REFS_FIELD_NUMBER: _ClassVar[int]
+    refs: _containers.RepeatedCompositeFieldContainer[AudienceApprovalRef]
+    def __init__(self, refs: _Optional[_Iterable[_Union[AudienceApprovalRef, _Mapping]]] = ...) -> None: ...
+
+class AudienceAccess(_message.Message):
+    __slots__ = ("audience", "encryptedKey", "encryptedToken")
+    AUDIENCE_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTEDKEY_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTEDTOKEN_FIELD_NUMBER: _ClassVar[int]
+    audience: AudienceRef
+    encryptedKey: bytes
+    encryptedToken: bytes
+    def __init__(self, audience: _Optional[_Union[AudienceRef, _Mapping]] = ..., encryptedKey: _Optional[bytes] = ..., encryptedToken: _Optional[bytes] = ...) -> None: ...
+
+class AudienceApprovalNode(_message.Message):
+    __slots__ = ("approvalUid", "approvalType", "approvalStatus", "expireIn", "created", "encryptedData", "access")
+    APPROVALUID_FIELD_NUMBER: _ClassVar[int]
+    APPROVALTYPE_FIELD_NUMBER: _ClassVar[int]
+    APPROVALSTATUS_FIELD_NUMBER: _ClassVar[int]
+    EXPIREIN_FIELD_NUMBER: _ClassVar[int]
+    CREATED_FIELD_NUMBER: _ClassVar[int]
+    ENCRYPTEDDATA_FIELD_NUMBER: _ClassVar[int]
+    ACCESS_FIELD_NUMBER: _ClassVar[int]
+    approvalUid: bytes
+    approvalType: int
+    approvalStatus: ApprovalStatusType
+    expireIn: int
+    created: int
+    encryptedData: bytes
+    access: _containers.RepeatedCompositeFieldContainer[AudienceAccess]
+    def __init__(self, approvalUid: _Optional[bytes] = ..., approvalType: _Optional[int] = ..., approvalStatus: _Optional[_Union[ApprovalStatusType, str]] = ..., expireIn: _Optional[int] = ..., created: _Optional[int] = ..., encryptedData: _Optional[bytes] = ..., access: _Optional[_Iterable[_Union[AudienceAccess, _Mapping]]] = ...) -> None: ...
+
+class GetAudienceApprovalsResponse(_message.Message):
+    __slots__ = ("approvals",)
+    APPROVALS_FIELD_NUMBER: _ClassVar[int]
+    approvals: _containers.RepeatedCompositeFieldContainer[AudienceApprovalNode]
+    def __init__(self, approvals: _Optional[_Iterable[_Union[AudienceApprovalNode, _Mapping]]] = ...) -> None: ...
+
+class GetTeamPublicKeysRequest(_message.Message):
+    __slots__ = ("teamUid",)
+    TEAMUID_FIELD_NUMBER: _ClassVar[int]
+    teamUid: _containers.RepeatedScalarFieldContainer[bytes]
+    def __init__(self, teamUid: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class TeamPublicKey(_message.Message):
+    __slots__ = ("teamUid", "eccPublicKey")
+    TEAMUID_FIELD_NUMBER: _ClassVar[int]
+    ECCPUBLICKEY_FIELD_NUMBER: _ClassVar[int]
+    teamUid: bytes
+    eccPublicKey: bytes
+    def __init__(self, teamUid: _Optional[bytes] = ..., eccPublicKey: _Optional[bytes] = ...) -> None: ...
+
+class GetTeamPublicKeysResponse(_message.Message):
+    __slots__ = ("teamKeys",)
+    TEAMKEYS_FIELD_NUMBER: _ClassVar[int]
+    teamKeys: _containers.RepeatedCompositeFieldContainer[TeamPublicKey]
+    def __init__(self, teamKeys: _Optional[_Iterable[_Union[TeamPublicKey, _Mapping]]] = ...) -> None: ...
+
+class AudienceApprovalAction(_message.Message):
+    __slots__ = ("approvalUid", "audience", "token", "approvalStatus")
+    APPROVALUID_FIELD_NUMBER: _ClassVar[int]
+    AUDIENCE_FIELD_NUMBER: _ClassVar[int]
+    TOKEN_FIELD_NUMBER: _ClassVar[int]
+    APPROVALSTATUS_FIELD_NUMBER: _ClassVar[int]
+    approvalUid: bytes
+    audience: AudienceRef
+    token: bytes
+    approvalStatus: ApprovalStatusType
+    def __init__(self, approvalUid: _Optional[bytes] = ..., audience: _Optional[_Union[AudienceRef, _Mapping]] = ..., token: _Optional[bytes] = ..., approvalStatus: _Optional[_Union[ApprovalStatusType, str]] = ...) -> None: ...
+
+class AudienceApprovalActionRequest(_message.Message):
+    __slots__ = ("actions",)
+    ACTIONS_FIELD_NUMBER: _ClassVar[int]
+    actions: _containers.RepeatedCompositeFieldContainer[AudienceApprovalAction]
+    def __init__(self, actions: _Optional[_Iterable[_Union[AudienceApprovalAction, _Mapping]]] = ...) -> None: ...
+
 class FullSyncToken(_message.Message):
     __slots__ = ("startRevision", "entity", "key")
     STARTREVISION_FIELD_NUMBER: _ClassVar[int]
@@ -660,6 +761,34 @@ class GetApprovalNavigationTokenResponse(_message.Message):
     navigation_token: bytes
     def __init__(self, navigation_token: _Optional[bytes] = ...) -> None: ...
 
+class ApprovalNavigationPosition(_message.Message):
+    __slots__ = ("created", "enterprise_id", "approval_uid")
+    CREATED_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    APPROVAL_UID_FIELD_NUMBER: _ClassVar[int]
+    created: int
+    enterprise_id: int
+    approval_uid: bytes
+    def __init__(self, created: _Optional[int] = ..., enterprise_id: _Optional[int] = ..., approval_uid: _Optional[bytes] = ...) -> None: ...
+
+class ApprovalNavigationToken(_message.Message):
+    __slots__ = ("version", "enterprise_id", "user_id", "session_hash", "issued_at", "anchor", "position")
+    VERSION_FIELD_NUMBER: _ClassVar[int]
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    SESSION_HASH_FIELD_NUMBER: _ClassVar[int]
+    ISSUED_AT_FIELD_NUMBER: _ClassVar[int]
+    ANCHOR_FIELD_NUMBER: _ClassVar[int]
+    POSITION_FIELD_NUMBER: _ClassVar[int]
+    version: int
+    enterprise_id: _containers.RepeatedScalarFieldContainer[int]
+    user_id: int
+    session_hash: bytes
+    issued_at: int
+    anchor: int
+    position: ApprovalNavigationPosition
+    def __init__(self, version: _Optional[int] = ..., enterprise_id: _Optional[_Iterable[int]] = ..., user_id: _Optional[int] = ..., session_hash: _Optional[bytes] = ..., issued_at: _Optional[int] = ..., anchor: _Optional[int] = ..., position: _Optional[_Union[ApprovalNavigationPosition, _Mapping]] = ...) -> None: ...
+
 class ApprovalNavigationRequest(_message.Message):
     __slots__ = ("navigation_token", "direction", "limit")
     NAVIGATION_TOKEN_FIELD_NUMBER: _ClassVar[int]
@@ -671,14 +800,16 @@ class ApprovalNavigationRequest(_message.Message):
     def __init__(self, navigation_token: _Optional[bytes] = ..., direction: _Optional[_Union[NavigationDirection, str]] = ..., limit: _Optional[int] = ...) -> None: ...
 
 class ApprovalEnvelope(_message.Message):
-    __slots__ = ("enterprise_id", "is_escalated", "approval")
+    __slots__ = ("enterprise_id", "is_escalated", "approval", "status")
     ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
     IS_ESCALATED_FIELD_NUMBER: _ClassVar[int]
     APPROVAL_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
     enterprise_id: int
     is_escalated: bool
     approval: ApprovalNode
-    def __init__(self, enterprise_id: _Optional[int] = ..., is_escalated: bool = ..., approval: _Optional[_Union[ApprovalNode, _Mapping]] = ...) -> None: ...
+    status: ApprovalStatusNode
+    def __init__(self, enterprise_id: _Optional[int] = ..., is_escalated: bool = ..., approval: _Optional[_Union[ApprovalNode, _Mapping]] = ..., status: _Optional[_Union[ApprovalStatusNode, _Mapping]] = ...) -> None: ...
 
 class ApprovalNavigationResponse(_message.Message):
     __slots__ = ("next_navigation_token", "has_more", "approvals")
@@ -707,3 +838,43 @@ class MspApprovalActionRequest(_message.Message):
     deny: _containers.RepeatedCompositeFieldContainer[EnterpriseApprovalRef]
     remove: _containers.RepeatedCompositeFieldContainer[EnterpriseApprovalRef]
     def __init__(self, approve: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ..., deny: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ..., remove: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ...) -> None: ...
+
+class GetApprovalsRequest(_message.Message):
+    __slots__ = ("approvals",)
+    APPROVALS_FIELD_NUMBER: _ClassVar[int]
+    approvals: _containers.RepeatedCompositeFieldContainer[EnterpriseApprovalRef]
+    def __init__(self, approvals: _Optional[_Iterable[_Union[EnterpriseApprovalRef, _Mapping]]] = ...) -> None: ...
+
+class GetApprovalsResponse(_message.Message):
+    __slots__ = ("approvals",)
+    APPROVALS_FIELD_NUMBER: _ClassVar[int]
+    approvals: _containers.RepeatedCompositeFieldContainer[ApprovalEnvelope]
+    def __init__(self, approvals: _Optional[_Iterable[_Union[ApprovalEnvelope, _Mapping]]] = ...) -> None: ...
+
+class EnterpriseAgentRef(_message.Message):
+    __slots__ = ("enterprise_id", "agent_uid")
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    AGENT_UID_FIELD_NUMBER: _ClassVar[int]
+    enterprise_id: int
+    agent_uid: bytes
+    def __init__(self, enterprise_id: _Optional[int] = ..., agent_uid: _Optional[bytes] = ...) -> None: ...
+
+class GetAgentsRequest(_message.Message):
+    __slots__ = ("agents",)
+    AGENTS_FIELD_NUMBER: _ClassVar[int]
+    agents: _containers.RepeatedCompositeFieldContainer[EnterpriseAgentRef]
+    def __init__(self, agents: _Optional[_Iterable[_Union[EnterpriseAgentRef, _Mapping]]] = ...) -> None: ...
+
+class AgentEnvelope(_message.Message):
+    __slots__ = ("enterprise_id", "agent")
+    ENTERPRISE_ID_FIELD_NUMBER: _ClassVar[int]
+    AGENT_FIELD_NUMBER: _ClassVar[int]
+    enterprise_id: int
+    agent: AgentNode
+    def __init__(self, enterprise_id: _Optional[int] = ..., agent: _Optional[_Union[AgentNode, _Mapping]] = ...) -> None: ...
+
+class GetAgentsResponse(_message.Message):
+    __slots__ = ("agents",)
+    AGENTS_FIELD_NUMBER: _ClassVar[int]
+    agents: _containers.RepeatedCompositeFieldContainer[AgentEnvelope]
+    def __init__(self, agents: _Optional[_Iterable[_Union[AgentEnvelope, _Mapping]]] = ...) -> None: ...

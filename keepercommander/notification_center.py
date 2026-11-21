@@ -307,6 +307,7 @@ def get_message(params: KeeperParams, entry: NotificationEntry) -> str:
         envelope = get_pedm_approval(n)
         if not envelope:
             return f'{sender} requests endpoint privilege elevation'
+        escalated = ' (escalated)' if envelope.is_escalated else ''
         return (f'{sender} requests {pedm_shared.approval_type_to_name(envelope.approval.approvalType)} approval '
-                f'{utils.base64_url_encode(envelope.approval.approvalUid)}')
+                f'{utils.base64_url_encode(envelope.approval.approvalUid)}{escalated}')
     return TYPE_TITLES.get(t) or type_name(t)
