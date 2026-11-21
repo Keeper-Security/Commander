@@ -683,22 +683,24 @@ class EmailConfigListCommand(Command):
                 logging.debug(f'Error loading record {record_uid}: {e}')
                 continue
 
+        output_format = kwargs.get('format', 'table')
+
         if not configs:
+            if output_format == 'json':
+                return json.dumps([])
             logging.info('No email configurations found')
             return
 
         # Display results
-        output_format = kwargs.get('format', 'table')
-
         if output_format == 'json':
-            print(json.dumps(configs, indent=2))
+            return json.dumps(configs, indent=2)
         else:
             headers = ['Name', 'Provider', 'From Address', 'Record UID']
             table = [
                 [c['name'], c['provider'], c['from_address'], c['record_uid']]
                 for c in configs
             ]
-            dump_report_data(table, headers, fmt=output_format)
+            return dump_report_data(table, headers, fmt=output_format)
 
 
 class EmailConfigTestCommand(Command):
