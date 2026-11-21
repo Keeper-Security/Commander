@@ -1216,9 +1216,9 @@ class TestTunnelGraphSetResourceAllowedMigration:
 
     def test_pam_remote_browser_settings_uses_resource_endpoint(self):
         """When called with a non-standard allowed_settings_name (RBI case),
-        the migration still uses configure_resource(meta=...) — server's
-        mergeJson handles the custom meta key. The full meta JSON carries
-        the custom key, not 'allowedSettings'."""
+        the migration still uses configure_resource(meta=...). The router decodes
+        meta into a fixed schema and rejects unknown top-level keys, so the custom
+        key must be folded into 'allowedSettings'."""
         from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
 
         tg, _ = self._build_tg()
@@ -1236,10 +1236,41 @@ class TestTunnelGraphSetResourceAllowedMigration:
         rq = captured.get('rq')
         assert rq is not None
         meta = json.loads(rq.meta.decode())
-        # Custom key, NOT 'allowedSettings'
-        assert 'pamRemoteBrowserSettings' in meta
-        assert meta['pamRemoteBrowserSettings'].get('remoteBrowserIsolation') is True
-        assert 'allowedSettings' not in meta
+        # Folded into 'allowedSettings'; no custom top-level key sent to the router
+        assert 'pamRemoteBrowserSettings' not in meta
+        assert meta['allowedSettings'].get('remoteBrowserIsolation') is True
+
+    def test_resource_meta_only_has_router_known_top_level_keys(self):
+        """configure_resource meta must only carry keys the router's Meta DTO knows
+        (regression: 'rotation' was sent as a top-level key -> HTTP 500)."""
+        from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
+
+        router_meta_keys = {'allowedSettings', 'idpConfigUid', 'rotateOnTermination', 'version',
+                            'locked', 'no_update_services', 'defaultElevationTime'}
+        tg, _ = self._build_tg()
+        captured = {}
+
+        def _capture(params, rq):
+            captured['rq'] = rq
+
+        with patch.object(tg_mod, 'get_vertex_content', return_value=None), \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource', side_effect=_capture):
+            tg.set_resource_allowed(RESOURCE_UID_STR, rotation=False)
+
+        meta = json.loads(captured['rq'].meta.decode())
+        assert set(meta) <= router_meta_keys
+        assert meta == {'allowedSettings': {'rotation': False}}
+
+    def test_pam_rotation_edit_enable_does_not_override_settings_name(self):
+        """pam rotation edit --enable/--disable must use the default 'allowedSettings'
+        name (regression: allowed_settings_name='rotation' produced
+        {'rotation': {'rotation': true}})."""
+        import inspect
+        from keepercommander.commands import discoveryrotation
+
+        src = inspect.getsource(discoveryrotation)
+        assert 'allowed_settings_name="rotation"' not in src
+        assert "allowed_settings_name='rotation'" not in src
 
     def test_http_404_falls_back_and_caches(self):
         """env=1 + HTTP 404 on configure_resource -> fall back to legacy + mark
