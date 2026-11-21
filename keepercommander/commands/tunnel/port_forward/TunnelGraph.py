@@ -935,6 +935,17 @@ class TunnelDAG:
 
         return res
 
+    @staticmethod
+    def _router_resource_meta(meta_payload, allowed_settings_name):
+        """Shape meta for configure_resource: the router only accepts allowedSettings
+        (plus version/rotateOnTermination/...) at top level, so fold a custom
+        settings key (e.g. pamRemoteBrowserSettings) into allowedSettings."""
+        if allowed_settings_name == 'allowedSettings' or allowed_settings_name not in meta_payload:
+            return meta_payload
+        meta = {k: v for k, v in meta_payload.items() if k != allowed_settings_name}
+        meta['allowedSettings'] = {**meta.get('allowedSettings', {}), **meta_payload[allowed_settings_name]}
+        return meta
+
     def set_resource_allowed(self, resource_uid, tunneling=None, connections=None, rotation=None,
                              session_recording=None, typescript_recording=None, remote_browser_isolation=None,
                              ai_enabled=None, ai_session_terminate=None,
@@ -1075,9 +1086,10 @@ class TunnelDAG:
             # Primary: Layer-B (permission-checked). is_config=True writes the
             # config record's network-level allowedSettings via configure_network_graph
             # (the same endpoint edit_tunneling_config uses). is_config=False writes
-            # a resource's meta via configure_resource(meta=...); the server's
-            # mergeJson handles any meta key (allowedSettings, pamRemoteBrowserSettings,
-            # rotation, etc.). Same fallback policy as edit_tunneling_config and
+            # a resource's meta via configure_resource(meta=...); the router decodes
+            # meta into a fixed schema BEFORE merging and rejects unknown top-level
+            # keys, so custom settings names are folded into allowedSettings (see
+            # _router_resource_meta). Same fallback policy as edit_tunneling_config and
             # link_user_to_resource: strict by default, opt INTO legacy fallback
             # via KEEPER_DAG_LB_FALLBACK=1.
             from ...pam.router_helper import (
@@ -1117,7 +1129,7 @@ class TunnelDAG:
                         rq = pam_pb2.PAMResourceConfig(
                             recordUid=url_safe_str_to_bytes(resource_uid),
                             networkUid=url_safe_str_to_bytes(self.record.record_uid),
-                            meta=json.dumps(meta_payload).encode(),
+                            meta=json.dumps(self._router_resource_meta(meta_payload, allowed_settings_name)).encode(),
                         )
                         router_configure_resource(self.params, rq)
                         logging.debug(
