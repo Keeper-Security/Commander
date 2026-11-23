@@ -54,6 +54,9 @@ DELINEA_RESTRICTED_SECRET_PERMISSION = 'View Restricted Secret'
 SSH_KEY_MIN_LENGTH = 30
 SSH_KEY_MAX_LENGTH = 5000
 
+# Page size for GET /v2/secrets and GET /v1/secrets summary search.
+SECRET_SUMMARY_PAGE_SIZE = 1000
+
 # Used when the import was not given --checkout-comment.
 _SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 
@@ -95,7 +98,7 @@ UNREADABLE_SECRET_STATES = {
 
 
 # Secret Server REST API endpoints (relative to the base URL).
-# ThycoticAuth adds the host. Paths under /v1 also get the api prefix.
+# ThycoticAuth adds the host and the api prefix.
 ENDPOINTS = {
     "token": "oauth2/token",
     "users": "/v1/users",
@@ -112,7 +115,8 @@ ENDPOINTS = {
         "/v1/secrets/lookup?filter.folderId={folder_id}"
         "&filter.includeSubFolders=true&filter.includeRestricted={restricted}"
     ),
-    "secret": "/v1/secrets/{secret_id}",
+    "secrets_search": "/v2/secrets?filter.includeRestricted={restricted}",
+    "secret": "/v2/secrets/{secret_id}",
     "secret_state": "/v1/secrets/{secret_id}/state",
     "secret_check_in": "/v1/secrets/{secret_id}/check-in",
     "secret_field": "/v1/secrets/{secret_id}/fields/{slug}",
@@ -245,6 +249,33 @@ def build_secrets_lookup_query(folder_id=None, include_restricted=True):
     if folder_id is None:
         return ENDPOINTS["secrets_lookup"].format(restricted=restricted)
     return ENDPOINTS["secrets_lookup_folder"].format(folder_id=folder_id, restricted=restricted)
+
+
+def _is_secret_summary_search(path):
+    # type: (str) -> bool
+    """True for GET /v1/secrets and GET /v2/secrets, not lookup or a single secret."""
+    path = (path or '').rstrip('/')
+    return path.endswith('/v2/secrets') or path.endswith('/v1/secrets')
+
+
+def build_secrets_search_query(include_restricted=True):
+    # type: (bool) -> str
+    """GET /v2/secrets. Each record has id, name, folderId, and inheritsPermissions.
+
+    The search does not return field values and does not check a secret out.
+    thycotic_search pages it with skip and take until the records run out.
+    """
+    restricted = 'true' if include_restricted else 'false'
+    return ENDPOINTS["secrets_search"].format(restricted=restricted)
+
+
+def secrets_search_query(auth):
+    # type: (Any) -> str
+    """Summary search for this server: /v2/secrets, or /v1/secrets when that route is absent."""
+    chooser = getattr(type(auth), 'secrets_search_endpoint', None)
+    if callable(chooser):
+        return chooser(auth)
+    return build_secrets_search_query()
 
 
 def _ids_from_lookup_response(response):
@@ -850,17 +881,16 @@ class ThycoticMixin:
         # type: (ThycoticAuth, Dict, dict, Optional[Dict], Optional[Dict[Any, list]]) -> list
         """Rows that name who can open this secret.
 
-        Secret Server often omits inheritPermissions on the secret record.
-        Some secrets then return their users from secret-permissions, and
-        others only from the folder. Keep whichever list is non-empty. A
-        secret that inherits prefers the folder's secret roles.
+        secret is a GET /v2/secrets summary. inheritsPermissions true prefers
+        the folder's secret roles. Otherwise the secret-permissions rows are
+        used, and an empty list falls back to the folder.
 
         secret_permissions is the result of all_secret_permission_rows. When
         given, it replaces the per-secret secret-permissions request.
         """
         folder_id = secret.get('folderId') if isinstance(secret, dict) else None
         secret_id = secret.get('id') if isinstance(secret, dict) else None
-        inherits = isinstance(secret, dict) and secret.get('inheritPermissions') is True
+        inherits = isinstance(secret, dict) and secret.get('inheritsPermissions') is True
 
         if inherits:
             rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
@@ -889,26 +919,22 @@ class ThycoticMixin:
         return rows if isinstance(rows, list) else []
 
     @staticmethod
-    def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
-        # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
-        """Fetch one secret and its permission rows. Runs on a worker thread."""
-        secret, status, message = auth.fetch_thycotic_secret(secret_id)
-        if status is not None:
-            raise RuntimeError(f'failed to fetch secret ({status}): {message}')
-        if not isinstance(secret, dict):
+    def _fetch_secret_permissions(auth, folders, secret, folder_cache, secret_permissions=None):
+        # type: (ThycoticAuth, Dict, dict, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
+        """Permission rows for one secret already returned by GET /v2/secrets."""
+        if not isinstance(secret, dict) or secret.get('id') is None:
             return None, []
-        secret['id'] = secret.get('id') or secret_id
         return secret, ThycoticMixin.permission_rows_for_secret(
             auth, folders, secret, folder_cache, secret_permissions)
 
     @staticmethod
-    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, entry):
-        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], Tuple[dict, Any]) -> Tuple[Optional[dict], list, Optional[Exception]]
+    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, secret):
+        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], dict) -> Tuple[Optional[dict], list, Optional[Exception]]
         """Worker task: (secret, rows, None) on success, (None, [], error) on failure. Never raises."""
         try:
-            secret, rows = ThycoticMixin._fetch_secret_permissions(
-                auth, folders, entry[1], folder_cache, secret_permissions)
-            return secret, rows, None
+            loaded, rows = ThycoticMixin._fetch_secret_permissions(
+                auth, folders, secret, folder_cache, secret_permissions)
+            return loaded, rows, None
         except Exception as exc:
             return None, [], exc
 
@@ -1004,31 +1030,32 @@ class ThycoticMixin:
         # type: (ThycoticAuth, Optional[Dict], Optional[int]) -> Iterable[Record]
         """Yield one record per secret with the users who can open it.
 
-        A secret that inherits uses its folder's secret roles. Any other
-        secret uses GET /v1/secret-permissions, and falls back to the folder
-        secret roles when that list is empty. apply-membership grants the
-        resulting shares onto the Keeper record. Folder membership is not
-        changed.
+        Secrets come from GET /v2/secrets. That search returns the name, folder,
+        and inheritsPermissions, and it does not check a secret out. A secret
+        that inherits uses its folder's secret roles. Any other secret uses
+        GET /v1/secret-permissions, and falls back to the folder secret roles
+        when that list is empty. apply-membership grants the resulting shares
+        onto the Keeper record. Folder membership is not changed.
 
         Secret permissions come from one bulk search when the server allows
-        it, otherwise one request per secret. Secret reads run on a small
+        it, otherwise one request per secret. Those reads run on a small
         worker pool (`workers`, default 4, 1 = sequential); records are
-        yielded in lookup order. Group lookup and record building stay on the
+        yielded in search order. Group lookup and record building stay on the
         calling thread.
 
-        A secret whose fetch fails is logged and skipped. The rest still load.
+        A secret whose permission read fails is logged and skipped. The rest still load.
         """
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search(build_secrets_lookup_query()) or []
+            lookup = auth.thycotic_search(secrets_search_query(auth)) or []
         except Exception as exc:
-            logging.warning('secret lookup for permissions: %s', exc)
+            logging.warning('secret search for permissions: %s', exc)
             return
         if not isinstance(lookup, list):
             lookup = []
         folders = folders or {}
-        entries = [(row, row.get('id')) for row in lookup if isinstance(row, dict) and row.get('id')]
+        entries = [row for row in lookup if isinstance(row, dict) and row.get('id') is not None]
         written = 0
         seen = 0
         unmapped = 0
@@ -1040,7 +1067,8 @@ class ThycoticMixin:
         logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(entries), workers)
 
         fetch = functools.partial(ThycoticMixin._fetch_secret_entry, auth, folders, folder_cache, secret_permissions)
-        for (row, secret_id), (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
+        for row, (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
+            secret_id = row.get('id')
             if error is not None:
                 logging.warning('Secret %s permissions skipped: %s', secret_id, error)
                 failed += 1
@@ -2322,10 +2350,11 @@ class ThycoticAuth:
         self.proxy = None
         self.secret_comment = ''
         self._token_lock = threading.Lock()
+        self._v2_secrets = None  # type: Optional[bool]
         warnings.simplefilter('ignore', InsecureRequestWarning)
 
     def api_url(self, endpoint):  # type: (str) -> str
-        """Absolute URL for a /v1 path from ENDPOINTS."""
+        """Absolute URL for a /v1 or /v2 path from ENDPOINTS."""
         return self.base_url + 'api' + endpoint
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
@@ -2416,6 +2445,38 @@ class ThycoticAuth:
                             attempt, self.max_throttle_retries, wait)
             time.sleep(wait)
 
+    def _v2_secrets_supported(self):  # type: () -> bool
+        """True when GET /api/v2/secrets exists.
+
+        That route is on Secret Server 11.3 and later, including 12.x.
+        11.0 through 11.2 answer 404, and those servers use /v1/secrets for
+        the same summary search and secret read. The answer is kept for the session.
+        """
+        if self._v2_secrets is not None:
+            return self._v2_secrets
+        self.ensure_auth_token()
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': 'Bearer {0}'.format(self.access_token),
+        }
+        url = self.api_url('/v2/secrets?take=1&filter.doNotCalculateTotal=true')
+        try:
+            rs = self._get(url, headers=headers)
+        except Exception as exc:
+            # Do not remember this. A blip must not lock an 11.0 server onto /v2/secrets.
+            logging.info('Could not tell whether /v2/secrets exists, will try again: %s', exc)
+            return True
+        self._v2_secrets = rs.status_code != 404
+        if not self._v2_secrets:
+            logging.info('Secret Server has no /v2/secrets; using /v1/secrets')
+        return self._v2_secrets
+
+    def secrets_search_endpoint(self):  # type: () -> str
+        """Summary search. /v2/secrets on 11.3 and later, /v1/secrets before that."""
+        if self._v2_secrets_supported():
+            return build_secrets_search_query()
+        return '/v1/secrets?filter.includeRestricted=true'
+
     def thycotic_search(self, endpoint):  # type: (str) -> list
         self.ensure_auth_token()
         headers = {
@@ -2425,13 +2486,21 @@ class ThycoticAuth:
 
         urlp = urlparse(self.api_url(endpoint))
         queries = tuple(x for x in urlp.query.split(sep='&') if x)
+        summary_search = _is_secret_summary_search(urlp.path)
         result = []
         skip = 0
-        while True:
+        seen = set()
+        while skip not in seen:
+            seen.add(skip)
             q = list(queries)
-            q.append('take=1000')
-            if skip > 0:
-                q.append(f'skip={skip}')
+            if summary_search:
+                # Always send skip and take. A full page is followed by the next skip.
+                q.append('take={0}'.format(SECRET_SUMMARY_PAGE_SIZE))
+                q.append('skip={0}'.format(skip))
+            else:
+                q.append('take=1000')
+                if skip > 0:
+                    q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
             try:
                 rs = self._get(url, headers=headers)
@@ -2441,15 +2510,24 @@ class ThycoticAuth:
             if rs.status_code != 200:
                 raise Exception(self._error_message(rs))
             chunk_rs = rs.json()
-            records = chunk_rs.get('records')
-            if isinstance(records, list):
-                result.extend(records)
-            else:
+            records = chunk_rs.get('records') if isinstance(chunk_rs, dict) else None
+            if not isinstance(records, list) or not records:
                 break
-            if chunk_rs.get('hasNext') is True:
-                skip = chunk_rs['nextSkip']
-            else:
-                break
+            result.extend(records)
+            has_next = chunk_rs.get('hasNext')
+            if has_next is True:
+                next_skip = chunk_rs.get('nextSkip')
+                if not isinstance(next_skip, int) or next_skip <= skip:
+                    next_skip = skip + len(records)
+                if next_skip <= skip:
+                    break
+                skip = next_skip
+                continue
+            # hasNext is false on a full page when the server did not count the rest.
+            if summary_search and len(records) >= SECRET_SUMMARY_PAGE_SIZE:
+                skip += len(records)
+                continue
+            break
         return result
 
     @staticmethod
@@ -2519,13 +2597,14 @@ class ThycoticAuth:
             return None, None, blocked
 
         target = with_access_params(endpoint, access_params)
-        logging.info('Reading "%s"', target)
         return target, access_params, None
 
     def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
         """Read a secret after checking its state.
 
-        GET /v1/secrets/{id}/state runs before the secret is requested. Checkout
+        GET /v1/secrets/{id}/state runs before the secret is requested. The
+        secret is GET /v2/secrets/{id} when that route exists, and GET
+        /v1/secrets/{id} on Secret Server 11.0 through 11.2. Checkout
         parameters are sent only when that state requires a checkout, and then
         only together with autoCheckIn. A read that checked the secret out is
         followed by a check-in when this user still holds it.
@@ -2537,6 +2616,9 @@ class ThycoticAuth:
         if blocked:
             logging.info('Secret %s not read: %s', secret_id, blocked[1])
             return None, blocked[0], blocked[1]
+        if not self._v2_secrets_supported():
+            target = with_access_params('/v1/secrets/{0}'.format(secret_id), access_params)
+        logging.info('Reading "%s"', target)
         try:
             secret, status, message = self._read_entity(target)
         except Exception as e:
@@ -2558,6 +2640,7 @@ class ThycoticAuth:
         if blocked:
             logging.info('Secret %s field not read: %s', secret_id, blocked[1])
             return _message_response(blocked[0], blocked[1])
+        logging.info('Reading "%s"', target)
         try:
             response = self.thycotic_get(target)
         except Exception:

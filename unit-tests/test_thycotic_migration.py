@@ -57,11 +57,23 @@ def _state(**overrides):
     return _response(200, json_value=body)
 
 
+def _is_secrets_probe(url):
+    """The one-time GET /api/v2/secrets?take=1 that chooses v1 or v2."""
+    return url.split('?', 1)[0].rstrip('/').endswith('/v2/secrets')
+
+
+def _reads(get):
+    """GETs other than the version probe, in call order."""
+    return [call for call in get.call_args_list if not _is_secrets_probe(call[0][0])]
+
+
 def _gets(*responses):
     """Route GETs: /state responses are consumed in order; anything else is the secret read."""
     pending = list(responses)
 
     def get(url, **kwargs):
+        if _is_secrets_probe(url):
+            return _response(200, json_value={'records': [], 'hasNext': False})
         if not pending:
             raise AssertionError(url)
         if url.rstrip('/').endswith('/state'):
@@ -279,10 +291,11 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertEqual(secret, {'id': 42})
         self.assertIsNone(status)
         self.assertIsNone(message)
-        self.assertEqual(get.call_count, 2)
-        self.assertTrue(get.call_args_list[0][0][0].endswith('/api/v1/secrets/42/state'))
-        self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
-        self.assertNotIn('autoComment', get.call_args_list[1][0][0])
+        reads = _reads(get)
+        self.assertEqual(len(reads), 2)
+        self.assertTrue(reads[0][0][0].endswith('/api/v1/secrets/42/state'))
+        self.assertTrue(reads[1][0][0].endswith(f'/api/v2/secrets/42?{PLAIN_QUERY}'))
+        self.assertNotIn('autoComment', reads[1][0][0])
         post.assert_not_called()
 
     def test_checkout_state_checks_out_and_confirms_check_in(self):
@@ -296,9 +309,10 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertEqual(secret, {'id': 42})
         self.assertIsNone(status)
         self.assertIsNone(message)
-        self.assertTrue(get.call_args_list[0][0][0].endswith('/state'))
-        self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
-        self.assertTrue(get.call_args_list[2][0][0].endswith('/state'))
+        reads = _reads(get)
+        self.assertTrue(reads[0][0][0].endswith('/state'))
+        self.assertTrue(reads[1][0][0].endswith(f'/api/v2/secrets/42?{CHECKOUT_QUERY}'))
+        self.assertTrue(reads[2][0][0].endswith('/state'))
         post.assert_not_called()
 
     def test_failed_checkout_read_checks_the_secret_back_in(self):
@@ -314,7 +328,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertIsNone(secret)
         self.assertEqual(status, 500)
         self.assertEqual(message, 'boom')
-        self.assertEqual(get.call_count, 3)
+        self.assertEqual(len(_reads(get)), 3)
         post.assert_called_once()
         self.assertTrue(post.call_args[0][0].endswith('/api/v1/secrets/42/check-in'))
         body = post.call_args.kwargs['json']
@@ -332,7 +346,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
             secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
         self.assertEqual((status, message), (500, 'boom'))
-        self.assertEqual(get.call_count, 3)
+        self.assertEqual(len(_reads(get)), 3)
         post.assert_not_called()
 
     def test_comment_state_does_not_check_out(self):
@@ -345,7 +359,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertEqual(secret, {'id': 42})
         self.assertIsNone(status)
         self.assertIsNone(message)
-        url = get.call_args_list[1][0][0]
+        url = _reads(get)[1][0][0]
         self.assertIn('autoComment=Keeper%20import', url)
         self.assertIn('noAutoCheckout=true', url)
         self.assertIn('autoCheckout=false', url)
@@ -391,8 +405,9 @@ class TestFetchThycoticSecret(unittest.TestCase):
             secret, status, message = _auth().fetch_thycotic_secret(42)
         self.assertIsNone(secret)
         self.assertEqual((status, message), (403, 'Access denied'))
-        self.assertEqual(get.call_count, 2)
-        self.assertNotIn('autoCheckout=true', get.call_args_list[1][0][0])
+        reads = _reads(get)
+        self.assertEqual(len(reads), 2)
+        self.assertNotIn('autoCheckout=true', reads[1][0][0])
 
     def test_non_json_secret_error_is_returned(self):
         html = _response(502, '<html>Bad Gateway</html>', reason='Bad Gateway')
@@ -421,6 +436,58 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertEqual(status, 'N/A')
         self.assertEqual(message, 'refresh failed')
         get.assert_not_called()
+
+    def test_servers_without_v2_read_secrets_from_v1(self):
+        secret_body = _response(200, '{"id": 42}', {'id': 42})
+        calls = []
+
+        def get(url, **kwargs):
+            calls.append(url)
+            if _is_secrets_probe(url):
+                return _response(404, '{"message": "missing"}', {'message': 'missing'})
+            if url.rstrip('/').endswith('/state'):
+                return _mark_state(_state())
+            return secret_body
+
+        auth = _auth()
+        with mock.patch(REQUESTS_GET, side_effect=get):
+            secret, status, message = auth.fetch_thycotic_secret(42)
+            self.assertEqual(auth.secrets_search_endpoint(), '/v1/secrets?filter.includeRestricted=true')
+            again, _, _ = auth.fetch_thycotic_secret(42)
+        self.assertEqual(secret, {'id': 42})
+        self.assertIsNone(status)
+        self.assertIsNone(message)
+        self.assertEqual(again, {'id': 42})
+        secret_urls = [url for url in calls if '/secrets/42?' in url]
+        self.assertEqual(len(secret_urls), 2)
+        self.assertTrue(all('/api/v1/secrets/42?' in url for url in secret_urls))
+        self.assertEqual(sum(1 for url in calls if _is_secrets_probe(url)), 1)
+
+    def test_probe_error_is_not_remembered(self):
+        secret_body = _response(200, '{"id": 42}', {'id': 42})
+        probes = []
+
+        def get(url, **kwargs):
+            if _is_secrets_probe(url):
+                probes.append(url)
+                if len(probes) == 1:
+                    raise requests.exceptions.ConnectionError('blip')
+                return _response(404, '{"message": "missing"}', {'message': 'missing'})
+            if url.rstrip('/').endswith('/state'):
+                return _mark_state(_state())
+            return secret_body
+
+        auth = _auth()
+        with mock.patch(REQUESTS_GET, side_effect=get):
+            first, status, message = auth.fetch_thycotic_secret(42)
+            self.assertIsNone(auth._v2_secrets)
+            second, _, _ = auth.fetch_thycotic_secret(42)
+        self.assertEqual(first, {'id': 42})
+        self.assertIsNone(status)
+        self.assertIsNone(message)
+        self.assertEqual(second, {'id': 42})
+        self.assertIs(auth._v2_secrets, False)
+        self.assertEqual(len(probes), 2)
 
 
 class TestThycoticSecretGet(unittest.TestCase):
@@ -610,6 +677,50 @@ class TestErrorResponses(unittest.TestCase):
                 _auth().thycotic_search('/v1/secrets/lookup')
         self.assertIn('HTTP 503', str(ctx.exception))
         self.assertNotIsInstance(ctx.exception, ValueError)
+
+    def test_secret_summary_search_pages_until_has_next_is_false(self):
+        pages = [
+            _response(200, json_value={
+                'records': [{'id': 1}, {'id': 2}], 'hasNext': True, 'nextSkip': 2,
+            }),
+            _response(200, json_value={
+                'records': [{'id': 3}], 'hasNext': False,
+            }),
+        ]
+        with mock.patch(REQUESTS_GET, side_effect=pages) as get:
+            result = _auth().thycotic_search('/v2/secrets?filter.includeRestricted=true')
+        self.assertEqual([row['id'] for row in result], [1, 2, 3])
+        first, second = (call[0][0] for call in get.call_args_list)
+        self.assertIn('/api/v2/secrets?', first)
+        self.assertIn('filter.includeRestricted=true', first)
+        self.assertIn('take=1000', first)
+        self.assertIn('skip=0', first)
+        self.assertIn('skip=2', second)
+        self.assertIn('take=1000', second)
+
+    def test_full_secret_page_without_has_next_requests_the_next_skip(self):
+        full = [{'id': i} for i in range(1000)]
+        pages = [
+            _response(200, json_value={'records': full, 'hasNext': False}),
+            _response(200, json_value={'records': [{'id': 1000}], 'hasNext': False}),
+        ]
+        with mock.patch(REQUESTS_GET, side_effect=pages) as get:
+            result = _auth().thycotic_search('/v1/secrets?filter.includeRestricted=true')
+        self.assertEqual(len(result), 1001)
+        self.assertEqual(result[-1]['id'], 1000)
+        self.assertIn('take=1000', get.call_args_list[0][0][0])
+        self.assertIn('skip=1000', get.call_args_list[1][0][0])
+
+    def test_other_searches_keep_take_1000_and_stop_on_has_next_false(self):
+        full = [{'id': i} for i in range(1000)]
+        page = _response(200, json_value={'records': full, 'hasNext': False})
+        with mock.patch(REQUESTS_GET, return_value=page) as get:
+            result = _auth().thycotic_search('/v1/users')
+        self.assertEqual(len(result), 1000)
+        get.assert_called_once()
+        url = get.call_args[0][0]
+        self.assertIn('take=1000', url)
+        self.assertNotIn('skip=', url)
 
     def test_search_json_error_uses_message(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
