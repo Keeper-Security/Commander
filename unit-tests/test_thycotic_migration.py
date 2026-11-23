@@ -57,9 +57,17 @@ def _state(**overrides):
     return _response(200, json_value=body)
 
 
+def _path(url):
+    return url.split('?', 1)[0].rstrip('/')
+
+
 def _is_secrets_probe(url):
     """The one-time GET /api/v2/secrets?take=1 that chooses v1 or v2."""
-    return url.split('?', 1)[0].rstrip('/').endswith('/v2/secrets')
+    return _path(url).endswith('/v2/secrets')
+
+
+def _is_state_url(url):
+    return _path(url).endswith('/state')
 
 
 def _reads(get):
@@ -76,7 +84,7 @@ def _gets(*responses):
             return _response(200, json_value={'records': [], 'hasNext': False})
         if not pending:
             raise AssertionError(url)
-        if url.rstrip('/').endswith('/state'):
+        if _is_state_url(url):
             for index, response in enumerate(pending):
                 if getattr(response, '_is_state', False):
                     return pending.pop(index)
@@ -293,7 +301,10 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertIsNone(message)
         reads = _reads(get)
         self.assertEqual(len(reads), 2)
-        self.assertTrue(reads[0][0][0].endswith('/api/v1/secrets/42/state'))
+        self.assertTrue(_is_state_url(reads[0][0][0]))
+        self.assertIn('autoCheckout=false', reads[0][0][0])
+        self.assertNotIn('autoCheckIn', reads[0][0][0])
+        self.assertNotIn('forceCheckIn', reads[0][0][0])
         self.assertTrue(reads[1][0][0].endswith(f'/api/v2/secrets/42?{PLAIN_QUERY}'))
         self.assertNotIn('autoComment', reads[1][0][0])
         post.assert_not_called()
@@ -310,9 +321,16 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertIsNone(status)
         self.assertIsNone(message)
         reads = _reads(get)
-        self.assertTrue(reads[0][0][0].endswith('/state'))
+        self.assertTrue(_is_state_url(reads[0][0][0]))
+        self.assertIn('autoCheckout=false', reads[0][0][0])
+        self.assertNotIn('autoCheckIn', reads[0][0][0])
         self.assertTrue(reads[1][0][0].endswith(f'/api/v2/secrets/42?{CHECKOUT_QUERY}'))
-        self.assertTrue(reads[2][0][0].endswith('/state'))
+        confirm = reads[2][0][0]
+        self.assertTrue(_is_state_url(confirm))
+        self.assertIn('autoCheckout=false', confirm)
+        self.assertIn('autoCheckIn=true', confirm)
+        self.assertIn('autoComment=Checking%20out%20for%20Keeper%20Import', confirm)
+        self.assertNotIn('forceCheckIn', confirm)
         post.assert_not_called()
 
     def test_failed_checkout_read_checks_the_secret_back_in(self):
@@ -328,7 +346,12 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertIsNone(secret)
         self.assertEqual(status, 500)
         self.assertEqual(message, 'boom')
-        self.assertEqual(len(_reads(get)), 3)
+        reads = _reads(get)
+        self.assertEqual(len(reads), 3)
+        confirm = reads[2][0][0]
+        self.assertTrue(_is_state_url(confirm))
+        self.assertIn('autoCheckIn=true', confirm)
+        self.assertIn('autoCheckout=false', confirm)
         post.assert_called_once()
         self.assertTrue(post.call_args[0][0].endswith('/api/v1/secrets/42/check-in'))
         body = post.call_args.kwargs['json']
@@ -425,7 +448,8 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertEqual(message, 'refused')
         self.assertEqual(get.call_count, 2)
         for call in get.call_args_list:
-            self.assertTrue(call[0][0].endswith('/api/v1/secrets/42/state'))
+            self.assertTrue(_is_state_url(call[0][0]))
+            self.assertIn('autoCheckout=false', call[0][0])
 
     def test_error_reports_exception_from_token_refresh(self):
         auth = _auth()
@@ -445,7 +469,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
             calls.append(url)
             if _is_secrets_probe(url):
                 return _response(404, '{"message": "missing"}', {'message': 'missing'})
-            if url.rstrip('/').endswith('/state'):
+            if _is_state_url(url):
                 return _mark_state(_state())
             return secret_body
 
@@ -473,7 +497,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
                 if len(probes) == 1:
                     raise requests.exceptions.ConnectionError('blip')
                 return _response(404, '{"message": "missing"}', {'message': 'missing'})
-            if url.rstrip('/').endswith('/state'):
+            if _is_state_url(url):
                 return _mark_state(_state())
             return secret_body
 
@@ -497,7 +521,8 @@ class TestThycoticSecretGet(unittest.TestCase):
             rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 2)
-        self.assertTrue(get.call_args_list[0][0][0].endswith('/state'))
+        self.assertTrue(_is_state_url(get.call_args_list[0][0][0]))
+        self.assertIn('autoCheckout=false', get.call_args_list[0][0][0])
         self.assertTrue(get.call_args_list[1][0][0].endswith(
             f'/api/v1/secrets/42/fields/private-key?{PLAIN_QUERY}'))
 

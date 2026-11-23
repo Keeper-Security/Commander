@@ -155,6 +155,21 @@ def _view_comment(comment):
     return _SECRET_ACCESS_COMMENT
 
 
+def secret_state_params(check_in=False, comment=None):
+    # type: (bool, Optional[str]) -> List[Tuple[str, str]]
+    """Query parameters for GET /v1/secrets/{id}/state.
+
+    That route accepts autoCheckout and autoCheckIn. Reading state does not
+    check the secret out. A later read can ask the server to check it in.
+    forceCheckIn is never sent: it would end another user's checkout.
+    """
+    params = [('autoCheckout', 'false')]
+    if check_in:
+        params.append(('autoCheckIn', 'true'))
+        params.append(('autoComment', _view_comment(comment)))
+    return params
+
+
 def _checked_out_holder(state):
     # type: (dict) -> str
     holder = state.get('checkedOutUserDisplayName')
@@ -2581,7 +2596,9 @@ class ThycoticAuth:
         Returns (url, access_params, None) when the read may proceed.
         Returns (None, None, (status, message)) when the secret must not be requested.
         """
-        state_endpoint = ENDPOINTS["secret_state"].format(secret_id=secret_id)
+        state_endpoint = with_access_params(
+            ENDPOINTS["secret_state"].format(secret_id=secret_id),
+            secret_state_params())
         try:
             state, status, message = self._read_entity(state_endpoint)
         except Exception as e:
@@ -2602,12 +2619,13 @@ class ThycoticAuth:
     def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
         """Read a secret after checking its state.
 
-        GET /v1/secrets/{id}/state runs before the secret is requested. The
-        secret is GET /v2/secrets/{id} when that route exists, and GET
-        /v1/secrets/{id} on Secret Server 11.0 through 11.2. Checkout
-        parameters are sent only when that state requires a checkout, and then
-        only together with autoCheckIn. A read that checked the secret out is
-        followed by a check-in when this user still holds it.
+        GET /v1/secrets/{id}/state runs first, with autoCheckout=false, so the
+        probe does not check the secret out. The secret is GET /v2/secrets/{id}
+        when that route exists, and GET /v1/secrets/{id} on Secret Server 11.0
+        through 11.2. Checkout parameters are sent only when that state
+        requires a checkout, and then only together with autoCheckIn. A read
+        that checked the secret out is followed by another state read with
+        autoCheckIn, and by a check-in when this user still holds it.
 
         Returns (secret, None, None) on success, or (None, status, message).
         """
@@ -2664,9 +2682,15 @@ class ThycoticAuth:
             self._check_in_if_held(secret_id)
 
     def _check_in_if_held(self, secret_id):  # type: (Any) -> None
-        """Check the secret in when the state says this user holds the checkout."""
+        """Check the secret in when this user still holds the checkout.
+
+        The state read sends autoCheckIn. The check-in POST runs only when
+        that response still says this user holds the secret.
+        """
         try:
-            state, _status, _message = self._read_entity(ENDPOINTS["secret_state"].format(secret_id=secret_id))
+            state, _status, _message = self._read_entity(with_access_params(
+                ENDPOINTS["secret_state"].format(secret_id=secret_id),
+                secret_state_params(check_in=True, comment=self._secret_comment())))
         except Exception as e:
             logging.warning('Secret %s could not be checked back in: %s', secret_id, e)
             return
