@@ -21,7 +21,9 @@ VISIBLE_ID = 7
 RESTRICTED_ID = 4242
 SHARED_ID = 99
 PLAIN_QUERY = 'noAutoCheckout=true&autoCheckout=false'
-CHECKOUT_QUERY = 'autoCheckout=true&autoCheckIn=true&autoComment=Checking%20out'
+DEFAULT_COMMENT = 'Checking out for Keeper Import'
+CHECKOUT_QUERY = ('autoCheckout=true&autoCheckIn=true'
+                  '&autoComment=Checking%20out%20for%20Keeper%20Import')
 REQUESTS_GET = 'keepercommander.importer.thycotic.thycotic.requests.get'
 REQUESTS_POST = 'keepercommander.importer.thycotic.thycotic.requests.post'
 SLEEP = 'keepercommander.importer.thycotic.thycotic.time.sleep'
@@ -156,7 +158,7 @@ class TestSecretAccessDecision(unittest.TestCase):
             self.assertEqual(params, [
                 ('autoCheckout', 'true'),
                 ('autoCheckIn', 'true'),
-                ('autoComment', 'Checking out'),
+                ('autoComment', DEFAULT_COMMENT),
             ])
             self.assertNotIn('forceCheckIn', dict(params))
             self.assertNotIn('noAutoCheckout', dict(params))
@@ -167,7 +169,7 @@ class TestSecretAccessDecision(unittest.TestCase):
         self.assertEqual(params, [
             ('noAutoCheckout', 'true'),
             ('autoCheckout', 'false'),
-            ('autoComment', 'Checking out'),
+            ('autoComment', DEFAULT_COMMENT),
         ])
         self.assertNotIn('autoCheckIn', dict(params))
 
@@ -238,7 +240,7 @@ class TestAccessParams(unittest.TestCase):
     def test_checkout_params_replace_existing_access_params(self):
         endpoint = with_access_params(
             '/v1/secrets/42?autoCheckout=false&autoComment=old&forceCheckIn=true',
-            [('autoCheckout', 'true'), ('autoCheckIn', 'true'), ('autoComment', 'Checking out')],
+            [('autoCheckout', 'true'), ('autoCheckIn', 'true'), ('autoComment', DEFAULT_COMMENT)],
         )
         self.assertEqual(endpoint, f'/v1/secrets/42?{CHECKOUT_QUERY}')
         self.assertNotIn('forceCheckIn', endpoint)
@@ -324,7 +326,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
         post.assert_called_once()
         self.assertTrue(post.call_args[0][0].endswith('/api/v1/secrets/42/check-in'))
         body = post.call_args.kwargs['json']
-        self.assertEqual(body['comment'], 'Checking out')
+        self.assertEqual(body['comment'], DEFAULT_COMMENT)
         self.assertIs(body['forceCheckIn'], False)
         self.assertIs(body['noAutoCheckout'], True)
 
