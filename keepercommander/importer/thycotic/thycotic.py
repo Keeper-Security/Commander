@@ -60,41 +60,15 @@ SECRET_SUMMARY_PAGE_SIZE = 1000
 # Used when the import was not given --checkout-comment.
 _SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 
-# Parameters that check a secret out or in. A read URL keeps none of these
-# unless the secret state says this read needs them. forceCheckIn is never
-# sent: it would end another user's checkout.
+# Secret Server returns this message when a plain read must check the secret out.
+CHECKOUT_ERROR = 'API_SecretRequiresCheckout'
+
+# Parameters that check a secret out or in. A read URL replaces any of these
+# already present so the chosen checkout mode is the only one sent.
+# forceCheckIn is never sent: it would end another user's checkout.
 SECRET_ACCESS_PARAM_NAMES = frozenset((
     'autoCheckout', 'autoCheckIn', 'autoComment', 'forceCheckIn', 'noAutoCheckout',
 ))
-
-# secretState values from GET /v1/secrets/{id}/state that this import can read.
-READABLE_SECRET_STATES = frozenset((
-    'None',
-    'RequiresCheckout',
-    'RequiresComment',
-    'RequiresCheckoutAndComment',
-))
-
-CHECKOUT_REQUIRED_STATES = frozenset((
-    'RequiresCheckout',
-    'RequiresCheckoutAndComment',
-))
-
-COMMENT_REQUIRED_STATES = frozenset((
-    'RequiresComment',
-    'RequiresCheckoutAndComment',
-))
-
-# The secret is not requested, so the read cannot check it out.
-UNREADABLE_SECRET_STATES = {
-    'RequiresApproval': (403, 'Secret requires approval before it can be read'),
-    'RequiresDoubleLockPassword': (403, 'Secret is protected by a double lock'),
-    'CreateDoubleLockPassword': (403, 'Secret requires a double lock password to be created'),
-    'DoubleLockNoAccess': (403, 'Secret is protected by a double lock this user cannot access'),
-    'CannotView': (403, 'Secret cannot be viewed'),
-    'RequiresUndelete': (403, 'Secret must be undeleted before it can be read'),
-    'RequiresCheckoutPendingRPC': (409, 'Secret is checked out for a pending password change'),
-}
 
 
 # Secret Server REST API endpoints (relative to the base URL).
@@ -117,7 +91,6 @@ ENDPOINTS = {
     ),
     "secrets_search": "/v2/secrets?filter.includeRestricted={restricted}",
     "secret": "/v2/secrets/{secret_id}",
-    "secret_state": "/v1/secrets/{secret_id}/state",
     "secret_check_in": "/v1/secrets/{secret_id}/check-in",
     "secret_field": "/v1/secrets/{secret_id}/fields/{slug}",
     "secret_templates": (
@@ -135,19 +108,6 @@ def _replace_query(endpoint, params):
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
 
-def with_access_params(endpoint, access_params):
-    # type: (str, List[Tuple[str, str]]) -> str
-    """Apply the access parameters chosen for this read.
-
-    Other query parameters are kept. Checkout and comment parameters already
-    on the URL are replaced, so a plain read cannot inherit a checkout.
-    """
-    query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
-    params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
-    params.extend(access_params or [])
-    return _replace_query(endpoint, params)
-
-
 def _view_comment(comment):
     # type: (Optional[str]) -> str
     if isinstance(comment, str) and comment.strip():
@@ -155,99 +115,39 @@ def _view_comment(comment):
     return _SECRET_ACCESS_COMMENT
 
 
-def secret_state_params(check_in=False, comment=None):
+def secret_access_params(enabled, comment=None):
     # type: (bool, Optional[str]) -> List[Tuple[str, str]]
-    """Query parameters for GET /v1/secrets/{id}/state.
+    """Query parameters for one secret or secret-field read.
 
-    That route accepts autoCheckout and autoCheckIn. Reading state does not
-    check the secret out. A later read can ask the server to check it in.
-    forceCheckIn is never sent: it would end another user's checkout.
+    A plain read sends noAutoCheckout so the server does not check the secret
+    out. A checkout read sends autoCheckout and autoCheckIn so the secret is
+    checked back in after the response.
     """
-    params = [('autoCheckout', 'false')]
-    if check_in:
-        params.append(('autoCheckIn', 'true'))
-        params.append(('autoComment', _view_comment(comment)))
-    return params
-
-
-def _checked_out_holder(state):
-    # type: (dict) -> str
-    holder = state.get('checkedOutUserDisplayName')
-    if isinstance(holder, str) and holder.strip():
-        return holder.strip()
-    user_id = state.get('checkedOutUserId')
-    if user_id:
-        return 'user {0}'.format(user_id)
-    return 'another user'
-
-
-def secret_access_decision(state, comment=None):
-    # type: (Any, Optional[str]) -> Tuple[Optional[List[Tuple[str, str]]], Optional[Tuple[Any, str]]]
-    """Choose how to read a secret without leaving it checked out.
-
-    Returns (params, None) when the secret may be read with those query
-    parameters. A read that does not require checkout sends noAutoCheckout.
-    Returns (None, (status, message)) when the secret must not be requested.
-    """
-    if not isinstance(state, dict):
-        return None, (400, 'Secret state could not be read')
-
-    secret_state = state.get('secretState')
-    if secret_state is None or secret_state == '':
-        secret_state = 'None'
-    elif not isinstance(secret_state, str):
-        secret_state = str(secret_state)
-    else:
-        secret_state = secret_state.strip() or 'None'
-
-    if secret_state in UNREADABLE_SECRET_STATES:
-        return None, UNREADABLE_SECRET_STATES[secret_state]
-    if secret_state not in READABLE_SECRET_STATES:
-        return None, (400, 'Secret state "{0}" is not supported'.format(secret_state))
-
-    checked_out = state.get('isCheckedOut') is True
-    by_current_user = state.get('isCheckedOutByCurrentUser') is True
-    needs_checkout = secret_state in CHECKOUT_REQUIRED_STATES
-    needs_comment = secret_state in COMMENT_REQUIRED_STATES
     view_comment = _view_comment(comment)
-
-    if needs_checkout and checked_out and not by_current_user:
-        return None, (409, 'Secret is checked out by {0}'.format(_checked_out_holder(state)))
-
-    if needs_checkout and not checked_out:
-        # Check out for this read and check back in before the response returns.
+    if enabled:
         return [
             ('autoCheckout', 'true'),
             ('autoCheckIn', 'true'),
             ('autoComment', view_comment),
-        ], None
-
-    # Do not check out. noAutoCheckout stops the server from doing it on its own.
-    params = [('noAutoCheckout', 'true'), ('autoCheckout', 'false')]
-    if checked_out and by_current_user:
-        # This user already holds it, including a checkout an earlier read left
-        # behind. Check it in after this read instead of checking it out again.
-        params.append(('autoCheckIn', 'true'))
-        params.append(('autoComment', view_comment))
-    elif needs_comment:
-        params.append(('autoComment', view_comment))
-    return params, None
+        ]
+    return [
+        ('autoCheckout', 'false'),
+        ('autoComment', view_comment),
+        ('noAutoCheckout', 'true'),
+    ]
 
 
-def _message_response(status, message):
-    # type: (Any, str) -> requests.Response
-    """Build a response the field reader can report without calling the server."""
-    rs = requests.Response()
-    rs.status_code = status if isinstance(status, int) else 400
-    rs.reason = 'Error'
-    content = json.dumps({'message': message}).encode('utf-8')
-    rs._content = content
-    rs._content_consumed = True
-    rs.raw = io.BytesIO(content)
-    rs.headers['Content-Type'] = 'application/json'
-    rs.encoding = 'utf-8'
-    rs.url = ''
-    return rs
+def with_secret_access_params(endpoint, enabled=False, comment=None):
+    # type: (str, bool, Optional[str]) -> str
+    """Add checkout and comment parameters to a secret read URL.
+
+    Existing query parameters are kept. Any existing checkout or comment
+    parameter is replaced, not duplicated.
+    """
+    query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
+    params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
+    params.extend(secret_access_params(enabled, comment))
+    return _replace_query(endpoint, params)
 
 
 
@@ -2589,120 +2489,72 @@ class ThycoticAuth:
     def _secret_comment(self):  # type: () -> str
         return _view_comment(self.secret_comment)
 
-    def _prepare_secret_read(self, secret_id, endpoint):
-        # type: (Any, str) -> Tuple[Optional[str], Optional[List[Tuple[str, str]]], Optional[Tuple[Any, str]]]
-        """Check secret state and return the URL for this read.
+    def _secret_endpoint(self, secret_id):  # type: (Any) -> str
+        """GET /v2/secrets/{id} when that route exists, else GET /v1/secrets/{id}."""
+        if self._v2_secrets_supported():
+            return ENDPOINTS["secret"].format(secret_id=secret_id)
+        return '/v1/secrets/{0}'.format(secret_id)
 
-        Returns (url, access_params, None) when the read may proceed.
-        Returns (None, None, (status, message)) when the secret must not be requested.
-        """
-        state_endpoint = with_access_params(
-            ENDPOINTS["secret_state"].format(secret_id=secret_id),
-            secret_state_params())
+    def _read_secret_with_access(self, secret_id, enabled):
+        # type: (Any, bool) -> Tuple[Optional[dict], Any, Optional[str]]
+        endpoint = with_secret_access_params(
+            self._secret_endpoint(secret_id), enabled, self._secret_comment())
+        logging.info('Reading "%s"', endpoint)
         try:
-            state, status, message = self._read_entity(state_endpoint)
+            return self._read_entity(endpoint)
         except Exception as e:
-            logging.info('"%s" error: %s', state_endpoint, str(e))
-            return None, None, ('N/A', str(e))
-        if not isinstance(state, dict):
-            return None, None, (
-                status if status is not None else 'N/A',
-                message or 'Secret state could not be read')
-
-        access_params, blocked = secret_access_decision(state, self._secret_comment())
-        if blocked:
-            return None, None, blocked
-
-        target = with_access_params(endpoint, access_params)
-        return target, access_params, None
+            logging.info('"%s" error: %s', endpoint, str(e))
+            return None, 'N/A', str(e)
 
     def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
-        """Read a secret after checking its state.
+        """Read a secret, checking it out only when the server requires it.
 
-        GET /v1/secrets/{id}/state runs first, with autoCheckout=false, so the
-        probe does not check the secret out. The secret is GET /v2/secrets/{id}
+        The secret is first read without checkout (autoCheckout=false,
+        noAutoCheckout=true). If the server answers 400 API_SecretRequiresCheckout,
+        the read is retried with autoCheckout and autoCheckIn. That retry is
+        followed by an explicit check-in, because autoCheckIn does not always
+        release a checkout when the read fails. The secret is GET /v2/secrets/{id}
         when that route exists, and GET /v1/secrets/{id} on Secret Server 11.0
-        through 11.2. Checkout parameters are sent only when that state
-        requires a checkout, and then only together with autoCheckIn. A read
-        that checked the secret out is followed by another state read with
-        autoCheckIn, and by a check-in when this user still holds it.
+        through 11.2.
 
         Returns (secret, None, None) on success, or (None, status, message).
         """
-        target, access_params, blocked = self._prepare_secret_read(
-            secret_id, ENDPOINTS["secret"].format(secret_id=secret_id))
-        if blocked:
-            logging.info('Secret %s not read: %s', secret_id, blocked[1])
-            return None, blocked[0], blocked[1]
-        if not self._v2_secrets_supported():
-            target = with_access_params('/v1/secrets/{0}'.format(secret_id), access_params)
-        logging.info('Reading "%s"', target)
         try:
-            secret, status, message = self._read_entity(target)
+            secret, status, message = self._read_secret_with_access(secret_id, enabled=False)
+            if status == 400 and message == CHECKOUT_ERROR:
+                secret, status, message = self._read_secret_with_access(secret_id, enabled=True)
+                self._check_in_secret(secret_id)
+            return secret, status, message
         except Exception as e:
-            logging.info('"%s" error: %s', target, str(e))
-            secret, status, message = None, 'N/A', str(e)
-        self._release_checkout(secret_id, access_params, secret is not None)
-        return secret, status, message
+            return None, 'N/A', str(e)
 
     def fetch_thycotic_secret_field(self, secret_id, slug):
         # type: (Any, str) -> requests.Response
-        """Read one secret field after the same state check as the secret read.
+        """Read one secret field, checking it out only when the server requires it.
 
-        Checkout parameters are added only when the state requires a checkout,
-        and those requests include autoCheckIn. The response is the field body,
-        or a response that carries the reason the field was not read.
+        The field is first read without checkout. If the server answers 400
+        API_SecretRequiresCheckout, the read is retried with autoCheckout and
+        autoCheckIn, then checked in explicitly. The response is the field body.
         """
-        target, access_params, blocked = self._prepare_secret_read(
-            secret_id, ENDPOINTS["secret_field"].format(secret_id=secret_id, slug=slug))
-        if blocked:
-            logging.info('Secret %s field not read: %s', secret_id, blocked[1])
-            return _message_response(blocked[0], blocked[1])
-        logging.info('Reading "%s"', target)
-        try:
-            response = self.thycotic_get(target)
-        except Exception:
-            self._release_checkout(secret_id, access_params, False)
-            raise
-        self._release_checkout(secret_id, access_params, getattr(response, 'status_code', None) == 200)
+        endpoint = ENDPOINTS["secret_field"].format(secret_id=secret_id, slug=slug)
+        response = self._get_secret_resource(endpoint, enabled=False)
+        if (response is not None and response.status_code == 400
+                and self._json_message(response) == CHECKOUT_ERROR):
+            response.close()
+            try:
+                response = self._get_secret_resource(endpoint, enabled=True)
+            finally:
+                self._check_in_secret(secret_id)
         return response
 
-    def _release_checkout(self, secret_id, access_params, read_succeeded):
-        # type: (Any, List[Tuple[str, str]], bool) -> None
-        """Check the secret back in when this read may have left it checked out.
-
-        autoCheckout can check a secret out before a failed read returns, and
-        autoCheckIn does not always run in that case. A checkout this read
-        started is checked in when this user still holds it. A checkout the
-        user already held is checked in only after a successful read.
-        """
-        values = {name: value for name, value in access_params or []}
-        started_checkout = values.get('autoCheckout') == 'true'
-        if started_checkout or (read_succeeded and values.get('autoCheckIn') == 'true'):
-            self._check_in_if_held(secret_id)
-
-    def _check_in_if_held(self, secret_id):  # type: (Any) -> None
-        """Check the secret in when this user still holds the checkout.
-
-        The state read sends autoCheckIn. The check-in POST runs only when
-        that response still says this user holds the secret.
-        """
-        try:
-            state, _status, _message = self._read_entity(with_access_params(
-                ENDPOINTS["secret_state"].format(secret_id=secret_id),
-                secret_state_params(check_in=True, comment=self._secret_comment())))
-        except Exception as e:
-            logging.warning('Secret %s could not be checked back in: %s', secret_id, e)
-            return
-        if not isinstance(state, dict) or state.get('isCheckedOutByCurrentUser') is not True:
-            return
-        if state.get('secretState') == 'RequiresCheckoutPendingRPC':
-            logging.warning('Secret %s was left checked out because a password change is pending', secret_id)
-            return
-        self._check_in_secret(secret_id)
+    def _get_secret_resource(self, endpoint, enabled):
+        # type: (str, bool) -> requests.Response
+        target = with_secret_access_params(endpoint, enabled, self._secret_comment())
+        logging.info('Reading "%s"', target)
+        return self.thycotic_get(target)
 
     def _check_in_secret(self, secret_id):  # type: (Any) -> None
-        """Check in a secret this user holds. Does not force another user's checkout."""
+        """Check in a secret this read checked out. Does not force another user's checkout."""
         try:
             self.ensure_auth_token()
             headers = {

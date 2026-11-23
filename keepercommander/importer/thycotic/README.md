@@ -151,13 +151,9 @@ The `import` command does **not** define `--verbose` or `--debug`. For detailed 
 Thycotic Secret Server restricts access to certain secrets. To import restricted secrets:
 
 1. Your Thycotic user account must have the **"View Restricted Secret"** permission
-2. Before each secret or secret field is read, Commander calls `GET /api/v1/secrets/{id}/state?autoCheckout=false` and decides from that response. That probe does not check the secret out.
-   - **No restriction:** the secret is read with `noAutoCheckout=true` and `autoCheckout=false`. It is not checked out.
-   - **Checkout required, and not checked out:** the read sends `autoCheckout=true`, `autoCheckIn=true`, and `autoComment`. Commander then reads state again with `autoCheckIn=true`. If this user still holds the secret, Commander checks it in.
-   - **Already checked out by this user:** the read does not check it out again. It checks the secret back in after a successful read.
-   - **Checked out by someone else, approval, double lock, or a pending password change:** the secret is not requested, so the import cannot leave it checked out.
+2. Each secret and secret field is read without checkout (`autoCheckout=false`, `noAutoCheckout=true`). If Secret Server answers `400` with `API_SecretRequiresCheckout`, that read is retried with `autoCheckout`, `autoCheckIn`, and `autoComment`. Commander then calls `POST /api/v1/secrets/{id}/check-in` so a checkout the read did not release is checked back in. `forceCheckIn` stays false.
 
-`--checkout-comment` sets the comment sent when a secret requires one. The default is `Checking out for Keeper Import`.
+`--checkout-comment` sets the comment sent on those reads. The default is `Checking out for Keeper Import`.
 
 This applies when loading secret content for import.
 Membership export lists secrets with `GET /api/v2/secrets` (or `GET /api/v1/secrets` on Secret Server 11.0 to 11.2) and does not read secret values or check them out. User provisioning does not read secret values.
@@ -317,7 +313,7 @@ If groups don't appear in team creation:
   - Number of permission mappings (if downloading membership)
   - Network latency to Thycotic server
   - File attachment sizes
-  - Whether secrets require a state check and checkout before they can be read
+  - Whether secrets require a checkout before they can be read
   - Worker pool size (for membership download only; default 4)
 - Large imports may take several minutes
 - The import process logs progress every 10 secrets
@@ -329,9 +325,7 @@ Supported on Delinea Secret Server 11.x through 12.x. Secret reads and summary s
 
 ## Limitations
 
-- **Secrets with Approval or Double Lock Policies**: Secrets requiring approval or protected by double lock policies cannot be imported. Request approval in Thycotic Secret Server or disable the double lock policy before importing.
-
-- **Secrets checked out by someone else**: Those secrets are skipped. Check them in, or wait until the checkout ends, and run the import again. A secret checked out for a pending password change is also skipped.
+- **Secrets the server will not return**: Approval, double lock, a checkout held by someone else, and a pending password change fail the secret read and are skipped. Resolve that in Secret Server and run the import again.
 
 - **Custom Secret Roles**: Custom Thycotic roles cannot be auto-mapped to Keeper permissions. Only standard roles are supported.
 
@@ -347,8 +341,7 @@ The import uses the following Thycotic Secret Server API endpoints:
 - `GET /api/v1/groups/{id}/users` - Get group members
 - `GET /api/v1/secrets/lookup` - Secret ids for import (with folder/restriction filters)
 - `GET /api/v2/secrets` - Secret summaries for membership on Secret Server 11.3 and later, including 12.x (name, folder, inheritsPermissions; no checkout). Secret Server 11.0 through 11.2 use `GET /api/v1/secrets` for the same summary.
-- `GET /api/v1/secrets/{id}/state` - Secret state before every secret-value and field read (`autoCheckout=false`). After a checkout, the same route is read with `autoCheckIn=true`.
-- `GET /api/v2/secrets/{id}` - Get secret values on 11.3 and later (`autoCheckout`, `autoCheckIn`, and `autoComment` when the state requires checkout). 11.0 through 11.2 use `GET /api/v1/secrets/{id}` with the same query parameters.
-- `GET /api/v1/secrets/{id}/fields/{slug}` - Get secret field (same state check and checkout query parameters)
-- `POST /api/v1/secrets/{id}/check-in` - Check a secret back in when this user still holds it after `autoCheckIn`
+- `GET /api/v2/secrets/{id}` - Get secret values on 11.3 and later. The read is retried with checkout only when the server returns `API_SecretRequiresCheckout`. 11.0 through 11.2 use `GET /api/v1/secrets/{id}`.
+- `GET /api/v1/secrets/{id}/fields/{slug}` - Get a secret field, with the same checkout retry
+- `POST /api/v1/secrets/{id}/check-in` - Check a secret back in after a read that checked it out
 - `GET /api/v1/secret-permissions` - Get permissions (bulk or per-secret)
