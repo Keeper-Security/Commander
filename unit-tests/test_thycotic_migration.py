@@ -13,7 +13,6 @@ from keepercommander.importer.thycotic.thycotic import (
     build_secrets_lookup_query,
     lookup_secret_ids,
     secret_access_decision,
-    secret_id_from_endpoint,
     with_access_params,
 )
 
@@ -265,13 +264,6 @@ class TestAccessParams(unittest.TestCase):
         )
         self.assertEqual(endpoint, f'/v1/secrets/42?{PLAIN_QUERY}')
 
-    def test_secret_id_from_endpoint(self):
-        self.assertEqual(secret_id_from_endpoint('/v1/secrets/42'), '42')
-        self.assertEqual(secret_id_from_endpoint('/v1/secrets/42/fields/private-key'), '42')
-        self.assertEqual(secret_id_from_endpoint('/v1/secrets/42/fields/private-key?x=1'), '42')
-        self.assertIsNone(secret_id_from_endpoint('/v1/secrets/lookup'))
-        self.assertIsNone(secret_id_from_endpoint('/v1/folders/3'))
-
 
 class TestFetchThycoticSecret(unittest.TestCase):
     def setUp(self):
@@ -435,7 +427,7 @@ class TestThycoticSecretGet(unittest.TestCase):
     def test_plain_field_read_checks_state_and_does_not_check_out(self):
         ok = _response(200, 'key')
         with mock.patch(REQUESTS_GET, side_effect=_gets(_mark_state(_state()), ok)) as get:
-            rs = _auth().thycotic_secret_get('/v1/secrets/42/fields/private-key')
+            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 2)
         self.assertTrue(get.call_args_list[0][0][0].endswith('/state'))
@@ -449,7 +441,7 @@ class TestThycoticSecretGet(unittest.TestCase):
                 ok,
                 _mark_state(_state()))) as get, \
                 mock.patch(REQUESTS_POST) as post:
-            rs = _auth().thycotic_secret_get('/v1/secrets/42/fields/private-key')
+            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertTrue(get.call_args_list[1][0][0].endswith(
             f'/api/v1/secrets/42/fields/private-key?{CHECKOUT_QUERY}'))
@@ -462,7 +454,7 @@ class TestThycoticSecretGet(unittest.TestCase):
             checkedOutUserDisplayName='Ada',
         )
         with mock.patch(REQUESTS_GET, side_effect=_gets(_mark_state(state))) as get:
-            rs = _auth().thycotic_secret_get('/v1/secrets/42/fields/private-key')
+            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
         with rs:
             status, message = ThycoticAuth.response_error(rs)
         self.assertEqual(status, 409)
@@ -472,7 +464,7 @@ class TestThycoticSecretGet(unittest.TestCase):
     def test_field_error_is_returned_without_a_checkout_retry(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, side_effect=_gets(_mark_state(_state()), denied)) as get:
-            rs = _auth().thycotic_secret_get('/v1/secrets/42/fields/private-key')
+            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
         self.assertIs(rs, denied)
         self.assertEqual(get.call_count, 2)
         self.assertNotIn('autoCheckout=true', get.call_args_list[1][0][0])
@@ -481,7 +473,7 @@ class TestThycoticSecretGet(unittest.TestCase):
         ok = _response(200, 'key')
         with mock.patch(SLEEP), mock.patch(REQUESTS_GET, side_effect=[
                 _mark_state(_state()), requests.exceptions.ConnectionError('reset'), ok]) as get:
-            rs = _auth().thycotic_secret_get('/v1/secrets/42/fields/private-key')
+            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 3)
         self.assertIn(PLAIN_QUERY, get.call_args_list[2][0][0])
@@ -546,9 +538,10 @@ class TestThycoticAttachment(unittest.TestCase):
         ok.__enter__ = mock.Mock(return_value=ok)
         ok.__exit__ = mock.Mock(return_value=False)
         auth = _auth()
-        with mock.patch.object(auth, 'thycotic_secret_get', return_value=ok):
-            attachment = ThycoticAttachment(auth, '/v1/secrets/42/fields/cert', 'cert.pem')
+        with mock.patch.object(auth, 'fetch_thycotic_secret_field', return_value=ok) as get_field:
+            attachment = ThycoticAttachment(auth, 42, 'cert', 'cert.pem')
             attachment.prepare()
+        get_field.assert_called_once_with(42, 'cert')
         self.assertEqual(attachment.size, 4)
 
     def test_failed_download_warns_and_leaves_size_unset(self):
@@ -556,9 +549,9 @@ class TestThycoticAttachment(unittest.TestCase):
         denied.__enter__ = mock.Mock(return_value=denied)
         denied.__exit__ = mock.Mock(return_value=False)
         auth = _auth()
-        with mock.patch.object(auth, 'thycotic_secret_get', return_value=denied), \
+        with mock.patch.object(auth, 'fetch_thycotic_secret_field', return_value=denied), \
                 self.assertLogs(level='WARNING') as logs:
-            attachment = ThycoticAttachment(auth, '/v1/secrets/42/fields/cert', 'cert.pem')
+            attachment = ThycoticAttachment(auth, 42, 'cert', 'cert.pem')
             attachment.prepare()
         self.assertIsNone(attachment.size)
         self.assertIn('cert.pem', logs.output[0])
@@ -567,10 +560,10 @@ class TestThycoticAttachment(unittest.TestCase):
 
     def test_network_error_warns_instead_of_raising(self):
         auth = _auth()
-        with mock.patch.object(auth, 'thycotic_secret_get',
+        with mock.patch.object(auth, 'fetch_thycotic_secret_field',
                                side_effect=requests.exceptions.ConnectionError('reset')), \
                 self.assertLogs(level='WARNING') as logs:
-            ThycoticAttachment(auth, '/v1/secrets/42/fields/cert', 'cert.pem').prepare()
+            ThycoticAttachment(auth, 42, 'cert', 'cert.pem').prepare()
         self.assertIn('reset', logs.output[0])
 
 
