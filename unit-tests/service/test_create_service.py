@@ -1,7 +1,9 @@
+from dataclasses import fields
 import unittest
 from unittest.mock import Mock, patch
 from keepercommander.params import KeeperParams
 from keepercommander.service.commands.create_service import CreateService, StreamlineArgs
+from keepercommander.service.commands.service_now_app_setup import ServiceNowSetupConstants
 
 class TestCreateService(unittest.TestCase):
     def setUp(self):
@@ -26,6 +28,36 @@ class TestCreateService(unittest.TestCase):
             
         args = parser.parse_args(['--cloudflare_custom_domain', 'example.com'])
         self.assertEqual(args.cloudflare_custom_domain, 'example.com')
+
+    @patch('keepercommander.service.commands.create_service.CreateService._upload_and_start_service')
+    @patch('keepercommander.service.commands.create_service.CreateService._create_and_save_record')
+    @patch('keepercommander.service.commands.create_service.CreateService._handle_configuration')
+    @patch('keepercommander.service.config.service_config.ServiceConfig.create_default_config')
+    @patch('keepercommander.service.core.globals.init_globals')
+    @patch('keepercommander.service.core.service_manager.ServiceManager.get_status')
+    @patch.dict(
+        'os.environ',
+        {'SERVICENOW_RECORD': 'record-uid'},
+        clear=True,
+    )
+    def test_execute_enforces_servicenow_policy_for_existing_record_marker(
+        self, mock_status, _mock_init, _mock_default_config, mock_handle_configuration,
+        _mock_create_record, _mock_upload,
+    ):
+        mock_status.return_value = 'Commander Service is not running'
+        config_data = {}
+        self.command.service_config.create_default_config.return_value = config_data
+        kwargs = {field.name: None for field in fields(StreamlineArgs)}
+        kwargs.update({
+            'port': 8900,
+            'commands': 'ls,whoami,clipboard-copy',
+            'fileformat': 'json',
+        })
+
+        self.command.execute(self.params, **kwargs)
+
+        args = mock_handle_configuration.call_args.args[2]
+        self.assertEqual(args.commands, ServiceNowSetupConstants.SERVICE_COMMANDS)
 
     @patch('keepercommander.service.core.service_manager.ServiceManager')
     def test_execute_service_already_running(self, mock_service_manager):

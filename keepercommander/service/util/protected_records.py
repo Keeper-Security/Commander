@@ -27,6 +27,7 @@ _PINNED_RECORD_UID_ENVS: Dict[str, str] = {
     'TEAMS_RECORD': '<Teams config record>',
     'GCHAT_RECORD': '<GChat config record>',
     'SAILPOINT_RECORD': '<SailPoint config record>',
+    'SERVICENOW_RECORD': '<ServiceNow config record>',
 }
 
 # uid-keyed caches resolve_single_record/load_pam_record fall back to when a UID isn't in record_cache.
@@ -75,6 +76,7 @@ def _protected_titles() -> Tuple[str, ...]:
     from ..commands.integrations.slack_app_setup import SlackAppSetupCommand
     from ..commands.integrations.teams_app_setup import TeamsAppSetupCommand
     from ..commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
+    from ..commands.service_now_app_setup import ServiceNowSetupConstants
     from ..docker.models import DockerSetupConstants, GChatConstants
     return (
         *SERVICE_CONFIG_RECORD_TITLES,
@@ -84,6 +86,7 @@ def _protected_titles() -> Tuple[str, ...]:
         SlackAppSetupCommand().get_default_record_name(),
         TeamsAppSetupCommand().get_default_record_name(),
         SailPointAppSetupCommand().get_default_record_name(),
+        ServiceNowSetupConstants.DEFAULT_RECORD_NAME,
     )
 
 

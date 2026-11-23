@@ -1475,6 +1475,7 @@ class KSMCommand(Command):
     def resolve_secret_uid(params, identifier, command='secrets-manager'):
         if not identifier:
             return None
+        command = command or 'secrets-manager'
         identifier = str(identifier).strip()
         if identifier.startswith('[') and identifier.endswith(']') and len(identifier) > 2:
             identifier = identifier[1:-1].strip()
