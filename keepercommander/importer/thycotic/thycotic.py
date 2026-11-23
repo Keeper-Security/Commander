@@ -54,34 +54,73 @@ DELINEA_RESTRICTED_SECRET_PERMISSION = 'View Restricted Secret'
 SSH_KEY_MIN_LENGTH = 30
 SSH_KEY_MAX_LENGTH = 5000
 
-CHECKOUT_ERROR = 'API_SecretRequiresCheckout'
+# Used when the import was not given --checkout-comment.
+_SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 
-# Sent on GET /v1/secrets/{id} and /v1/secrets/{id}/fields/{slug} only when a
-# plain read fails. For secrets that require checkout or a comment, they check
-# the secret out, read it, check it back in, and supply the comment. Secrets
-# that do not need them are read without a checkout or an audit comment.
-_SECRET_ACCESS_COMMENT = 'Checking out'
+# Parameters that check a secret out or in. A read URL keeps none of these
+# unless the secret state says this read needs them. forceCheckIn is never
+# sent: it would end another user's checkout.
+SECRET_ACCESS_PARAM_NAMES = frozenset((
+    'autoCheckout', 'autoCheckIn', 'autoComment', 'forceCheckIn', 'noAutoCheckout',
+))
 
+# secretState values from GET /v1/secrets/{id}/state that this import can read.
+READABLE_SECRET_STATES = frozenset((
+    'None',
+    'RequiresCheckout',
+    'RequiresComment',
+    'RequiresCheckoutAndComment',
+))
 
-def _build_secret_access_params(enabled):
-    # type: (bool) -> Tuple[Tuple[str, str], ...]
-    checkout = 'true' if enabled else 'false'
-    params = [('autoCheckout', checkout)]
-    if enabled:
-        params.append(('autoCheckIn', 'true'))
-    params.append(('autoComment', _SECRET_ACCESS_COMMENT))
-    if not enabled:
-        params.append(('noAutoCheckout', 'true'))
-    return tuple(params)
+CHECKOUT_REQUIRED_STATES = frozenset((
+    'RequiresCheckout',
+    'RequiresCheckoutAndComment',
+))
 
+COMMENT_REQUIRED_STATES = frozenset((
+    'RequiresComment',
+    'RequiresCheckoutAndComment',
+))
 
-_SECRET_ACCESS_PARAMS = {
-    True: _build_secret_access_params(True),
-    False: _build_secret_access_params(False),
+# The secret is not requested, so the read cannot check it out.
+UNREADABLE_SECRET_STATES = {
+    'RequiresApproval': (403, 'Secret requires approval before it can be read'),
+    'RequiresDoubleLockPassword': (403, 'Secret is protected by a double lock'),
+    'CreateDoubleLockPassword': (403, 'Secret requires a double lock password to be created'),
+    'DoubleLockNoAccess': (403, 'Secret is protected by a double lock this user cannot access'),
+    'CannotView': (403, 'Secret cannot be viewed'),
+    'RequiresUndelete': (403, 'Secret must be undeleted before it can be read'),
+    'RequiresCheckoutPendingRPC': (409, 'Secret is checked out for a pending password change'),
 }
-_SECRET_ACCESS_PARAM_NAMES = {
-    enabled: frozenset(name for name, _ in params)
-    for enabled, params in _SECRET_ACCESS_PARAMS.items()
+
+
+# Secret Server REST API endpoints (relative to the base URL).
+# ThycoticAuth adds the host. Paths under /v1 also get the api prefix.
+ENDPOINTS = {
+    "token": "oauth2/token",
+    "users": "/v1/users",
+    "users_inactive": "/v1/users?filter.includeInactive=true",
+    "user": "/v1/users/{user_id}",
+    "groups": "/v1/groups",
+    "group_users": "/v1/groups/{group_id}/users",
+    "folders": "/v1/folders",
+    "folder_permissions": "/v1/folder-permissions?filter.folderId={folder_id}",
+    "secret_permissions": "/v1/secret-permissions",
+    "secret_permissions_for_secret": "/v1/secret-permissions?filter.secretId={secret_id}",
+    "secrets_lookup": "/v1/secrets/lookup?filter.includeRestricted={restricted}",
+    "secrets_lookup_folder": (
+        "/v1/secrets/lookup?filter.folderId={folder_id}"
+        "&filter.includeSubFolders=true&filter.includeRestricted={restricted}"
+    ),
+    "secret": "/v1/secrets/{secret_id}",
+    "secret_state": "/v1/secrets/{secret_id}/state",
+    "secret_check_in": "/v1/secrets/{secret_id}/check-in",
+    "secret_field": "/v1/secrets/{secret_id}/fields/{slug}",
+    "secret_templates": (
+        "/v1/secret-templates?filter.includeInactive=false"
+        "&filter.includeSecretCount=true"
+    ),
+    "secret_template_export": "/v1/secret-templates/{template_id}/export",
 }
 
 
@@ -91,28 +130,117 @@ def _replace_query(endpoint, params):
     parts = urlparse(endpoint)
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
-def get_secret_access_params(enabled=False):
-    # type: (bool) -> List[Tuple[str, str]]
-    return _SECRET_ACCESS_PARAMS[bool(enabled)]
 
+def with_access_params(endpoint, access_params):
+    # type: (str, List[Tuple[str, str]]) -> str
+    """Apply the access parameters chosen for this read.
 
-def get_secret_access_param_names(enabled=False):
-    # type: (bool) -> List[str]
-    return _SECRET_ACCESS_PARAM_NAMES[bool(enabled)]
-
-def with_secret_access_params(endpoint, enabled=False):
-    # type: (str) -> str
-    """Add checkout and comment parameters to a secret read URL.
-
-    Existing query parameters are kept. Any existing checkout or comment
-    parameter is replaced, not duplicated.
+    Other query parameters are kept. Checkout and comment parameters already
+    on the URL are replaced, so a plain read cannot inherit a checkout.
     """
-    checkout_params = get_secret_access_params(enabled)
-    checkout_param_names = get_secret_access_param_names(enabled)
     query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
-    params = [(k, v) for k, v in query if k not in checkout_param_names]
-    params.extend(checkout_params)
+    params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
+    params.extend(access_params or [])
     return _replace_query(endpoint, params)
+
+
+def secret_id_from_endpoint(endpoint):
+    # type: (str) -> Optional[str]
+    """Return the secret id in a /secrets/{id} path, or None."""
+    match = re.search(r'/secrets/([^/]+)', urlparse(endpoint).path)
+    if not match:
+        return None
+    secret_id = match.group(1)
+    if secret_id in ('lookup', 'rdpproxy', 'sshproxy', 'sshterminal'):
+        return None
+    return secret_id
+
+
+def _view_comment(comment):
+    # type: (Optional[str]) -> str
+    if isinstance(comment, str) and comment.strip():
+        return comment.strip()
+    return _SECRET_ACCESS_COMMENT
+
+
+def _checked_out_holder(state):
+    # type: (dict) -> str
+    holder = state.get('checkedOutUserDisplayName')
+    if isinstance(holder, str) and holder.strip():
+        return holder.strip()
+    user_id = state.get('checkedOutUserId')
+    if user_id:
+        return 'user {0}'.format(user_id)
+    return 'another user'
+
+
+def secret_access_decision(state, comment=None):
+    # type: (Any, Optional[str]) -> Tuple[Optional[List[Tuple[str, str]]], Optional[Tuple[Any, str]]]
+    """Choose how to read a secret without leaving it checked out.
+
+    Returns (params, None) when the secret may be read with those query
+    parameters. A read that does not require checkout sends noAutoCheckout.
+    Returns (None, (status, message)) when the secret must not be requested.
+    """
+    if not isinstance(state, dict):
+        return None, (400, 'Secret state could not be read')
+
+    secret_state = state.get('secretState')
+    if secret_state is None or secret_state == '':
+        secret_state = 'None'
+    elif not isinstance(secret_state, str):
+        secret_state = str(secret_state)
+    else:
+        secret_state = secret_state.strip() or 'None'
+
+    if secret_state in UNREADABLE_SECRET_STATES:
+        return None, UNREADABLE_SECRET_STATES[secret_state]
+    if secret_state not in READABLE_SECRET_STATES:
+        return None, (400, 'Secret state "{0}" is not supported'.format(secret_state))
+
+    checked_out = state.get('isCheckedOut') is True
+    by_current_user = state.get('isCheckedOutByCurrentUser') is True
+    needs_checkout = secret_state in CHECKOUT_REQUIRED_STATES
+    needs_comment = secret_state in COMMENT_REQUIRED_STATES
+    view_comment = _view_comment(comment)
+
+    if needs_checkout and checked_out and not by_current_user:
+        return None, (409, 'Secret is checked out by {0}'.format(_checked_out_holder(state)))
+
+    if needs_checkout and not checked_out:
+        # Check out for this read and check back in before the response returns.
+        return [
+            ('autoCheckout', 'true'),
+            ('autoCheckIn', 'true'),
+            ('autoComment', view_comment),
+        ], None
+
+    # Do not check out. noAutoCheckout stops the server from doing it on its own.
+    params = [('noAutoCheckout', 'true'), ('autoCheckout', 'false')]
+    if checked_out and by_current_user:
+        # This user already holds it, including a checkout an earlier read left
+        # behind. Check it in after this read instead of checking it out again.
+        params.append(('autoCheckIn', 'true'))
+        params.append(('autoComment', view_comment))
+    elif needs_comment:
+        params.append(('autoComment', view_comment))
+    return params, None
+
+
+def _message_response(status, message):
+    # type: (Any, str) -> requests.Response
+    """Build a response the field reader can report without calling the server."""
+    rs = requests.Response()
+    rs.status_code = status if isinstance(status, int) else 400
+    rs.reason = 'Error'
+    content = json.dumps({'message': message}).encode('utf-8')
+    rs._content = content
+    rs._content_consumed = True
+    rs.raw = io.BytesIO(content)
+    rs.headers['Content-Type'] = 'application/json'
+    rs.encoding = 'utf-8'
+    rs.url = ''
+    return rs
 
 
 
@@ -127,11 +255,8 @@ def build_secrets_lookup_query(folder_id=None, include_restricted=True):
     """
     restricted = 'true' if include_restricted else 'false'
     if folder_id is None:
-        return f'/v1/secrets/lookup?filter.includeRestricted={restricted}'
-    return (
-        f'/v1/secrets/lookup?filter.folderId={folder_id}'
-        f'&filter.includeSubFolders=true&filter.includeRestricted={restricted}'
-    )
+        return ENDPOINTS["secrets_lookup"].format(restricted=restricted)
+    return ENDPOINTS["secrets_lookup_folder"].format(folder_id=folder_id, restricted=restricted)
 
 
 def _ids_from_lookup_response(response):
@@ -241,7 +366,7 @@ class ThycoticMixin:
     @staticmethod
     def get_user_lookup(auth):  # type: (ThycoticAuth) -> Optional[Dict[int, Dict]]
         try:
-            user_rs = auth.thycotic_search('/v1/users')
+            user_rs = auth.thycotic_search(ENDPOINTS["users"])
             return {x['id']: {
                 'emailAddress': x.get('emailAddress', ''),
                 'userName': x.get('userName', ''),
@@ -254,7 +379,7 @@ class ThycoticMixin:
     def get_group_lookup(auth, on_progress=None):
         # type: (ThycoticAuth, Optional[Callable[[int, int], None]]) -> Optional[Dict[int, Dict]]
         try:
-            group_rs = auth.thycotic_search('/v1/groups')
+            group_rs = auth.thycotic_search(ENDPOINTS["groups"])
             lookup = {}
             total = len(group_rs)
             for i in range(total):
@@ -265,7 +390,7 @@ class ThycoticMixin:
                     'users': [],   # type: List[int]
                 }
                 if group.get('memberCount', 0) > 0:
-                    member_rs = auth.thycotic_search(f'/v1/groups/{group_id}/users')
+                    member_rs = auth.thycotic_search(ENDPOINTS["group_users"].format(group_id=group_id))
                     if on_progress:
                         on_progress(i, total)
                     g['users'].extend((x['userId'] for x in member_rs if 'userId' in x and x['userId'] > 0))
@@ -447,7 +572,7 @@ class ThycoticMixin:
     @staticmethod
     def _load_folders(auth):
         # type: (ThycoticAuth) -> Dict[int, Dict]
-        folder_rs = auth.thycotic_search('/v1/folders')
+        folder_rs = auth.thycotic_search(ENDPOINTS["folders"])
         folders = ThycoticMixin._construct_folders(folder_rs)
         logging.debug('Loaded %d folders', len(folders))
         logging.debug('Folder path built')
@@ -474,7 +599,7 @@ class ThycoticMixin:
                 if not folder:
                     continue
 
-                permissions = auth.thycotic_search(f'/v1/folder-permissions?filter.folderId={folder_id}')
+                permissions = auth.thycotic_search(ENDPOINTS["folder_permissions"].format(folder_id=folder_id))
                 if isinstance(permissions, list):
                     if len(permissions) == 1:
                         permission = permissions[0]
@@ -694,7 +819,7 @@ class ThycoticMixin:
             rows = cache.get(current) if cache is not None else None
             if rows is None:
                 try:
-                    rows = auth.thycotic_search('/v1/folder-permissions?filter.folderId={0}'.format(current))
+                    rows = auth.thycotic_search(ENDPOINTS["folder_permissions"].format(folder_id=current))
                 except Exception as exc:
                     logging.info('folder-permissions %s: %s', current, exc)
                     rows = []
@@ -719,7 +844,7 @@ class ThycoticMixin:
         back to one secret-permissions request per secret.
         """
         try:
-            rows = auth.thycotic_search('/v1/secret-permissions')
+            rows = auth.thycotic_search(ENDPOINTS["secret_permissions"])
         except Exception as exc:
             logging.warning('Bulk secret-permissions failed, loading them per secret: %s', exc)
             return None
@@ -768,7 +893,8 @@ class ThycoticMixin:
         if secret_permissions is not None:
             return list(secret_permissions.get(secret_id) or [])
         try:
-            rows = auth.thycotic_search('/v1/secret-permissions?filter.secretId={0}'.format(secret_id))
+            rows = auth.thycotic_search(
+                ENDPOINTS["secret_permissions_for_secret"].format(secret_id=secret_id))
         except Exception as exc:
             logging.warning('secret-permissions %s: %s', secret_id, exc)
             return []
@@ -907,7 +1033,7 @@ class ThycoticMixin:
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search('/v1/secrets/lookup') or []
+            lookup = auth.thycotic_search(build_secrets_lookup_query()) or []
         except Exception as exc:
             logging.warning('secret lookup for permissions: %s', exc)
             return
@@ -1061,7 +1187,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         When the user list has no email, the user detail endpoint is tried once.
         quiet suppresses the summary line used while resolving group members.
         """
-        all_users = auth.thycotic_search('/v1/users?filter.includeInactive=true')
+        all_users = auth.thycotic_search(ENDPOINTS["users_inactive"])
         result = []
         skipped_application = 0
         skipped_no_email = 0
@@ -1076,7 +1202,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             source = user
             if not email and user_id not in (None, ''):
                 try:
-                    detail = auth.thycotic_entity('/v1/users/{0}'.format(user_id))
+                    detail = auth.thycotic_entity(ENDPOINTS["user"].format(user_id=user_id))
                 except Exception as exc:
                     logging.warning('Thycotic user %s: %s', user_id, exc)
                     detail = None
@@ -1241,7 +1367,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         self._create_enterprise_users(params, thycotic_users)
 
     def _load_thycotic_groups(self, auth):  # type: (ThycoticAuth) -> list
-        return auth.thycotic_search('/v1/groups')
+        return auth.thycotic_search(ENDPOINTS["groups"])
 
     def _load_thycotic_user_email_lookup(self, auth):  # type: (ThycoticAuth) -> Dict[int, str]
         """Map Thycotic user ids to emails. A user-fetch failure continues with no emails."""
@@ -1291,7 +1417,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         user_ids = []
         if (member_count or 0) > 0:
             try:
-                member_rs = auth.thycotic_search(f'/v1/groups/{group_id}/users')
+                member_rs = auth.thycotic_search(ENDPOINTS["group_users"].format(group_id=group_id))
             except Exception as e:
                 raise Exception(
                     f'Failed to fetch members of Thycotic group "{name}": {e}'
@@ -1707,6 +1833,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         auth = ThycoticAuth(host)
         auth.proxy = params.rest_context.proxies if params else None
         auth.authenticate(username, password, ThycoticImporter.request_totp)
+        comment = kwargs.get('checkout_comment')
+        if isinstance(comment, str) and comment.strip():
+            auth.secret_comment = comment.strip()
 
         # Pre-activate users before secrets are imported so later migration steps
         # can share data to accounts that already exist.
@@ -1923,7 +2052,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 if not file_name:
                     continue
 
-                endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
+                endpoint = ENDPOINTS["secret_field"].format(secret_id=secret_id, slug=slug)
                 if slug in ('private-key', 'public-key') and skip_ssh_key is not True:
                     try:
                         with auth.thycotic_secret_get(endpoint) as rs:
@@ -2204,8 +2333,13 @@ class ThycoticAuth:
         self.refresh_token = ''
         self.last_login = 0
         self.proxy = None
+        self.secret_comment = ''
         self._token_lock = threading.Lock()
         warnings.simplefilter('ignore', InsecureRequestWarning)
+
+    def api_url(self, endpoint):  # type: (str) -> str
+        """Absolute URL for a /v1 path from ENDPOINTS."""
+        return self.base_url + 'api' + endpoint
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
         if isinstance(username, str):
@@ -2222,7 +2356,7 @@ class ThycoticAuth:
         logging.debug(
             'Secret Server token request password_length=%d proxy=%s',
             len(password or ''), 'yes' if self.proxy else 'no')
-        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+        rs = requests.post(self.base_url + ENDPOINTS["token"], data=request_data, headers=headers,
                            verify=False, proxies=self.proxy)
         if rs.status_code != 200:
             if rs.status_code == 400:
@@ -2231,7 +2365,7 @@ class ThycoticAuth:
                     code = on_totp()
                     if code:
                         request_data['OTP'] = code
-                        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+                        rs = requests.post(self.base_url + ENDPOINTS["token"], data=request_data, headers=headers,
                                            verify=False, proxies=self.proxy)
         if rs.status_code == 200:
             auth_rs = rs.json()
@@ -2253,7 +2387,7 @@ class ThycoticAuth:
             'Accept': 'application/json',
             'Content-Type': 'application/x-www-form-urlencoded'
         }
-        rs = requests.post(self.base_url + 'oauth2/token', data=request_data, headers=headers,
+        rs = requests.post(self.base_url + ENDPOINTS["token"], data=request_data, headers=headers,
                            verify=False, proxies=self.proxy)
         if rs.status_code == 200:
             auth_rs = rs.json()
@@ -2302,7 +2436,7 @@ class ThycoticAuth:
             'Authorization': f'Bearer {self.access_token}'
         }
 
-        urlp = urlparse(self.base_url + 'api' + endpoint)
+        urlp = urlparse(self.api_url(endpoint))
         queries = tuple(x for x in urlp.query.split(sep='&') if x)
         result = []
         skip = 0
@@ -2372,35 +2506,97 @@ class ThycoticAuth:
             message = (rs.text or '').strip().replace('\n', ' ')[:300] or rs.reason or ''
         return rs.status_code, message
 
+    def _secret_comment(self):  # type: () -> str
+        return _view_comment(self.secret_comment)
+
     def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
-        """Read a secret, checking it out only when the server requires it.
+        """Read a secret after checking its state.
 
-        The secret is first read without checkout (autoCheckout=false,
-        noAutoCheckout=true). If the server answers 400 API_SecretRequiresCheckout,
-        the read is retried with autoCheckout and autoCheckIn, so the secret is
-        checked back in after the read.
+        GET /v1/secrets/{id}/state runs before the secret is requested. Checkout
+        parameters are sent only when that state requires a checkout, and then
+        only together with autoCheckIn. A read that checked the secret out is
+        followed by a check-in when this user still holds it.
 
-        Returns (secret, None, None) on success, or (None, status, message)
-        describing the failure.
+        Returns (secret, None, None) on success, or (None, status, message).
         """
+        state_endpoint = ENDPOINTS["secret_state"].format(secret_id=secret_id)
         try:
-            secret, status, message = self._read_entity_with_checkout(secret_id, enabled=False)
-            if status == 400 and message == CHECKOUT_ERROR:
-                return self._read_entity_with_checkout(secret_id, enabled=True)
-            return secret, status, message
+            state, status, message = self._read_entity(state_endpoint)
         except Exception as e:
+            logging.info('"%s" error: %s', state_endpoint, str(e))
             return None, 'N/A', str(e)
+        if not isinstance(state, dict):
+            return None, status if status is not None else 'N/A', message or 'Secret state could not be read'
 
-    def _read_entity_with_checkout(self, secret_id, enabled=False):
-        # type: (Any, bool) -> Tuple[Optional[dict], Any, Optional[str]]
-        endpoint = f'/v1/secrets/{secret_id}'
+        access_params, blocked = secret_access_decision(state, self._secret_comment())
+        if blocked:
+            logging.info('Secret %s not read: %s', secret_id, blocked[1])
+            return None, blocked[0], blocked[1]
+
+        endpoint = with_access_params(ENDPOINTS["secret"].format(secret_id=secret_id), access_params)
+        logging.info('Reading "%s"', endpoint)
         try:
-            endpoint = with_secret_access_params(endpoint, enabled)
-            logging.info('Reading "%s" with checkout parameters', endpoint)
-            return self._read_entity(endpoint)
+            secret, status, message = self._read_entity(endpoint)
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
-            return None, 'N/A', str(e)
+            secret, status, message = None, 'N/A', str(e)
+        self._release_checkout(secret_id, access_params, secret is not None)
+        return secret, status, message
+
+    def _release_checkout(self, secret_id, access_params, read_succeeded):
+        # type: (Any, List[Tuple[str, str]], bool) -> None
+        """Check the secret back in when this read may have left it checked out.
+
+        autoCheckout can check a secret out before a failed read returns, and
+        autoCheckIn does not always run in that case. A checkout this read
+        started is checked in when this user still holds it. A checkout the
+        user already held is checked in only after a successful read.
+        """
+        values = {name: value for name, value in access_params or []}
+        started_checkout = values.get('autoCheckout') == 'true'
+        if started_checkout or (read_succeeded and values.get('autoCheckIn') == 'true'):
+            self._check_in_if_held(secret_id)
+
+    def _check_in_if_held(self, secret_id):  # type: (Any) -> None
+        """Check the secret in when the state says this user holds the checkout."""
+        try:
+            state, _status, _message = self._read_entity(ENDPOINTS["secret_state"].format(secret_id=secret_id))
+        except Exception as e:
+            logging.warning('Secret %s could not be checked back in: %s', secret_id, e)
+            return
+        if not isinstance(state, dict) or state.get('isCheckedOutByCurrentUser') is not True:
+            return
+        if state.get('secretState') == 'RequiresCheckoutPendingRPC':
+            logging.warning('Secret %s was left checked out because a password change is pending', secret_id)
+            return
+        self._check_in_secret(secret_id)
+
+    def _check_in_secret(self, secret_id):  # type: (Any) -> None
+        """Check in a secret this user holds. Does not force another user's checkout."""
+        try:
+            self.ensure_auth_token()
+            headers = {
+                'Accept': 'application/json',
+                'Authorization': f'Bearer {self.access_token}',
+                'Content-Type': 'application/json',
+            }
+            # noAutoCheckout stops the check-in call itself from checking the
+            # secret back out. forceCheckIn stays false.
+            body = {
+                'comment': self._secret_comment(),
+                'forceCheckIn': False,
+                'noAutoCheckout': True,
+            }
+            rs = requests.post(
+                self.api_url(ENDPOINTS["secret_check_in"].format(secret_id=secret_id)),
+                headers=headers, json=body, verify=False, proxies=self.proxy)
+            if rs.status_code != 200:
+                logging.warning('Secret %s check-in returned %s: %s',
+                                secret_id, rs.status_code, self._error_message(rs))
+            else:
+                logging.info('Secret %s checked back in', secret_id)
+        except Exception as e:
+            logging.warning('Secret %s could not be checked back in: %s', secret_id, e)
 
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
         entity, _, _ = self._read_entity(endpoint)
@@ -2418,12 +2614,12 @@ class ThycoticAuth:
             'Authorization': f'Bearer {self.access_token}'
         }
         try:
-            rs = self._get(self.base_url + 'api' + endpoint, headers=headers)
+            rs = self._get(self.api_url(endpoint), headers=headers)
         except Exception as e:
             logging.warning('"%s" error: %s', endpoint, str(e))
             time.sleep(10)
             try:
-                rs = self._get(self.base_url + 'api' + endpoint, headers=headers)
+                rs = self._get(self.api_url(endpoint), headers=headers)
             except Exception as e:
                 logging.warning('Another "%s" error: %s', endpoint, str(e))
                 time.sleep(10)
@@ -2445,29 +2641,47 @@ class ThycoticAuth:
         }
 
         try:
-            rs = self._get(self.base_url + 'api' + endpoint, headers=headers, stream=True)
+            rs = self._get(self.api_url(endpoint), headers=headers, stream=True)
         except requests.exceptions.ConnectionError:
             time.sleep(10)
-            rs = self._get(self.base_url + 'api' + endpoint, headers=headers, stream=True)
+            rs = self._get(self.api_url(endpoint), headers=headers, stream=True)
         return rs
 
     def thycotic_secret_get(self, endpoint):    # type: (str) -> requests.Response
-        """Read a secret field, adding checkout parameters
+        """Read a secret field after the same state check as the secret read.
 
-        This handles restricted secrets that require checkout parameters.
+        Checkout parameters are added only when the state requires a checkout,
+        and those requests include autoCheckIn. The response is the field body,
+        or a response that carries the reason the field was not read.
         """
-        response = None
+        secret_id = secret_id_from_endpoint(endpoint)
+        if not secret_id:
+            return self.thycotic_get(endpoint)
+
+        state_endpoint = ENDPOINTS["secret_state"].format(secret_id=secret_id)
         try:
-            default_endpoint = with_secret_access_params(endpoint, enabled=False)
-            logging.info('Reading "%s" with checkout parameters', default_endpoint)
-            response = self.thycotic_get(default_endpoint)
-            if response.status_code == 400 and self._json_message(response) == CHECKOUT_ERROR:
-                response.close()
-                updated_endpoint = with_secret_access_params(endpoint, enabled=True)
-                logging.info('Reading "%s" with checkout parameters', updated_endpoint)
-                response = self.thycotic_get(updated_endpoint)
+            state, status, message = self._read_entity(state_endpoint)
         except Exception as e:
-            logging.info('"%s" error: %s', endpoint, str(e))
+            logging.info('"%s" error: %s', state_endpoint, str(e))
+            return _message_response('N/A', str(e))
+        if not isinstance(state, dict):
+            return _message_response(
+                status if status is not None else 'N/A',
+                message or 'Secret state could not be read')
+
+        access_params, blocked = secret_access_decision(state, self._secret_comment())
+        if blocked:
+            logging.info('Secret %s field not read: %s', secret_id, blocked[1])
+            return _message_response(blocked[0], blocked[1])
+
+        target = with_access_params(endpoint, access_params)
+        logging.info('Reading "%s"', target)
+        try:
+            response = self.thycotic_get(target)
+        except Exception:
+            self._release_checkout(secret_id, access_params, False)
+            raise
+        self._release_checkout(secret_id, access_params, getattr(response, 'status_code', None) == 200)
         return response
 
 
@@ -2593,7 +2807,7 @@ class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
         auth = ThycoticMixin.connect_to_server()
         if not auth:
             return
-        templates = auth.thycotic_search('/v1/secret-templates?filter.includeInactive=false&filter.includeSecretCount=true')
+        templates = auth.thycotic_search(ENDPOINTS["secret_templates"])
         logging.debug('Loaded %d secret templates', len(templates))
         for template in templates:
             secret_count = template['secretCount']
@@ -2604,7 +2818,7 @@ class ThycoticRecordTypeDownload(BaseDownloadRecordType, ThycoticMixin):
             if not isinstance(template_id, int):
                 continue
 
-            xml = auth.thycotic_entity(f'/v1/secret-templates/{template_id}/export')
+            xml = auth.thycotic_entity(ENDPOINTS["secret_template_export"].format(template_id=template_id))
             tree = ET.ElementTree(ET.fromstring(xml['exportFileText']))
             root = tree.getroot()
             e_fields = next(root.iter('fields'))

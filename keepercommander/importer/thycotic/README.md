@@ -151,13 +151,15 @@ The `import` command does **not** define `--verbose` or `--debug`. For detailed 
 Thycotic Secret Server restricts access to certain secrets. To import restricted secrets:
 
 1. Your Thycotic user account must have the **"View Restricted Secret"** permission
-2. During **secret import** (not during `--add-users` dry run), Commander reads each secret as follows:
-   - Try a normal `GET` of the secret (and sensitive fields)
-   - If that fails, **retry the same request with checkout query parameters** (`autoCheckout`, `autoCheckIn`, `autoComment`) so Delinea checks the secret out for the API read, then checks it back in
+2. Before each secret or secret field is read, Commander calls `GET /api/v1/secrets/{id}/state` and decides from that response:
+   - **No restriction:** the secret is read with `noAutoCheckout=true`. It is not checked out.
+   - **Checkout required, and not checked out:** the read sends `autoCheckout`, `autoCheckIn`, and `autoComment`, then confirms the secret is no longer checked out. If this user still holds it, Commander checks it in.
+   - **Already checked out by this user:** the read does not check it out again. It checks the secret back in after a successful read.
+   - **Checked out by someone else, approval, double lock, or a pending password change:** the secret is not requested, so the import cannot leave it checked out.
 
-This checkout behavior applies only when loading secret content for import. It is not used for membership export or user provisioning previews.
+`--checkout-comment` sets the comment sent when a secret requires one. The default is `Checking out for Keeper Import`.
 
-No extra flags are required on the import command.
+This applies when loading secret content for import and when a membership export has to read a secret. User provisioning does not read secret values.
 
 ### User Migration
 
@@ -314,7 +316,7 @@ If groups don't appear in team creation:
   - Number of permission mappings (if downloading membership)
   - Network latency to Thycotic server
   - File attachment sizes
-  - Whether restricted secrets require retry with checkout
+  - Whether secrets require a state check and checkout before they can be read
   - Worker pool size (for membership download only; default 4)
 - Large imports may take several minutes
 - The import process logs progress every 10 secrets
@@ -327,6 +329,8 @@ Tested with Delinea Secret Server 10.x and later versions.
 ## Limitations
 
 - **Secrets with Approval or Double Lock Policies**: Secrets requiring approval or protected by double lock policies cannot be imported. Request approval in Thycotic Secret Server or disable the double lock policy before importing.
+
+- **Secrets checked out by someone else**: Those secrets are skipped. Check them in, or wait until the checkout ends, and run the import again. A secret checked out for a pending password change is also skipped.
 
 - **Custom Secret Roles**: Custom Thycotic roles cannot be auto-mapped to Keeper permissions. Only standard roles are supported.
 
@@ -341,6 +345,8 @@ The import uses the following Thycotic Secret Server API endpoints:
 - `GET /api/v1/groups` - List groups
 - `GET /api/v1/groups/{id}/users` - Get group members
 - `GET /api/v1/secrets/lookup` - Search secrets (with folder/restriction filters)
-- `GET /api/v1/secrets/{id}` - Get secret (with checkout parameters if needed)
-- `GET /api/v1/secrets/{id}/fields/{slug}` - Get secret field (with checkout parameters if needed)
+- `GET /api/v1/secrets/{id}/state` - Secret state, checked before every secret and field read
+- `GET /api/v1/secrets/{id}` - Get secret (checkout parameters only when the state requires checkout)
+- `GET /api/v1/secrets/{id}/fields/{slug}` - Get secret field (same state check)
+- `POST /api/v1/secrets/{id}/check-in` - Check a secret back in when this user still holds it after a read
 - `GET /api/v1/secret-permissions` - Get permissions (bulk or per-secret)
