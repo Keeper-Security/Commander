@@ -36,7 +36,7 @@ from .nested_share_folder.helpers import (
     is_nested_share_folder, is_nested_share_record, load_record_metadata,
     resolve_folder_uid)
 from ..nested_share_folder.removal_api import (
-    resolve_nested_share_folder_uid, resolve_nested_share_record_uid,
+    resolve_nested_share_record_uid,
     RecordIdentifierAmbiguousError, _is_current_account_record_owner)
 from .. import api, utils, crypto, vault, rest_api
 from ..params import KeeperParams
@@ -1475,6 +1475,7 @@ class KSMCommand(Command):
     def resolve_secret_uid(params, identifier, command='secrets-manager'):
         if not identifier:
             return None
+        command = command or 'secrets-manager'
         identifier = str(identifier).strip()
         if identifier.startswith('[') and identifier.endswith(']') and len(identifier) > 2:
             identifier = identifier[1:-1].strip()
@@ -1490,9 +1491,6 @@ class KSMCommand(Command):
         folder_uid = resolve_folder_uid(params, identifier, command)
         if folder_uid and (api.is_shared_folder(params, folder_uid)
                            or is_nested_share_folder(params, folder_uid)):
-            return folder_uid
-        folder_uid = resolve_nested_share_folder_uid(params, identifier)
-        if folder_uid and is_nested_share_folder(params, folder_uid):
             return folder_uid
         return None
 
