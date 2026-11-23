@@ -247,6 +247,29 @@ class TestServiceNowAppSetupCommand(TestCase):
                 )
                 self.assertIn(f"-c '{allowed}'", yaml_content)
 
+    def test_compose_rejects_unknown_service_type(self):
+        setup_result = mock.Mock(
+            folder_uid='f', folder_name='folder', app_uid='a', app_name='app',
+            record_uid='record-uid', b64_config='cfg',
+        )
+        config = ServiceNowDockerServiceConfig(
+            port=8900,
+            commands=ServiceNowSetupConstants.SERVICE_COMMANDS,
+            service_type='invalid',
+            queue_enabled=True,
+            ngrok_enabled=False,
+            ngrok_auth_token='',
+            ngrok_custom_domain='',
+            cloudflare_enabled=False,
+            cloudflare_tunnel_token='',
+            cloudflare_custom_domain='',
+        )
+
+        with self.assertRaises(CommandError) as ctx:
+            ServiceNowAppSetupCommand().generate_docker_compose_yaml(setup_result, config)
+
+        self.assertIn('Unknown ServiceNow service type', ctx.exception.message)
+
     def test_runtime_policy_enforces_selected_servicenow_allowlist(self):
         selections = (
             (ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW,
@@ -289,6 +312,20 @@ class TestServiceNowAppSetupCommand(TestCase):
             apply_runtime_command_policy(args)
 
         self.assertEqual(args.commands, ServiceNowSetupConstants.SERVICE_COMMANDS)
+
+    def test_runtime_policy_activates_from_service_type_marker_alone(self):
+        class Args:
+            commands = ServiceNowSetupConstants.BOTH_SERVICE_COMMANDS + ',clipboard-copy'
+
+        with mock.patch.dict(
+            'os.environ',
+            {ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV: 'cmdb'},
+            clear=True,
+        ):
+            args = Args()
+            apply_runtime_command_policy(args)
+
+        self.assertEqual(args.commands, ServiceNowSetupConstants.CMDB_COMMANDS)
 
     def test_runtime_policy_rejects_unknown_servicenow_service_type(self):
         class Args:

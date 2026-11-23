@@ -24,6 +24,14 @@ def apply_runtime_command_policy(args) -> None:
 
     sanitizers = _integration_sanitizers()
     matched = [env_key for env_key in sanitizers if (os.environ.get(env_key) or '').strip()]
+    # The ServiceNow type marker also activates the policy for manually started
+    # containers that have the service type set but lack the record UID marker.
+    # Generated Compose files set both markers, which still means one integration.
+    from ..service_now_app_setup import ServiceNowSetupConstants
+    service_now_record_env = ServiceNowSetupConstants.SERVICENOW_RECORD_ENV
+    service_now_type_env = ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV
+    if service_now_record_env in matched and service_now_type_env in matched:
+        matched.remove(service_now_type_env)
     if not matched:
         return
     if len(matched) > 1:
@@ -85,4 +93,5 @@ def _integration_sanitizers():
         TERRAFORM_DOCKER_ENV: terraform_sanitizer,
         TERRAFORM_DOCKER_ENV_LEGACY: terraform_sanitizer,
         ServiceNowSetupConstants.SERVICENOW_RECORD_ENV: service_now_sanitizer,
+        ServiceNowSetupConstants.SERVICENOW_SERVICE_TYPE_ENV: service_now_sanitizer,
     }

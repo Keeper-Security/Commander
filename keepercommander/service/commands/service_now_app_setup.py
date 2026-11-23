@@ -220,6 +220,11 @@ class ServiceNowAppSetupCommand(ServiceDockerSetupCommand):
         service_type = getattr(
             config, 'service_type', ServiceNowSetupConstants.SERVICE_TYPE_WORKFLOW
         )
+        try:
+            ServiceNowSetupConstants.get_commands_list(service_type)
+        except ValueError as e:
+            raise CommandError(self.get_parser().prog, str(e))
+
         docker_config = asdict(config)
         docker_config.pop('service_type', None)
         builder = DockerComposeBuilder(
