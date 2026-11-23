@@ -541,8 +541,7 @@ class NestedShareRecordShortcutKeepCommand(Command):
         nsf_records = getattr(params, 'nested_share_records', {})
         nsf_folders = getattr(params, 'nested_share_folders', {})
 
-        nsf_record_data = getattr(params, 'nested_share_record_data', {})
-        record_uid = self._resolve_record(params, target, nsf_records, nsf_record_data)
+        record_uid = self._resolve_record(target, nsf_records, params)
         keep_folder_uid = self._resolve_keep_folder(params, kwargs.get('folder'), nsf_folders)
 
         records = NestedShareRecordShortcutCommand.get_record_shortcuts(params)
@@ -587,12 +586,14 @@ class NestedShareRecordShortcutKeepCommand(Command):
                      target, keep_name, len(folders_to_remove))
 
     @staticmethod
-    def _resolve_record(params, target, nsf_records, nsf_record_data=None):
+    def _resolve_record(target, nsf_records, params):
         if target in nsf_records:
             return target
+
         resolved_record = resolve_record_uid(params, target, 'nsf-shortcut keep')
         if resolved_record in nsf_records:
             return resolved_record
+
         raise CommandError('nsf-shortcut keep', f'Record "{target}" not found in Nested Share Folder')
 
     @staticmethod

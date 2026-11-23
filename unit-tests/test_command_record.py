@@ -118,6 +118,33 @@ class TestRecord(TestCase):
         mock_resolve.assert_called_once_with(params, 'Work')
         mock_add.assert_not_called()
 
+    @mock.patch('keepercommander.record_management.add_record_to_folder')
+    def test_add_command_preserves_ambiguous_folder_error(self, mock_add):
+        params = get_synced_params()
+        first = subfolder.UserFolderNode()
+        first.uid = 'a' * 22
+        first.name = 'Duplicate Folder'
+        second = subfolder.UserFolderNode()
+        second.uid = 'b' * 22
+        second.name = 'Duplicate Folder'
+        params.folder_cache[first.uid] = first
+        params.folder_cache[second.uid] = second
+        params.root_folder.subfolders.extend([first.uid, second.uid])
+
+        with self.assertRaises(CommandError) as ctx:
+            record_edit.RecordAddCommand().execute(
+                params,
+                folder='Duplicate Folder',
+                title='Ambiguous Folder POC',
+                record_type='login',
+                fields=[],
+                force=True,
+            )
+
+        self.assertIn('ambiguous', ctx.exception.message.casefold())
+        self.assertNotIn('cannot be found', ctx.exception.message.casefold())
+        mock_add.assert_not_called()
+
     def _run_add(self, params, **kwargs):
         """Run record-add with the API mocked; return the TypedRecord that would be saved."""
         cmd = record_edit.RecordAddCommand()

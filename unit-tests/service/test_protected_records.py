@@ -18,6 +18,7 @@ from keepercommander.service.util.protected_records import (
 
 PROTECTED_TITLE = 'Commander Service Mode Config'
 PROTECTED_DOCKER_TITLE = 'Commander Service Mode Docker Config'
+PROTECTED_SERVICENOW_TITLE = 'Commander Service Mode ServiceNow Config'
 
 
 def _record_cache_entry(uid, title, version=2):
@@ -48,6 +49,11 @@ class TestGetProtectedRecordTitleSet(TestCase):
     def test_contains_sailpoint_title(self):
         titles = get_protected_record_title_set()
         self.assertIn('commander service mode sailpoint config', titles)
+
+    def test_contains_servicenow_title(self):
+        self.assertIn(
+            PROTECTED_SERVICENOW_TITLE.lower(), get_protected_record_title_set()
+        )
 
     def test_contains_terraform_slack_teams_gchat_titles(self):
         titles = get_protected_record_title_set()
@@ -161,6 +167,24 @@ class TestGetProtectedRecordUids(TestCase):
         with mock.patch.dict(os.environ, {'GCHAT_RECORD': uid}):
             p = _params_with_records({uid: 'My Totally Custom GChat Title'})
             self.assertIn(uid, get_protected_record_uids(p))
+
+    def test_servicenow_record_protected_by_uid_even_with_custom_title(self):
+        """The SERVICENOW_RECORD compose marker protects custom --record-name values too."""
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'SERVICENOW_RECORD': uid}, clear=True):
+            p = _params_with_records({uid: 'My Totally Custom ServiceNow Title'})
+            self.assertIn(uid, get_protected_record_uids(p))
+
+    def test_servicenow_env_uid_present_even_without_params(self):
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'SERVICENOW_RECORD': uid}, clear=True):
+            self.assertIn(uid, get_protected_record_uids(None))
+
+    def test_servicenow_default_title_protected_without_env_var(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            p = _params_with_records({'UID_SERVICENOW': PROTECTED_SERVICENOW_TITLE})
+            result = get_protected_record_uids(p)
+        self.assertEqual(set(result), {'UID_SERVICENOW'})
 
     def test_no_pinned_env_vars_falls_back_to_title_only(self):
         with mock.patch.dict(os.environ, {}, clear=True):

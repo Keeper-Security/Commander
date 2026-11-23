@@ -84,6 +84,7 @@ COMMAND_CATEGORIES = {
     'Service Mode REST API': {
         'service-create', 'service-add-config', 'service-start', 'service-stop', 'service-status',
         'service-config-add', 'service-docker-setup', 'terraform-app-setup',
+        'service-now-app-setup',
         'slack-app-setup', 'teams-app-setup',
         'sailpoint-app-setup', 'gchat-app-setup'
     },
