@@ -159,7 +159,8 @@ Thycotic Secret Server restricts access to certain secrets. To import restricted
 
 `--checkout-comment` sets the comment sent when a secret requires one. The default is `Checking out for Keeper Import`.
 
-This applies when loading secret content for import and when a membership export has to read a secret. User provisioning does not read secret values.
+This applies when loading secret content for import.
+Membership export lists secrets with `GET /api/v2/secrets` (or `GET /api/v1/secrets` on Secret Server 11.0 to 11.2) and does not read secret values or check them out. User provisioning does not read secret values.
 
 ### User Migration
 
@@ -324,7 +325,7 @@ If groups don't appear in team creation:
 
 ## Supported Delinea Secret Server Versions
 
-Tested with Delinea Secret Server 10.x and later versions.
+Supported on Delinea Secret Server 11.x through 12.x. Secret reads and summary search use `/api/v2/secrets` when that route exists (11.3 and later, including 12.x) and `/api/v1/secrets` on 11.0 through 11.2.
 
 ## Limitations
 
@@ -344,9 +345,10 @@ The import uses the following Thycotic Secret Server API endpoints:
 - `GET /api/v1/users/{id}` - Get user details
 - `GET /api/v1/groups` - List groups
 - `GET /api/v1/groups/{id}/users` - Get group members
-- `GET /api/v1/secrets/lookup` - Search secrets (with folder/restriction filters)
-- `GET /api/v1/secrets/{id}/state` - Secret state, checked before every secret and field read
-- `GET /api/v1/secrets/{id}` - Get secret (checkout parameters only when the state requires checkout)
+- `GET /api/v1/secrets/lookup` - Secret ids for import (with folder/restriction filters)
+- `GET /api/v2/secrets` - Secret summaries for membership on Secret Server 11.3 and later, including 12.x (name, folder, inheritsPermissions; no checkout). Secret Server 11.0 through 11.2 use `GET /api/v1/secrets` for the same summary.
+- `GET /api/v1/secrets/{id}/state` - Secret state, checked before every secret-value and field read
+- `GET /api/v2/secrets/{id}` - Get secret values on 11.3 and later (checkout parameters only when the state requires checkout). 11.0 through 11.2 use `GET /api/v1/secrets/{id}`.
 - `GET /api/v1/secrets/{id}/fields/{slug}` - Get secret field (same state check)
 - `POST /api/v1/secrets/{id}/check-in` - Check a secret back in when this user still holds it after a read
 - `GET /api/v1/secret-permissions` - Get permissions (bulk or per-secret)
