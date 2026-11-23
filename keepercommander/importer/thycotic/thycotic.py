@@ -2459,6 +2459,19 @@ class ThycoticAuth:
         return ''
 
     @classmethod
+    def _is_checkout_error(cls, rs=None, error_code=None, message=None):
+        # type: (Optional[requests.Response], Optional[str], Optional[str]) -> bool
+        """True when this failure is API_SecretRequiresCheckout.
+
+        The code is the errorCode field. Some responses put that same code in
+        message and leave errorCode empty.
+        """
+        if rs is not None:
+            error_code = cls._json_message(rs, 'errorCode')
+            message = cls._json_message(rs)
+        return error_code == CHECKOUT_ERROR or message == CHECKOUT_ERROR
+
+    @classmethod
     def _error_message(cls, rs, key='message'):  # type: (requests.Response, str) -> str
         """Describe an error response, whether or not its body is JSON."""
         message = cls._json_message(rs, key)
@@ -2496,7 +2509,7 @@ class ThycoticAuth:
         return '/v1/secrets/{0}'.format(secret_id)
 
     def _read_secret_with_access(self, secret_id, enabled):
-        # type: (Any, bool) -> Tuple[Optional[dict], Any, Optional[str]]
+        # type: (Any, bool) -> Tuple[Optional[dict], Any, Optional[str], Optional[str]]
         endpoint = with_secret_access_params(
             self._secret_endpoint(secret_id), enabled, self._secret_comment())
         logging.info('Reading "%s"', endpoint)
@@ -2504,7 +2517,7 @@ class ThycoticAuth:
             return self._read_entity(endpoint)
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
-            return None, 'N/A', str(e)
+            return None, 'N/A', str(e), ''
 
     def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
         """Read a secret, checking it out only when the server requires it.
@@ -2520,9 +2533,9 @@ class ThycoticAuth:
         Returns (secret, None, None) on success, or (None, status, message).
         """
         try:
-            secret, status, message = self._read_secret_with_access(secret_id, enabled=False)
-            if status == 400 and message == CHECKOUT_ERROR:
-                secret, status, message = self._read_secret_with_access(secret_id, enabled=True)
+            secret, status, message, error_code = self._read_secret_with_access(secret_id, enabled=False)
+            if status == 400 and self._is_checkout_error(error_code=error_code, message=message):
+                secret, status, message, _ = self._read_secret_with_access(secret_id, enabled=True)
                 self._check_in_secret(secret_id)
             return secret, status, message
         except Exception as e:
@@ -2539,7 +2552,7 @@ class ThycoticAuth:
         endpoint = ENDPOINTS["secret_field"].format(secret_id=secret_id, slug=slug)
         response = self._get_secret_resource(endpoint, enabled=False)
         if (response is not None and response.status_code == 400
-                and self._json_message(response) == CHECKOUT_ERROR):
+                and self._is_checkout_error(response)):
             response.close()
             try:
                 response = self._get_secret_resource(endpoint, enabled=True)
@@ -2581,14 +2594,17 @@ class ThycoticAuth:
             logging.warning('Secret %s could not be checked back in: %s', secret_id, e)
 
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
-        entity, _, _ = self._read_entity(endpoint)
+        entity, _, _, _ = self._read_entity(endpoint)
         return entity
 
-    def _read_entity(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Any, Optional[str]]
+    def _read_entity(self, endpoint):
+        # type: (str) -> Tuple[Optional[dict], Any, Optional[str], Optional[str]]
         """GET an API endpoint and parse the JSON body.
 
-        Returns (entity, None, None) on success, or (None, status, message)
-        describing the failure. status is 'N/A' when no HTTP response was received.
+        Returns (entity, None, None, None) on success, or
+        (None, status, message, error_code) describing the failure.
+        status is 'N/A' when no HTTP response was received. error_code is the
+        BadRequestResponse errorCode field, or '' when the body has none.
         """
         self.ensure_auth_token()
         headers = {
@@ -2605,16 +2621,16 @@ class ThycoticAuth:
             except Exception as e:
                 logging.warning('Another "%s" error: %s', endpoint, str(e))
                 time.sleep(10)
-                return None, 'N/A', str(e)
+                return None, 'N/A', str(e), ''
         if rs.status_code != 200:
             self._log_thycotic_response(endpoint, rs, f'returned {rs.status_code}')
             status, message = self.response_error(rs)
-            return None, status, message
+            return None, status, message, self._json_message(rs, 'errorCode')
         try:
-            return rs.json(), None, None
+            return rs.json(), None, None, None
         except ValueError as e:
             self._log_thycotic_response(endpoint, rs, f'invalid JSON: {e}')
-            return None, rs.status_code, 'Response is not valid JSON'
+            return None, rs.status_code, 'Response is not valid JSON', ''
 
     def thycotic_get(self, endpoint):    # type: (str) -> requests.Response
         self.ensure_auth_token()

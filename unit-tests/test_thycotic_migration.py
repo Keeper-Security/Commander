@@ -230,6 +230,34 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertIs(body['forceCheckIn'], False)
         self.assertIs(body['noAutoCheckout'], True)
 
+    def test_checkout_required_matches_error_code(self):
+        body = {
+            'message': 'The requested secret requires checkout.',
+            'errorCode': CHECKOUT_ERROR,
+        }
+        denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
+        secret_body = _response(200, '{"id": 42}', {'id': 42})
+        checked_in = _response(200, '{}', {})
+        with mock.patch(REQUESTS_GET, side_effect=_gets(denied, secret_body)) as get, \
+                mock.patch(REQUESTS_POST, return_value=checked_in) as post:
+            secret, status, message = _auth().fetch_thycotic_secret(42)
+        self.assertEqual(secret, {'id': 42})
+        self.assertIsNone(status)
+        self.assertIsNone(message)
+        self.assertEqual(len(_reads(get)), 2)
+        post.assert_called_once()
+
+    def test_other_400_is_not_retried_as_checkout(self):
+        body = {'message': 'Comment is required.', 'errorCode': 'API_CommentRequired'}
+        denied = _response(400, '{"message": "Comment is required."}', body)
+        with mock.patch(REQUESTS_GET, side_effect=_gets(denied)) as get, \
+                mock.patch(REQUESTS_POST) as post:
+            secret, status, message = _auth().fetch_thycotic_secret(42)
+        self.assertIsNone(secret)
+        self.assertEqual((status, message), (400, 'Comment is required.'))
+        self.assertEqual(len(_reads(get)), 1)
+        post.assert_not_called()
+
     def test_failed_checkout_read_still_checks_in(self):
         failed = _response(500, '{"message": "boom"}', {'message': 'boom'})
         checked_in = _response(200, '{}', {})
@@ -381,6 +409,22 @@ class TestThycoticSecretGet(unittest.TestCase):
         post.assert_called_once()
         self.assertTrue(post.call_args[0][0].endswith('/api/v1/secrets/42/check-in'))
         self.assertIs(post.call_args.kwargs['json']['forceCheckIn'], False)
+
+    def test_field_read_retries_when_error_code_requires_checkout(self):
+        body = {
+            'message': 'The requested secret requires checkout.',
+            'errorCode': CHECKOUT_ERROR,
+        }
+        denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
+        ok = _response(200, 'key')
+        checked_in = _response(200, '{}', {})
+        with mock.patch(REQUESTS_GET, side_effect=_gets(denied, ok)) as get, \
+                mock.patch(REQUESTS_POST, return_value=checked_in) as post:
+            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
+        self.assertIs(rs, ok)
+        self.assertEqual(get.call_count, 2)
+        self.assertIn('autoCheckout=true', get.call_args_list[1][0][0])
+        post.assert_called_once()
 
     def test_field_error_is_returned_without_a_checkout_retry(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
