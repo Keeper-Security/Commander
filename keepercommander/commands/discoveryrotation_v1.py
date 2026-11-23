@@ -37,6 +37,7 @@ from .pam.router_helper import router_send_action_to_gateway, print_router_respo
 from .record_edit import RecordEditMixin
 from .. import api, utils, vault_extensions, crypto, vault, record_management, attachment, record_facades
 from ..display import bcolors
+from ..constants import RouterHostError
 from ..error import CommandError, KeeperApiError
 from ..params import KeeperParams, LAST_RECORD_UID
 from ..proto import pam_pb2, router_pb2, record_pb2
@@ -602,6 +603,9 @@ class PAMGatewayListCommand(Command):
                 return
             else:
                 logging.info(f"{bcolors.WARNING}Looks like router is down. Router URL [{krouter_url}]{bcolors.ENDC}")
+
+        except RouterHostError:
+            raise
 
         except Exception as e:
             logging.warning(f"Unhandled error during retrieval of the connected gateways.")

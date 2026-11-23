@@ -159,6 +159,7 @@ class SelfManagedServerKey(NamedTuple):
     public_key: str        # base64url, 65-byte uncompressed P-256 point
     source: str            # where the key came from, for messages
     fetched: bool = False  # True: published by the server; False: set by the user
+    router_url: Optional[str] = None   # "routerUrl" of the server reply, already validated
 
 
 _configured_server_keys = {}   # type: Dict[str, SelfManagedServerKey]
@@ -176,7 +177,11 @@ def server_host(server):   # type: (str) -> str
 
 
 def is_keeper_cloud_host(server):   # type: (str) -> bool
-    hostname = server_host(server).split(':')[0]
+    try:
+        hostname = urlparse(server if '://' in server else 'https://' + server).hostname or ''
+        hostname = hostname.encode('idna').decode('ascii').lower()
+    except (ValueError, UnicodeError):
+        return False
     return any(hostname == d or hostname.endswith('.' + d) for d in KEEPER_CLOUD_DOMAINS)
 
 
@@ -226,6 +231,14 @@ def set_server_public_key(server, key_id, public_key):   # type: (str, int, str)
     _resolved_server_keys.pop(host, None)
     _server_key_errors.pop(host, None)
     return key
+
+
+def forget_fetched_server_key(server):   # type: (str) -> None
+    """Drop the key that was fetched for this host. The next request fetches it as on first use."""
+    host = server_host(server)
+    key = _resolved_server_keys.get(host)
+    if key is not None and key.fetched:
+        del _resolved_server_keys[host]
 
 
 def get_configured_server_key(server):   # type: (str) -> Optional[SelfManagedServerKey]
@@ -291,6 +304,29 @@ def _unverified_reason(context):   # type: (RestApiContext) -> Optional[str]
     return None
 
 
+def parse_router_url(value):   # type: (object) -> Optional[str]
+    """The validated "routerUrl" of a server key reply, or None. The value is https://<host>[:port] with no
+    credentials, path, query, or fragment. An invalid value is logged and ignored."""
+    if value is None:
+        return None
+    try:
+        # Imported here: constants does not import this module at load time.
+        from .constants import parse_router_override
+        if not isinstance(value, str) or not value.lower().startswith('https://') or value.endswith('/'):
+            raise ValueError('it must be https://<host>[:port] with no path')
+        parse_router_override(value, 'routerUrl')
+        return value
+    except ValueError as e:
+        logging.warning('The routerUrl of the server is ignored: %s', e)
+        return None
+
+
+def get_discovered_router_url(server):   # type: (str) -> Optional[str]
+    """The "routerUrl" that this self-managed host published, or None."""
+    key = _resolved_server_keys.get(server_host(server))
+    return parse_router_url(key.router_url) if key else None
+
+
 def _fetch_server_key_from(context, url):   # type: (RestApiContext, str) -> SelfManagedServerKey
     rs = requests.get(url, proxies=context.proxies, verify=context.certificate_check,
                       timeout=SERVER_KEY_FETCH_TIMEOUT)
@@ -306,6 +342,7 @@ def _fetch_server_key_from(context, url):   # type: (RestApiContext, str) -> Sel
     if not public_key or not key_id:
         raise ValueError(f'has no server key: {server_key.get("error") or "serverPublicKey is missing"}')
     key = _make_server_key(key_id, public_key, f'fetched from {url}', fetched=True)
+    key = key._replace(router_url=parse_router_url(server_key.get('routerUrl')))
     published = server_key.get('fingerprint')
     if isinstance(published, str) and published:
         if _fingerprint_matches(published, public_key) is False:
@@ -387,10 +424,23 @@ def refetch_server_key(context):   # type: (RestApiContext) -> Optional[SelfMana
     _server_key_errors.pop(host, None)
     new_key = get_self_managed_server_key(context)
     if new_key is None:
+        if old_key is not None:
+            _resolved_server_keys[host] = old_key
         return None
-    if old_key is not None and (new_key.key_id, new_key.public_key) == (old_key.key_id, old_key.public_key):
+    if old_key is None:
+        return new_key
+    if (new_key.key_id, new_key.public_key) == (old_key.key_id, old_key.public_key):
         return None
-    return new_key
+    if new_key.key_id != old_key.key_id:
+        # A new key ID is a key rotation. Commander keeps one key per host, so the new key replaces the old key.
+        return new_key
+    # The same key ID with another public key is a change. Keep the old key and fail.
+    # The user accepts the new key when the user enters the server again (forget_fetched_server_key).
+    _resolved_server_keys[host] = old_key
+    raise KeeperApiError('server_key_changed',
+                         f'The server key changed. Contact your administrator. {host} now has the server key '
+                         f'with key ID {new_key.key_id}, {server_key_fingerprint(new_key.public_key)}. '
+                         f'To trust it, enter the server again: server {host}')
 
 
 def get_server_public_key(context):   # type: (RestApiContext) -> Union[rsa.RSAPublicKey, ec.EllipticCurvePublicKey]
