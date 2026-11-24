@@ -48,22 +48,21 @@ from ... import record_types, vault, api
 # or the lookup still omits them.
 DELINEA_RESTRICTED_SECRET_PERMISSION = 'View Restricted Secret'
 
-# Sent on GET /v1/secrets/{id} and /v1/secrets/{id}/fields/{slug} only when a
-# plain read fails. For secrets that require checkout or a comment, they check
-# the secret out, read it, check it back in, and supply the comment. Secrets
-# that do not need them are read without a checkout or an audit comment.
-SECRET_ACCESS_PARAMS = (
-    ('autoCheckout', 'true'),
-    ('autoCheckIn', 'true'),
-    ('autoComment', 'Checking out'),
-)
 
-
-SECRET_ACCESS_PARAM_NAMES = frozenset(name for name, _ in SECRET_ACCESS_PARAMS)
 
 # SSH key validation limits (in bytes when decoded)
 SSH_KEY_MIN_LENGTH = 30
 SSH_KEY_MAX_LENGTH = 5000
+
+# Audit comment sent with every secret and secret-field read.
+_SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
+
+# Parameters that check a secret out or in. A read URL replaces any of these
+# already present so the chosen checkout mode is the only one sent.
+# forceCheckIn is never sent: it would end another user's checkout.
+SECRET_ACCESS_PARAM_NAMES = frozenset((
+    'autoCheckout', 'autoCheckIn', 'autoComment', 'forceCheckIn', 'noAutoCheckout',
+))
 
 
 def _replace_query(endpoint, params):
@@ -73,8 +72,29 @@ def _replace_query(endpoint, params):
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
 
-def with_secret_access_params(endpoint):
-    # type: (str) -> str
+def secret_access_params(enabled):
+    # type: (bool) -> List[Tuple[str, str]]
+    """Query parameters for one secret or secret-field read.
+
+    A plain read sends noAutoCheckout so the server does not check the secret
+    out. A checkout read sends autoCheckout and autoCheckIn so the secret is
+    checked back in after the response.
+    """
+    if enabled:
+        return [
+            ('autoCheckout', 'true'),
+            ('autoCheckIn', 'true'),
+            ('autoComment', _SECRET_ACCESS_COMMENT),
+        ]
+    return [
+        ('autoCheckout', 'false'),
+        ('autoComment', _SECRET_ACCESS_COMMENT),
+        ('noAutoCheckout', 'true'),
+    ]
+
+
+def with_secret_access_params(endpoint, enabled=False):
+    # type: (str, bool) -> str
     """Add checkout and comment parameters to a secret read URL.
 
     Existing query parameters are kept. Any existing checkout or comment
@@ -82,7 +102,7 @@ def with_secret_access_params(endpoint):
     """
     query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
     params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
-    params.extend(SECRET_ACCESS_PARAMS)
+    params.extend(secret_access_params(enabled))
     return _replace_query(endpoint, params)
 
 
@@ -1789,9 +1809,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         skipped_secrets = []
         skipped_fields = []
         for secret_id in secrets_ids:
-            secret, error = auth.thycotic_secret(f'/v1/secrets/{secret_id}')
+            secret, status, message = auth.fetch_thycotic_secret(secret_id)
             if secret is None:
-                status, message = error or ('N/A', 'Empty response')
                 skipped_secrets.append({'ID': secret_id, 'Status': status, 'Message': message})
                 continue
             secrets.append(secret)
@@ -1893,10 +1912,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 if not file_name:
                     continue
 
-                endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
                 if slug in ('private-key', 'public-key') and skip_ssh_key is not True:
                     try:
-                        with auth.thycotic_secret_get(endpoint) as rs:
+                        with auth.fetch_thycotic_secret_field(secret_id, slug) as rs:
                             if rs.status_code == 200:
                                 try:
                                     key_text = rs.content.decode()
@@ -1920,7 +1938,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 else:
                     if not isinstance(record.attachments, list):
                         record.attachments = []
-                    attachment = ThycoticAttachment(auth, endpoint, file_name)
+                    attachment = ThycoticAttachment(auth, secret_id, slug, file_name)
                     record.attachments.append(attachment)
                     del items[slug]
 
@@ -2342,31 +2360,64 @@ class ThycoticAuth:
             message = (rs.text or '').strip().replace('\n', ' ')[:300] or rs.reason or ''
         return rs.status_code, message
 
-    def thycotic_secret(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
-        """Read a secret, adding checkout parameters only if the plain read fails.
+    def _secret_endpoint(self, secret_id):  # type: (Any) -> str
+        return f'/v1/secrets/{secret_id}'
 
-        Returns (secret, None) on success, or (None, (status, message)) describing
-        the last failed attempt.
-        """
-        secret = None
-        first_error = None
+    def _read_secret_with_access(self, secret_id, enabled):
+        # type: (Any, bool) -> Tuple[Optional[dict], Any, Optional[str]]
+        endpoint = with_secret_access_params(
+            self._secret_endpoint(secret_id), enabled)
+        logging.info('Reading "%s"', endpoint)
         try:
-            secret, first_error = self._read_entity(endpoint)
+            secret, error = self._read_entity(endpoint)
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
-            first_error = ('N/A', str(e))
+            return None, 'N/A', str(e)
         if secret is not None:
-            return secret, None
-        checkout = with_secret_access_params(endpoint)
-        logging.info('Reading "%s" with checkout parameters', checkout)
+            return secret, None, None
+        if not error:
+            return None, 'N/A', 'Empty response'
+        status, message = error
+        return None, status, message
+
+    def fetch_thycotic_secret(self, secret_id):  # type: (Any) -> Tuple[Optional[dict], Any, Optional[str]]
+        """Read a secret, checking it out only when the server requires it.
+
+        The secret is first read without checkout (autoCheckout=false,
+        noAutoCheckout=true). If the server answers 400, the read is retried
+        with autoCheckout and autoCheckIn.
+        The secret is read with GET /v1/secrets/{id}.
+
+        Returns (secret, None, None) on success, or (None, status, message).
+        """
         try:
-            secret, error = self._read_entity(checkout)
-            if secret is not None:
-                return secret, None
-            return None, error or first_error
+            secret, status, message = self._read_secret_with_access(secret_id, enabled=False)
+            if status == 400:
+                secret, status, message = self._read_secret_with_access(secret_id, enabled=True)
+            return secret, status, message
         except Exception as e:
-            logging.info('"%s" error: %s', checkout, str(e))
-            return None, ('N/A', str(e))
+            return None, 'N/A', str(e)
+
+    def fetch_thycotic_secret_field(self, secret_id, slug):
+        # type: (Any, str) -> requests.Response
+        """Read one secret field, checking it out only when the server requires it.
+
+        The field is first read without checkout. If the server answers 400,
+        the read is retried with autoCheckout and autoCheckIn. The response is
+        the field body. Request errors propagate to the caller.
+        """
+        endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
+        response = self._get_secret_resource_with_params(endpoint, enabled=False)
+        if response.status_code == 400:
+            response.close()
+            response = self._get_secret_resource_with_params(endpoint, enabled=True)
+        return response
+
+    def _get_secret_resource_with_params(self, endpoint, enabled):
+        # type: (str, bool) -> requests.Response
+        target = with_secret_access_params(endpoint, enabled)
+        logging.info('Reading "%s"', target)
+        return self.thycotic_get(target)
 
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
         return self._read_entity(endpoint)[0]
@@ -2410,28 +2461,13 @@ class ThycoticAuth:
             rs = self._get(self.base_url + 'api' + endpoint, headers=headers, stream=True)
         return rs
 
-    def thycotic_secret_get(self, endpoint):    # type: (str) -> requests.Response
-        """Read a secret field, adding checkout parameters only if the plain read fails.
-
-        This handles restricted secrets that require checkout parameters.
-        """
-        try:
-            rs = self.thycotic_get(endpoint)
-            if rs.status_code == 200:
-                return rs
-            rs.close()
-        except Exception as e:
-            logging.info('"%s" error: %s', endpoint, str(e))
-        checkout = with_secret_access_params(endpoint)
-        logging.info('Reading "%s" with checkout parameters', checkout)
-        return self.thycotic_get(checkout)
-
 
 class ThycoticAttachment(Attachment):
-    def __init__(self, auth, endpoint, name):     # type: (ThycoticAuth, str, str) -> None
+    def __init__(self, auth, secret_id, slug, name):  # type: (ThycoticAuth, Any, str, str) -> None
         super().__init__()
         self.auth = auth
-        self.endpoint = endpoint
+        self.secret_id = secret_id
+        self.slug = slug
         self.name = name
         self._file_content = b''
 
@@ -2444,7 +2480,7 @@ class ThycoticAttachment(Attachment):
         # Runs during upload, after the import summary is printed, so failures
         # are reported here as warnings instead of in the skipped fields table.
         try:
-            with self.auth.thycotic_secret_get(self.endpoint) as rs:
+            with self.auth.fetch_thycotic_secret_field(self.secret_id, self.slug) as rs:
                 if rs.status_code == 200:
                     length = rs.headers.get('Content-Length', 0)
                     try:
@@ -2455,9 +2491,9 @@ class ThycoticAttachment(Attachment):
                 else:
                     status, message = ThycoticAuth.response_error(rs)
                     logging.error('Attachment "%s" (%s) was not imported: HTTP %s %s',
-                                  self.name, self.endpoint, status, message)
+                                  self.name, self.slug, status, message)
         except requests.exceptions.RequestException as e:
-            logging.error('Attachment "%s" (%s) was not imported: %s', self.name, self.endpoint, str(e))
+            logging.error('Attachment "%s" (%s) was not imported: %s', self.name, self.slug, str(e))
 
 
 class ThycoticMembershipDownload(BaseDownloadMembership, ThycoticMixin):
