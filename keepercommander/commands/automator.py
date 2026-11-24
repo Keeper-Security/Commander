@@ -29,17 +29,25 @@ from .enterprise import EnterpriseCommand
 from ..proto import automator_pb2 as automator_proto
 from ..proto import ssocloud_pb2 as ssocloud
 
-automator_list_parser = argparse.ArgumentParser(prog='automator-list', parents=[report_output_parser])
+automator_list_parser = argparse.ArgumentParser(
+    prog='automator-list', parents=[report_output_parser],
+    description='List all SSO Cloud Automator instances in the enterprise.')
 
-automator_view_parser = argparse.ArgumentParser(prog='automator-view')
+automator_view_parser = argparse.ArgumentParser(
+    prog='automator-view',
+    description='Display configuration details and status for an SSO Cloud Automator instance.')
 automator_view_parser.add_argument('target', help='Automator ID or Name.')
 
-automator_create_parser = argparse.ArgumentParser(prog='automator-create')
+automator_create_parser = argparse.ArgumentParser(
+    prog='automator-create',
+    description='Create a new SSO Cloud Automator endpoint for a node.')
 automator_create_parser.add_argument('--name', dest='name', required=True, action='store', help='Automator name.')
 automator_create_parser.add_argument('--node', dest='node', required=True, help='Node Name or ID.')
 
 
-automator_edit_parser = argparse.ArgumentParser(prog='automator-edit')
+automator_edit_parser = argparse.ArgumentParser(
+    prog='automator-edit',
+    description='Update URL, skills, or settings for an SSO Cloud Automator instance.')
 automator_edit_parser.add_argument('target', help='Automator ID or Name.')
 automator_edit_parser.add_argument('--name', dest='name', action='store', help='Automator name.')
 automator_edit_parser.add_argument('--url', dest='url', action='store', help='Automator Webhook URL.')
@@ -51,15 +59,21 @@ automator_edit_parser.add_argument('--set', dest='setting', metavar="KEY=VALUE",
                                         '${base64:filename} to load binary file content and encode it with base64url. '
                                         '${env:environment_variable_name} to load the content of environment variable.')
 
-automator_delete_parser = argparse.ArgumentParser(prog='automator-delete')
+automator_delete_parser = argparse.ArgumentParser(
+    prog='automator-delete',
+    description='Delete an SSO Cloud Automator instance.')
 automator_delete_parser.add_argument('target', help='Automator ID or Name.')
 automator_delete_parser.add_argument('--force', '-f', dest='force', action='store_true',
                                      help='Delete with no confirmation')
 
-automator_action_parser = argparse.ArgumentParser(prog='automator-action')
+automator_action_parser = argparse.ArgumentParser(
+    prog='automator-action',
+    description='Initialize, enable, disable, reset, or inspect logs for an SSO Cloud Automator.')
 automator_action_parser.add_argument('target', help='Automator ID or Name.')
 
-automator_certificate_parser = argparse.ArgumentParser(prog='automator-certificate')
+automator_certificate_parser = argparse.ArgumentParser(
+    prog='automator-certificate',
+    description='Display certificate details from a PFX file for Automator configuration.')
 automator_certificate_parser.add_argument('file', help='PFX Certificate file path.')
 
 

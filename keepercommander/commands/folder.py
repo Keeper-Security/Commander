@@ -155,10 +155,14 @@ ln_parser.error = raise_parse_exception
 ln_parser.exit = suppress_exit
 
 
-shortcut_list_parser = argparse.ArgumentParser(prog='shortcut-list', parents=[base.report_output_parser])
+shortcut_list_parser = argparse.ArgumentParser(
+    prog='shortcut-list', parents=[base.report_output_parser],
+    description='List linked record shortcuts across folders in the vault.')
 shortcut_list_parser.add_argument('target', nargs='?', help='Full record or folder path')
 
-shortcut_keep_parser = argparse.ArgumentParser(prog='shortcut-keep')
+shortcut_keep_parser = argparse.ArgumentParser(
+    prog='shortcut-keep',
+    description='Retain a single target record shortcut and remove all other shortcuts to that record.')
 shortcut_keep_parser.add_argument('target', nargs='?', help='Full record or folder path')
 shortcut_keep_parser.add_argument('folder', nargs='?', help='Optional. Folder name or UID. Overwrites current folder.')
 

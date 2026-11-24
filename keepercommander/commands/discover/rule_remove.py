@@ -7,7 +7,9 @@ from ...discovery_common.types import RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleRemoveCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action discover rule remove')
+    parser = argparse.ArgumentParser(
+        prog='pam action discover rule remove',
+        description='Remove a PAM infrastructure discovery rule.')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID')
     parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',

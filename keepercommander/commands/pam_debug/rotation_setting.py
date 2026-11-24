@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 
 
 class PAMDebugRotationSettingsCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action debug rotation')
+    parser = argparse.ArgumentParser(
+        prog='pam action debug rotation',
+        description='Inspect effective PAM rotation settings and graph links for a user record.')
 
     # The record to base everything on.
     parser.add_argument('--user-record-uid', '-i', required=True, dest='user_record_uid', action='store',

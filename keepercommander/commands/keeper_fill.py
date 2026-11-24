@@ -31,11 +31,15 @@ kf_parse.add_argument('-r', '--recursive', dest='recursive', action='store_true'
 kf_parse.add_argument('paths', nargs='+', type=str, help='folder or record path or UID')
 
 
-kf_list_parser = argparse.ArgumentParser(prog='keeper-fill list', parents=[kf_parse, report_output_parser])
+kf_list_parser = argparse.ArgumentParser(
+    prog='keeper-fill list', parents=[kf_parse, report_output_parser],
+    description='List KeeperFill auto-fill and auto-submit settings for records in a folder or path.')
 kf_list_parser.add_argument('-v', '--verbose', dest='verbose', action='store_true', help='Do not truncate long names')
 
 
-kf_set_parser = argparse.ArgumentParser(prog='keeper-fill set', parents=[kf_parse])
+kf_set_parser = argparse.ArgumentParser(
+    prog='keeper-fill set', parents=[kf_parse],
+    description='Configure KeeperFill auto-fill and auto-submit behavior on records.')
 kf_set_parser.add_argument('--auto-fill', dest='auto_fill', action='store', choices=['on', 'off', 'none'],
                            help='Auto Fill')
 kf_set_parser.add_argument('--auto-submit', dest='auto_submit', action='store', choices=['on', 'off', 'none'],

@@ -8,7 +8,9 @@ from ...discovery_common.rule import Rules, RuleActionEnum, RuleTypeEnum
 
 
 class PAMGatewayActionDiscoverRuleUpdateCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action discover rule update')
+    parser = argparse.ArgumentParser(
+        prog='pam action discover rule update',
+        description='Update an existing PAM infrastructure discovery rule.')
     parser.add_argument('--gateway', '-g', required=True, dest='gateway', action='store',
                         help='Gateway name of UID.')
     parser.add_argument('--configuration-uid', '-c', required=False, dest='configuration_uid',

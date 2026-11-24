@@ -29,12 +29,16 @@ from ..error import CommandError
 PUT_ENTERPRISE_SETTING = 'put_enterprise_setting'
 AUDIT_ALERT_CONTEXT = 'AuditAlertContext'
 
-alert_list_parser = argparse.ArgumentParser(prog='audit-alert list', parents=[report_output_parser])
+alert_list_parser = argparse.ArgumentParser(
+    prog='audit-alert list', parents=[report_output_parser],
+    description='List all configured enterprise audit alerts and their status.')
 alert_list_parser.add_argument('--reload', dest='reload', action='store_true', help='reload alert information')
 
 alert_target_parser = argparse.ArgumentParser(add_help=False)
 alert_target_parser.add_argument('target', metavar='ALERT', help='Alert ID or Name.')
-alert_view_parser = argparse.ArgumentParser(prog='audit-alert view')
+alert_view_parser = argparse.ArgumentParser(
+    prog='audit-alert view',
+    description='Display detailed configuration, triggers, and recipients for an audit alert.')
 alert_view_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name')
 alert_view_parser.add_argument('--all', dest='all', action='store_true', help='View all alerts')
 alert_view_parser.add_argument('--format', dest='format', action='store', choices=['table', 'csv', 'json', 'pdf'],
@@ -42,9 +46,14 @@ alert_view_parser.add_argument('--format', dest='format', action='store', choice
 alert_view_parser.add_argument('--output', dest='output', action='store',
                                   help='path to resulting output file (ignored for "table" format)')
 alert_history_parser = argparse.ArgumentParser(
-    prog='audit-alert history', parents=[report_output_parser, alert_target_parser])
-alert_reset_counts_parser = argparse.ArgumentParser(prog='audit-alert reset-counts', parents=[alert_target_parser])
-alert_delete_parser = argparse.ArgumentParser(prog='audit-alert remove')
+    prog='audit-alert history', parents=[report_output_parser, alert_target_parser],
+    description='View past trigger history and sent notifications for an audit alert.')
+alert_reset_counts_parser = argparse.ArgumentParser(
+    prog='audit-alert reset-counts', parents=[alert_target_parser],
+    description='Reset trigger counters for the specified audit alert.')
+alert_delete_parser = argparse.ArgumentParser(
+    prog='audit-alert remove',
+    description='Delete one or more enterprise audit alerts by ID, name, or ID range.')
 alert_delete_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name.')
 alert_delete_parser.add_argument('--all', dest='delete_all', action='store_true', help='Delete all alerts')
 alert_delete_parser.add_argument('--from', dest='from_id', metavar='ALERT ID', type=int,
@@ -74,7 +83,9 @@ alert_recipient_edit_options.add_argument(
     '--generate-token', dest='generate_token', action='store_true', help='Generate new access token')
 
 
-alert_recipient_parser = argparse.ArgumentParser(prog='audit-alert recipient', parents=[alert_target_parser])
+alert_recipient_parser = argparse.ArgumentParser(
+    prog='audit-alert recipient', parents=[alert_target_parser],
+    description='Manage notification recipients (email, SMS, webhook) for an audit alert.')
 subparsers = alert_recipient_parser.add_subparsers(title='recipient actions', dest='action')
 alert_recipient_enable_parser = subparsers.add_parser('enable', help='enables recipient')
 alert_recipient_enable_parser.add_argument(
@@ -123,10 +134,16 @@ alert_edit_options.add_argument(
     help='Enable or disable alert')
 
 
-alert_add_parser = argparse.ArgumentParser(prog='audit-alert add', parents=[alert_edit_options])
-alert_edit_parser = argparse.ArgumentParser(prog='audit-alert edit', parents=[alert_target_parser, alert_edit_options])
+alert_add_parser = argparse.ArgumentParser(
+    prog='audit-alert add', parents=[alert_edit_options],
+    description='Create a new enterprise audit alert with event triggers and frequency.')
+alert_edit_parser = argparse.ArgumentParser(
+    prog='audit-alert edit', parents=[alert_target_parser, alert_edit_options],
+    description='Modify triggers, filters, or active state of an existing audit alert.')
 
-alert_action_parser = argparse.ArgumentParser(prog='audit-alert action')
+alert_action_parser = argparse.ArgumentParser(
+    prog='audit-alert action',
+    description='Enable or disable one or all enterprise audit alerts.')
 alert_action_parser.add_argument('target', metavar='ALERT', nargs='?', help='Alert ID or Name')
 alert_action_parser.add_argument('--all', dest='apply_all', action='store_true', help='Apply action to all alerts')
 alert_action_parser.error = raise_parse_exception

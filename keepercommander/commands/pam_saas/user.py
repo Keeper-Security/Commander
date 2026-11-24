@@ -16,7 +16,9 @@ if TYPE_CHECKING:
 
 
 class PAMActionSaasUserCommand(PAMGatewayActionDiscoverCommandBase):
-    parser = argparse.ArgumentParser(prog='pam action saas user')
+    parser = argparse.ArgumentParser(
+        prog='pam action saas user',
+        description='Inspect SaaS rotation configurations attached to a PAM user record.')
 
     parser.add_argument('--user-record-uid', '-u', required=True, dest='user_uid', action='store',
                         help='The UID of the User record')
