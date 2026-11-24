@@ -12,6 +12,7 @@
 """Base class for integration setup commands (Slack, Teams, etc.)."""
 
 import argparse
+import getpass
 import os
 import re
 from abc import ABC, abstractmethod
@@ -585,9 +586,12 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             profile=profile,
         )
 
-    def _prompt_with_validation(self, prompt: str, validator, error_msg: str) -> str:
+    def _prompt_with_validation(
+        self, prompt: str, validator, error_msg: str, hide_input: bool = False
+    ) -> str:
+        prompt_func = getpass.getpass if hide_input else input
         while True:
-            value = input(f"{bcolors.OKBLUE}{prompt}{bcolors.ENDC} ").strip()
+            value = prompt_func(f"{bcolors.OKBLUE}{prompt}{bcolors.ENDC} ").strip()
             if validator(value):
                 return value
             print(f"{bcolors.FAIL}Error: {error_msg}{bcolors.ENDC}")

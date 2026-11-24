@@ -22,6 +22,7 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 | `slack-app-setup` | Automated Slack App integration setup with Commander Service Mode |
 | `teams-app-setup` | Automated Teams App integration setup with Commander Service Mode |
 | `gchat-app-setup` | Automated Google Chat App integration setup with Commander Service Mode |
+| `zoom-app-setup` | Automated Zoom Chat integration setup with Commander Service Mode |
 
 ### Security Features
 - API key authentication
@@ -545,6 +546,35 @@ The command generates a complete `docker-compose.yml` with both Commander servic
 | `SLACK_RECORD` | Slack config record UID |
 
 Image name used in compose: `keeper/slack-app:latest`.
+
+### Zoom Chat App Integration Setup
+
+Use `zoom-app-setup` to run the Commander Service Mode integration setup for a
+Zoom Chat app:
+
+```bash
+My Vault> zoom-app-setup
+```
+
+The command follows the same two-phase flow as `slack-app-setup`:
+- **Phase 1:** Sets up Commander Service Mode and its Keeper Secrets Manager configuration.
+- **Phase 2:** Prompts for the Zoom Client ID, Client Secret, Bot JID, Secret
+  Token, Approvals Channel JID, and public HTTPS endpoint URL; stores these
+  values in a Zoom config record in the vault.
+- Generates or updates `docker-compose.yml` with Commander and the Zoom app
+  service (`keeper/zoom-app:latest`). The compose file references the config
+  record through `ZOOM_RECORD`; it does not write the Zoom secrets in plaintext.
+
+The command validates that the endpoint is an absolute HTTPS URL with a
+public-looking hostname. It does not check that the endpoint is live. Use the
+public URL and callback path configured for the Zoom bot image.
+
+The generated compose file is deployed from the directory containing it:
+
+```bash
+docker compose up -d
+docker compose logs -f zoom-app
+```
 
 ### Google Chat App Integration Setup
 

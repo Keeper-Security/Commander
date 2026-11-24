@@ -16,6 +16,7 @@ from .integration_setup_base import IntegrationSetupCommand
 from .slack_app_setup import SlackAppSetupCommand
 from .teams_app_setup import TeamsAppSetupCommand
 from .sailpoint_app_setup import SailPointAppSetupCommand
+from .zoom_app_setup import ZoomAppSetupCommand
 
 __all__ = [
     'IntegrationSetupCommand',
@@ -23,4 +24,5 @@ __all__ = [
     'SlackAppSetupCommand',
     'TeamsAppSetupCommand',
     'SailPointAppSetupCommand',
+    'ZoomAppSetupCommand',
 ]

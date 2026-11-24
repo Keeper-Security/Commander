@@ -175,6 +175,24 @@ class GChatConstants:
     )
 
 
+class ZoomConstants:
+    """Defaults and field labels for Zoom Chat app setup."""
+    INTEGRATION_NAME = 'Zoom'
+    DISPLAY_NAME = 'Zoom Chat'
+    DEFAULT_FOLDER_NAME = 'Commander Service Mode - Zoom Chat App'
+    DEFAULT_RECORD_NAME = 'Commander Service Mode Zoom Chat App Config'
+
+    FIELD_CLIENT_ID = 'zoom_client_id'
+    FIELD_CLIENT_SECRET = 'zoom_client_secret'
+    FIELD_BOT_JID = 'zoom_bot_jid'
+    FIELD_SECRET_TOKEN = 'zoom_secret_token'
+    FIELD_APPROVALS_CHANNEL_JID = 'zoom_approvals_channel_jid'
+    FIELD_PUBLIC_ENDPOINT_URL = 'zoom_public_endpoint_url'
+
+    # Zoom Chat bot container port used by the integration service.
+    BOT_PORT = 3000
+
+
 @dataclass
 class GChatConfig:
     google_service_account_json: str
@@ -194,3 +212,15 @@ class GChatConfig:
     @property
     def chat_approvals_space_id(self) -> str:
         return self.approvals.single_channel_id
+
+
+@dataclass
+class ZoomConfig:
+    """Zoom Chat app configuration stored in the Keeper integration record."""
+
+    client_id: str
+    client_secret: str
+    bot_jid: str
+    secret_token: str
+    approvals_channel_jid: str
+    public_endpoint_url: str

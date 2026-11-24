@@ -19,6 +19,7 @@ from keepercommander.service.commands.integrations.gchat_app_setup import GChatA
 from keepercommander.service.commands.integrations.runtime_policy import apply_runtime_command_policy
 from keepercommander.service.commands.integrations.sailpoint_app_setup import SailPointAppSetupCommand
 from keepercommander.service.commands.integrations.slack_app_setup import SlackAppSetupCommand
+from keepercommander.service.commands.integrations.zoom_app_setup import ZoomAppSetupCommand
 from keepercommander.service.commands.terraform_app_setup import TerraformSetupConstants
 from keepercommander.service.decorators.min_commander_version import TERRAFORM_DOCKER_ENV, TERRAFORM_DOCKER_ENV_LEGACY
 from keepercommander.service.util.exceptions import ValidationError
@@ -90,6 +91,14 @@ class TestApplyRuntimeCommandPolicy(unittest.TestCase):
         allowed = set(SailPointAppSetupCommand().get_service_commands().split(','))
         with mock.patch.dict(os.environ, {'SAILPOINT_RECORD': 'uid-789'}, clear=True):
             args = _Args(commands='search,download-attachment,ksm')
+            apply_runtime_command_policy(args)
+        self.assertEqual(set(args.commands.split(',')), allowed)
+        self.assertNotIn('download-attachment', args.commands.split(','))
+
+    def test_zoom_record_env_confines_to_zoom_allowlist(self):
+        allowed = set(ZoomAppSetupCommand().get_service_commands().split(','))
+        with mock.patch.dict(os.environ, {'ZOOM_RECORD': 'uid-zoom'}, clear=True):
+            args = _Args(commands='download-attachment')
             apply_runtime_command_policy(args)
         self.assertEqual(set(args.commands.split(',')), allowed)
         self.assertNotIn('download-attachment', args.commands.split(','))

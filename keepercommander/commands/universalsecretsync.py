@@ -95,7 +95,7 @@ class PAMUniversalSyncConfigListCommand(Command):
                     # history_level=1 means only load latest/active edges, not full history
                     conn = Connection(params=params)
                     dag = DAG(conn=conn, record=record, graph_id=0, logger=logging, history_level=1,
-                      path_aware=True)
+                              path_aware=True)
                     dag.load(sync_point=0)
 
                     # Get root vertex and check for universal_sync loop edge
