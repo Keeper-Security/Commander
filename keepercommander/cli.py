@@ -21,6 +21,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Union
@@ -72,6 +73,19 @@ aliases['h'] = 'history'
 aliases['q'] = 'quit'
 
 logging.getLogger('asyncio').setLevel(logging.WARNING)
+
+# Root-logger file written when the shell is started with --output-file.
+DEFAULT_LOG_FILE = 'keeper.log'
+KEEPER_LOG_FILE_ATTR = '_keeper_log_file'
+# Bare file names are written here, under the current directory.
+LOG_DIR_NAME = 'logs'
+# Startup commands that open the shell. --output-file is honored only for these.
+SHELL_START_COMMANDS = {'shell', '-'}
+# Global options that take a value, so the shell command can be found after them.
+_STARTUP_VALUE_OPTIONS = frozenset({
+    '--config', '--server', '-ks', '--user', '-ku', '--password', '-kp',
+    '--launched-with-shortcut', '-lwsc', '--proxy', '--data-dir',
+})
 
 
 def display_command_help(show_enterprise=False, show_shell=False, show_legacy=False, show_nested_share_folder=True):
@@ -237,6 +251,58 @@ def is_enterprise_command(name, command, args):   # type: (str, CliCommand, str)
         return isinstance(subcommand, EnterpriseCommand)
     else:
         return False
+
+
+def _startup_command(tokens):
+    """Return the keeper command in a process startup argument list."""
+    skip_next = False
+    for token in tokens:
+        if skip_next:
+            skip_next = False
+            continue
+        if token.startswith('-'):
+            name = token.split('=', 1)[0]
+            if name in _STARTUP_VALUE_OPTIONS and '=' not in token:
+                skip_next = True
+            continue
+        return token
+    return None
+
+
+def split_output_file_tokens(tokens):
+    """Take ``--output-file`` from a shell startup command line.
+
+    The flag is honored when this process is starting the shell (``shell`` or
+    ``-``) and when no command is given. ``keeper.py`` starts the shell in that
+    second case. A named command other than the shell keeps the tokens, and the
+    flag is not read from commands typed later inside the shell.
+
+    * ``--output-file`` uses ``keeper.log``. The following token is not the file name.
+    * ``--output-file=NAME`` uses NAME. An empty NAME falls back to ``keeper.log``.
+
+    When the flag is given more than once, the last one wins.
+
+    Returns ``(log_file, explicit_name, remaining_tokens)``. ``log_file`` is None
+    when the flag is absent or this command is not a shell start.
+    """
+    command = _startup_command(tokens)
+    if command not in SHELL_START_COMMANDS and command is not None:
+        return None, False, list(tokens)
+
+    log_file, explicit = None, False
+    remaining = []
+    for token in tokens:
+        if token == '--output-file':
+            log_file, explicit = DEFAULT_LOG_FILE, False
+        elif token.startswith('--output-file='):
+            value = token.split('=', 1)[1].strip()
+            if value:
+                log_file, explicit = value, True
+            else:
+                log_file, explicit = DEFAULT_LOG_FILE, False
+        else:
+            remaining.append(token)
+    return log_file, explicit, remaining
 
 
 def command_and_args_from_cmd(command_line):
@@ -627,11 +693,62 @@ def force_quit():
 
 prompt_session = None
 
+
+_ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+
+
+class PlainLogFormatter(logging.Formatter):
+    """File formatter. Console color codes are removed from the stored line."""
+
+    def format(self, record):
+        return _ANSI_ESCAPE.sub('', super().format(record))
+
+
+class NonEmptyLogFilter(logging.Filter):
+    """Skip blank records. Those calls only add space on the console."""
+
+    def filter(self, record):
+        text = _ANSI_ESCAPE.sub('', record.getMessage())
+        return bool(text.strip())
+
+
+def _zone_offset(when):
+    """``+05:30`` style offset. ``+0000`` from ``strftime`` becomes ``+00:00``."""
+    raw = when.strftime('%z') or '+0000'
+    if len(raw) == 5:
+        return raw[:3] + ':' + raw[3:]
+    return raw
+
+
+def _session_start_line():
+    """A raw marker that shows where a new shell session was appended.
+
+    The clock time is the machine's local time. The offset says which zone
+    that clock used, without printing the zone name.
+    """
+    local = datetime.datetime.now().astimezone()
+    stamp = '%s%s' % (local.strftime('%Y-%m-%dT%H:%M:%S'), _zone_offset(local))
+    return '==================== NEW SESSION STARTED AT : %s ====================' % stamp
+
+
 class DebugManager:
     """Debug manager for console and file logging."""
     
     def __init__(self):
         self.logger = logging.getLogger()
+
+    def _place_in_log_folder(self, file_path):
+        """Put a bare file name in a logs folder in the current directory.
+
+        A path that already names a directory is kept.
+        """
+        expanded = os.path.expanduser(file_path)
+        path = Path(expanded)
+        if path.is_absolute():
+            return expanded
+        directory = Path.cwd() / LOG_DIR_NAME
+        directory.mkdir(parents=True, exist_ok=True)
+        return str(directory / path.name)
     
     def has_file_logging(self):
         """Check if file logging is active."""
@@ -648,9 +765,91 @@ class DebugManager:
         """Set console debug level."""
         level = logging.DEBUG if enabled else (logging.WARNING if batch_mode else logging.INFO)
         for h in self.logger.handlers:
-            if isinstance(h, logging.StreamHandler) and not getattr(h, '_debug_file', False):
-                h.setLevel(level)
-    
+            if not isinstance(h, logging.StreamHandler) or isinstance(h, logging.FileHandler):
+                continue
+            if getattr(h, '_debug_file', False) or getattr(h, KEEPER_LOG_FILE_ATTR, False):
+                continue
+            h.setLevel(level)
+
+    def attach_log_file(self, file_path, explicit_name=False):
+        """Copy every root-logger record into file_path. Console logging is unchanged.
+
+        Child loggers propagate to the root logger, so this one handler covers
+        logs emitted anywhere in Commander. A custom name and the default name
+        both append to an existing file. Every session, including a new file,
+        starts with a session-start line. Returns the path being written, or
+        None when the file could not be opened.
+        """
+        fh = None
+        try:
+            expanded = self._place_in_log_folder(file_path)
+            validated_path = self._validate_log_file_path(expanded)
+
+            log_dir = os.path.dirname(validated_path)
+            if log_dir:
+                os.makedirs(log_dir, mode=0o750, exist_ok=True)
+
+            for h in list(self.logger.handlers):
+                if getattr(h, KEEPER_LOG_FILE_ATTR, False):
+                    self.logger.removeHandler(h)
+                    try:
+                        h.close()
+                    except (OSError, IOError) as close_error:
+                        logging.warning('Failed to close log handler: %s', close_error)
+
+            append_session = self._existing_log_has_content(validated_path)
+            needs_leading_newline = append_session and self._file_missing_trailing_newline(validated_path)
+            fh = logging.FileHandler(validated_path, mode='a', encoding='utf-8')
+            self._write_session_start(fh, needs_leading_newline)
+            fh.setLevel(logging.NOTSET)
+            fh.setFormatter(PlainLogFormatter(
+                '%(asctime)s %(levelname)s %(name)s: %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S',
+            ))
+            fh.addFilter(NonEmptyLogFilter())
+            setattr(fh, KEEPER_LOG_FILE_ATTR, True)
+            self.logger.addHandler(fh)
+            try:
+                utils.set_file_permissions(fh.baseFilename)
+            except Exception:
+                logging.warning('Failed to set permissions on log file %s', fh.baseFilename)
+            return fh.baseFilename
+        except (ValueError, OSError, IOError) as e:
+            logging.error('Failed to set up log file: %s', e)
+            if fh is not None:
+                fh.close()
+            return None
+        except Exception as e:
+            logging.error('Unexpected error setting up log file: %s', e)
+            if fh is not None:
+                fh.close()
+            return None
+
+    def _existing_log_has_content(self, file_path):
+        """True when this session will continue an existing log, not a new file."""
+        try:
+            return os.path.getsize(file_path) > 0
+        except OSError:
+            return False
+
+    def _file_missing_trailing_newline(self, file_path):
+        try:
+            with open(file_path, 'rb') as handle:
+                handle.seek(-1, os.SEEK_END)
+                return handle.read(1) not in (b'\n', b'\r')
+        except OSError:
+            return False
+
+    def _write_session_start(self, handler, needs_leading_newline):
+        """Write the session marker directly, so it is not formatted as a log record."""
+        stream = handler.stream
+        if stream is None:
+            return
+        if needs_leading_newline:
+            stream.write('\n')
+        stream.write(_session_start_line() + '\n')
+        stream.flush()
+
     def setup_file_logging(self, file_path):
         """Setup debug file logging."""
         try:

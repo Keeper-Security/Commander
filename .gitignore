@@ -29,3 +29,4 @@ keepercommander/service/core/logs/
 tests/compliance_test.env
 docker-compose.yml
 uv.lock
+logs/

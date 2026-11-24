@@ -117,7 +117,8 @@ def show_brief_help():
     print('  --password, -kp PASSWORD Master password for the account')
     print('  --config CONFIG          Config file to use')
     print('  --debug                  Turn on debug mode')
-    print('  --silent                 Turn off all logging statements')    
+    print('  --silent                 Turn off all logging statements') 
+    print('  --log-file[=FILE]        Also write logs to FILE in ./logs (default: keeper.log)')
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --skip-scan              Skip login-time BreachWatch/security scans and device registration')
     print('                           Vault and enterprise sync still run')
@@ -137,6 +138,8 @@ def show_brief_help():
     print('')
     print('Examples:')
     print('  keeper shell                         # Start interactive shell')
+    print('  keeper shell --output-file           # Log the shell to ./logs/keeper.log')
+    print('  keeper shell --output-file=FILE.log  # Log the shell to ./logs/FILE.log')
     print('  keeper --server EU login             # Login to EU region')
     print('  keeper login -h                      # Show login command help')
     print('  keeper search "github" --format=json # Search and output JSON')
@@ -216,14 +219,19 @@ def main(from_package=False):
             return
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
-    opts, flags = parser.parse_known_args(sys.argv[1:])
-    
+    # --output-file is a shell startup option. A bare flag does not take the next token.
+    log_file, log_file_explicit, argv = cli.split_output_file_tokens(sys.argv[1:])
+    opts, flags = parser.parse_known_args(argv)
+    opts.log_file = log_file
+    opts.log_file_explicit = log_file_explicit
+
     # Store the original command arguments for proper reconstruction
     if opts.command:
         # Find where the command starts in the original args and take everything after it
         try:
-            cmd_index = sys.argv[1:].index(opts.command)
-            original_args_after_command = sys.argv[1:][cmd_index+1:]
+            # Use argv, which no longer holds the --output-file tokens.
+            cmd_index = argv.index(opts.command)
+            original_args_after_command = argv[cmd_index+1:]
             
             # Filter out arguments that were consumed by the main parser
             filtered_args = []
@@ -269,6 +277,19 @@ def main(from_package=False):
     if opts.silent:
         logging.disable(logging.CRITICAL)
 
+    log_file_path = None
+    # keeper.py with no command becomes the shell further down. Open the log now
+    # so that startup is included. A help or version request does not open one.
+    wants_help = any(arg in ('-h', '--help') for arg in flags)
+    shell_will_start = (
+        opts.command in cli.SHELL_START_COMMANDS
+        or (from_package and not opts.command and not wants_help and not opts.version)
+    )
+    if shell_will_start and opts.log_file and not opts.silent:
+        log_file_path = cli.debug_manager.attach_log_file(
+            opts.log_file, explicit_name=bool(getattr(opts, 'log_file_explicit', False)),
+        )
+
     params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 
     if opts.batch_mode:
@@ -279,6 +300,9 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
+
+    if log_file_path:
+        logging.info('Logging to file: %s', log_file_path)
 
     # Log SSL certificate selection in debug mode (after logging is configured)
     if opts.debug:
