@@ -12,7 +12,7 @@ from keepercommander.proto import record_pb2, SyncDown_pb2
 
 _USER_NAME = 'unit.test@company.com'
 _USER_PASSWORD = base64.b64encode(os.urandom(8)).decode('utf-8').strip('=')
-_USER_ITERATIONS = 1000
+_USER_ITERATIONS = 100_000
 _USER_SALT = os.urandom(16)
 _USER_DATA_KEY = utils.generate_aes_key()
 _USER_ACCOUNT_UID = utils.generate_uid()

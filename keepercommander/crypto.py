@@ -25,6 +25,7 @@ from cryptography.hazmat.primitives.hmac import HMAC
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.padding import PKCS7
+from .constants import PBKDF2_LEGACY_MIN_ITERATIONS
 
 _CRYPTO_BACKEND = default_backend()
 _CURVE = ec.SECP256R1()
@@ -155,7 +156,16 @@ def decrypt_ec(data, ec_private_key):
     return decrypt_aes_v2(data[65:], encryption_key)
 
 
+def _validate_pbkdf2_parameters(salt, iterations):
+    if not isinstance(salt, bytes) or len(salt) < 16:
+        raise ValueError('PBKDF2 salt must be at least 16 bytes.')
+    if isinstance(iterations, bool) or not isinstance(iterations, int) \
+            or iterations < PBKDF2_LEGACY_MIN_ITERATIONS:
+        raise ValueError(f'PBKDF2 iteration count must be at least {PBKDF2_LEGACY_MIN_ITERATIONS}.')
+
+
 def derive_key_v1(password, salt, iterations):
+    _validate_pbkdf2_parameters(salt, iterations)
     kdf = PBKDF2HMAC(algorithm=SHA256(), length=32, salt=salt, iterations=iterations, backend=_CRYPTO_BACKEND)
     return kdf.derive(password.encode('utf-8'))
 
@@ -168,6 +178,7 @@ def derive_keyhash_v1(password, salt, iterations):
 
 
 def derive_keyhash_v2(domain, password, salt, iterations):
+    _validate_pbkdf2_parameters(salt, iterations)
     kdf = PBKDF2HMAC(algorithm=SHA512(), length=64, salt=salt, iterations=iterations, backend=_CRYPTO_BACKEND)
     derived_key = kdf.derive((domain+password).encode('utf-8'))
     hf = HMAC(derived_key, SHA256(), backend=_CRYPTO_BACKEND)
