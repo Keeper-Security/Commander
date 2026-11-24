@@ -528,6 +528,7 @@ If you do not accept this change by {0}, you will be locked out of your account.
 """
 
 PBKDF2_ITERATIONS = 1_000_000
+PBKDF2_LEGACY_MIN_ITERATIONS = 100_000
 
 RMD_BENCHMARK_MAPPING = {
         "SB_CREATE_AT_LEAST_TWO_KEEPER_ADMINISTRATORS":
