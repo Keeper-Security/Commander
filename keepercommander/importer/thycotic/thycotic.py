@@ -914,6 +914,7 @@ class ThycoticMixin:
             seen += 1
             title = secret.get('name') or ''
             if not title:
+                logging.warning('Secret %s has no name in /v2/secrets response, skipping', secret_id)
                 continue
             if ThycoticMixin._warn_unmapped_roles(title, secret_id, perm_rows):
                 custom_role_secrets += 1
