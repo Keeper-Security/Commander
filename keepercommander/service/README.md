@@ -556,7 +556,7 @@ Zoom Chat app:
 My Vault> zoom-app-setup
 ```
 
-The command follows the same two-phase flow as `slack-app-setup`:
+The command follows the standard two-phase integration setup flow:
 - **Phase 1:** Sets up Commander Service Mode and its Keeper Secrets Manager configuration.
 - **Phase 2:** Prompts for the Zoom Client ID, Client Secret, Bot JID, Secret
   Token, Approvals Channel JID, and public HTTPS endpoint URL; stores these
