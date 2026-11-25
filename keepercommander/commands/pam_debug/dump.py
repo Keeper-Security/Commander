@@ -1,6 +1,5 @@
 from __future__ import annotations
 import argparse
-import base64
 import datetime
 import json
 import logging
@@ -11,27 +10,23 @@ from typing import TYPE_CHECKING, Iterable
 from ..base import Command, FolderMixin
 from ...subfolder import get_folder_uids
 from ... import vault
-from ...keeper_dag import DAG, EdgeType
+from ...keeper_dag import DAG
 from ...keeper_dag.types import GRAPH_ID_TO_ENDPOINT, PamGraphId
-from ...nested_share_folder.common import get_record_from_cache, get_record_key
+from ...nested_share_folder.common import get_record_from_cache
 from ..pam.vault_target import resolve_pam_folder_uid
-from ..pam_import.keeper_ai_settings import get_resource_settings
 from ..pam_import.nsf_helpers import get_folder_record_uids
 from ...error import CommandError
-from ...keeper_dag.crypto import decrypt_aes
 from . import get_connection, load_pam_record
+from .graph_edges import EdgeIndex, collect_graph_entry
+from .record_state import record_json, rotation_info
 
 if TYPE_CHECKING:
     from ...params import KeeperParams
-    from ...keeper_dag.dag import DAG as DAGType
 
 
 ALL_GRAPH_IDS = [g.value for g in PamGraphId]
 MAX_SERVICE_MODE_DUMP_RECORDS = 1000
 MAX_SERVICE_MODE_DUMP_CONFIGS = 20
-
-# DELETION means the edge is absent; UNDENIAL cancels a DENIAL (treated as absent)
-_EXCLUDE_EDGE_TYPES = frozenset({EdgeType.DELETION, EdgeType.UNDENIAL})
 
 
 class PAMDebugDumpCommand(Command):
@@ -279,7 +274,9 @@ class PAMDebugDumpCommand(Command):
 
         # 4. Load all 5 DAGs once per config_uid
         # keyed by (config_uid, graph_id)
-        dag_cache: dict[tuple[str, int], 'DAGType' | None] = {}
+        dag_cache: dict[tuple[str, int], 'DAG | None'] = {}
+        # The edges of each loaded graph indexed by vertex UID, built once (not scanned per record).
+        edge_indexes: dict[tuple[str, int], EdgeIndex] = {}
         graph_load_errors: dict[tuple[str, int], dict] = {}
         config_load_errors: dict[str, dict] = {}
         conn = get_connection(params)
@@ -305,6 +302,7 @@ class PAMDebugDumpCommand(Command):
                               fail_on_corrupt=False, logger=logging)
                     dag.load(sync_point=0)
                     dag_cache[(config_uid, graph_id)] = dag
+                    edge_indexes[(config_uid, graph_id)] = EdgeIndex(dag)
                 except Exception as err:
                     logging.error('Failed to load graph %d for config %s: %s', graph_id, config_uid, err)
                     dag_cache[(config_uid, graph_id)] = None
@@ -340,41 +338,7 @@ class PAMDebugDumpCommand(Command):
             }
 
             # data - same structure as `get --format=json` (classic + NSF)
-            data = {}
-            record_errors = []
-            loaded = None
-            try:
-                raw = rec.get('data_unencrypted')
-                if raw:
-                    data = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
-                else:
-                    nsf_data = getattr(params, 'nested_share_record_data', {}).get(rec_uid) or {}
-                    data = dict(nsf_data.get('data_json') or {})
-                if not data:
-                    loaded = load_pam_record(params, rec_uid)
-                    if loaded is not None:
-                        from ... import vault_extensions
-                        if isinstance(loaded, vault.TypedRecord):
-                            data = vault_extensions.extract_typed_record_data(loaded)
-                        notes = getattr(loaded, 'notes', None)
-                        if notes:
-                            data['notes'] = notes
-                else:
-                    loaded = load_pam_record(params, rec_uid)
-                    notes = getattr(loaded, 'notes', None) if loaded else None
-                    if notes:
-                        data['notes'] = notes
-                if not data and loaded is None:
-                    record_errors.append({
-                        'stage': 'record_data',
-                        'message': 'Record data could not be loaded.',
-                    })
-            except Exception as err:
-                logging.warning('Could not build data for record %s: %s', rec_uid, err)
-                record_errors.append({
-                    'stage': 'record_data',
-                    'message': 'Record data could not be built.',
-                })
+            data, record_errors = record_json(params, rec_uid)
 
             # graph_sync - dict keyed by config_uid, then by graph name.
             # A record may be referenced by more than one PAM Configuration; we query
@@ -400,7 +364,8 @@ class PAMDebugDumpCommand(Command):
                             record_errors.append(error)
                     continue
                 try:
-                    graph_entry = _collect_graph_entry(dag, rec_uid, params, c_uid)
+                    graph_entry = collect_graph_entry(dag, rec_uid, params, c_uid,
+                                                      edge_indexes.get((c_uid, graph_id)))
                     if graph_entry:
                         graph_name = PamGraphId(graph_id).name
                         graph_sync.setdefault(c_uid, {})[graph_name] = graph_entry
@@ -420,6 +385,10 @@ class PAMDebugDumpCommand(Command):
                 'data': data,
                 'graph_sync': graph_sync,
             }
+            # Rotation settings live in the vault cache, not in the graph.
+            rotation = rotation_info(params, rec_uid)
+            if rotation:
+                row['rotation'] = rotation
             if record_errors:
                 row['errors'] = record_errors
             return row
@@ -454,147 +423,3 @@ def _build_unavailable_rows(folder_uids: Iterable[str]):
                 'message': 'One or more folder records could not be loaded.',
             }],
         }
-
-
-def _collect_graph_entry(dag: 'DAGType', record_uid: str, params: 'KeeperParams',
-                         config_uid: str) -> dict:
-    """Build the per-graph entry for record_uid.
-
-    Returns a dict with zero or more of:
-      "vertex_active": bool   - record_uid exists as a vertex in this graph
-      "edges": [...]          - active, non-deleted edges referencing record_uid
-
-    Returns an empty dict when the record has no presence in the graph at all,
-    signalling the caller to omit this graph from the output.
-    """
-    entry: dict = {}
-
-    # Check whether record_uid is itself a vertex in this graph (including lone vertices).
-    vertex = dag.get_vertex(record_uid)
-    if vertex is not None:
-        entry['vertex_active'] = vertex.active
-
-    edges = _collect_edges_for_record(dag, record_uid, params, config_uid)
-    if edges:
-        entry['edges'] = edges
-
-    return entry
-
-
-def _collect_edges_for_record(dag: 'DAGType', record_uid: str, params: 'KeeperParams',
-                               config_uid: str) -> list[dict]:
-    """Return all non-deleted edges that reference record_uid as head or tail.
-
-    Inactive edges (active=False) are included - they may represent settings
-    that exist in the graph but have been superseded or are pending deletion.
-    The 'active' field in each output dict lets the caller distinguish them.
-    DELETION and UNDENIAL edges are still excluded (bookkeeping, not data).
-    """
-    edges_out = []
-    for vertex in dag.all_vertices:
-        tail_uid = vertex.uid
-        for edge in (vertex.edges or []):
-            if not edge:
-                continue
-            if edge.edge_type in _EXCLUDE_EDGE_TYPES:
-                continue
-            head_uid = edge.head_uid
-            if tail_uid != record_uid and head_uid != record_uid:
-                continue
-
-            contents = _extract_edge_contents(edge, tail_uid, params, config_uid)
-
-            # ACL edges may carry a rotation_settings.pwd_complexity field that is
-            # AES-GCM encrypted with the owning record's key and base64-encoded.
-            # Decrypt it in-place so callers see the plaintext complexity rules.
-            if edge.edge_type == EdgeType.ACL and isinstance(contents, dict):
-                rotation_settings = contents.get('rotation_settings')
-                if isinstance(rotation_settings, dict):
-                    pwd_complexity_enc = rotation_settings.get('pwd_complexity')
-                    if pwd_complexity_enc and isinstance(pwd_complexity_enc, str):
-                        for uid in (head_uid, tail_uid):
-                            raw_rec = get_record_from_cache(params, uid) or {}
-                            rec_key = raw_rec.get('record_key_unencrypted')
-                            if not rec_key:
-                                try:
-                                    rec_key = get_record_key(params, uid, raise_on_missing=False)
-                                except Exception:
-                                    rec_key = None
-                            if not rec_key:
-                                continue
-                            try:
-                                enc_bytes = base64.b64decode(pwd_complexity_enc)
-                                rotation_settings['pwd_complexity'] = json.loads(
-                                    decrypt_aes(enc_bytes, rec_key).decode('utf-8')
-                                )
-                                break
-                            except Exception:
-                                pass
-
-            edge_type_str = edge.edge_type.value if hasattr(edge.edge_type, 'value') else str(edge.edge_type)
-            edges_out.append({
-                'head': head_uid,
-                'tail': tail_uid,
-                'edge_type': edge_type_str,
-                'path': edge.path,
-                'active': edge.active,
-                'contents': contents,
-            })
-    return edges_out
-
-
-def _extract_edge_contents(edge, tail_uid: str, params: 'KeeperParams', config_uid: str):
-    """Attempt to return edge content as a serialisable value.
-
-    For most edges the DAG's built-in decryption (decrypt=True default) is
-    sufficient and content_as_dict works straight away.
-
-    DATA edges encrypted directly with the vertex owner's record key
-    (jit_settings, ai_settings pattern) are not covered by the normal
-    vertex-keychain flow.  get_resource_settings() handles these correctly:
-    it loads the graph keyed on the resource record's own key and also
-    handles base64-encoded encrypted content.  It is only called when the
-    fast content_as_dict path has already failed, to avoid unnecessary
-    network round trips.
-
-    config_uid is the PAM configuration that owns the DAG being traversed -
-    passed from the caller so records not in the rotation cache are still
-    handled correctly.
-    """
-    if edge.content is None:
-        return None
-
-    # Happy path: DAG already decrypted it.
-    try:
-        return edge.content_as_dict
-    except Exception:
-        pass
-
-    # Fallback for DATA edges whose content the DAG keychain could not decrypt
-    # (e.g. jit_settings / ai_settings encrypted with the resource's own record key).
-    if edge.edge_type == EdgeType.DATA and edge.path and config_uid:
-        try:
-            result = get_resource_settings(params, tail_uid, edge.path, config_uid)
-            if result is not None:
-                return result
-        except Exception:
-            pass
-
-    # Last resort: return as plain string (non-JSON content, e.g. a path label).
-    # content_as_str can silently return bytes when .decode() fails, so check the type.
-    try:
-        s = edge.content_as_str
-        if isinstance(s, str):
-            return s
-    except Exception:
-        pass
-
-    # All decode/decrypt attempts failed but content exists - return the first
-    # 40 bytes as hex so the caller can tell there IS data vs truly absent.
-    raw = edge.content
-    if isinstance(raw, (bytes, str)):
-        raw_bytes = raw if isinstance(raw, bytes) else raw.encode('latin-1', errors='replace')
-        snippet = raw_bytes[:40].hex()
-        truncated = len(raw_bytes) > 40
-        return f'<raw_hex:{snippet}{"..." if truncated else ""}>'
-    return None

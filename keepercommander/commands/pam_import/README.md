@@ -38,7 +38,8 @@ Notes:
 - **Telnet** (`server-telnet`, `ddhhz/nyancat-server`) has no authentication; the Keeper pamUser exists only for rotation/discovery testing.
 
 
-Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.  
+Adding new PAM resources and users to an existing PAM configuration from an import file. The command validates folders and records, then creates only new items (match by title, existing records are skipped). The import JSON format is the same.
+**Extend only adds - it never updates existing records.** A new resource is created with all of its settings, users and credentials (administrative and launch credentials, options, JIT, KeeperAI, workflow, ...). An **existing** resource found in the JSON is left exactly as it is: its entry only anchors the **new** users nested under it, and those users are added (linked to the machine, with their rotation and service accounts). Extend ignores all machine-level settings of an existing machine entry - its options, `administrative_credentials` and `launch_credentials` included - without a warning; changing existing records is left to a separate update command (or the Web Vault / `pam connection edit`).  
 `pam project extend --config=<uid_or_title> --filename=/path/to/import.json [--resources-folder=<uid_or_path>] [--users-folder=<uid_or_path>] [--dry-run]`
 
 - `--config`, `-c` → PAM Configuration record UID or title.
@@ -48,9 +49,98 @@ Adding new PAM resources and users to an existing PAM configuration from an impo
 - `--dry-run`, `-d` → Test import without modifying vault.
 
 > **Notes:**
-- Folder for new records: 1) `--resources-folder`/`--users-folder`, 2) `folder_path` in the JSON, 3) autodetect — folders named `<project> - Resources`/`<project> - Users`, otherwise the folder where existing resources (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser) or users (pamUser, login) live. If autodetect is ambiguous or finds nothing the command fails; add `folder_path` or use the options above.
-- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault.
+- Folder for new records: 1) `--resources-folder`/`--users-folder`, 2) `folder_path` in the JSON, 3) autodetect — folders named `<project> - Resources`/`<project> - Users`, otherwise the folder where existing resources (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser, pamCloudResource) or users (pamUser, login) live. If autodetect is ambiguous or finds nothing the command fails; add `folder_path` or use the options above.
+- Use **`--dry-run`** to preview what would be created and to see detailed validation output without changing the vault. Import/extend dry-run prints the **batch plan** (creation tiers + Step 2 dispatch + `import_tail` on import) from `BatchPamImportEngine.simulate()` — no vault or DAG writes. It also runs **pre-flight checks** for problems the live run would only hit after the records exist, printed as `Dry-run preflight: ...` warnings and listed under `preflight_warnings` in the plan: an unresolved `saas_config` or `service_resources`, a `saas`, `iam_user` or `scripts_only` user nested under a machine, an `iam_user` rotation on a PAM configuration that is not AWS / Azure / GCP / Domain / Okta, a record type the tenant does not have (`pamCloudResource`, `saasConfiguration`), a `pamCloudResource` on a PAM configuration that cannot federate an IdP, KeeperAI requested on a new `pamRemoteBrowser` / `pamCloudResource` while the existing PAM configuration has `ai_threat_detection` off, and, for `extend`, an existing machine that is not linked to the configuration or has **no admin credential** while new users with a rotation are added (their rotation would fail). The extend checks read the PAM graph once (read-only).
 - If the command reports errors, run it again with **`--dry-run`** for more detailed error messages.
+
+### `pam project update` (writes record fields, graph settings, workflow, attachment / script files and rotations; a few cases are listed as `NOT WRITTEN YET`, see "What a write run does")
+
+Brings **existing** PAM records in line with the same import JSON that `import` and `extend` use. It never creates and never removes a record: a record that is in the JSON but not in the vault is an error ("run `pam project extend` first"); a record that is in the vault but not in the JSON is left alone. Only the `pam_data` part of the JSON is used; `project`, `pam_configuration` and the other parts are ignored. A run without `-d` / `--estimate` shows the plan, asks for confirmation and writes the changes, see "What a write run does". This section describes the rules the implementation (`update_schema.py`, `update_diff.py`, `update_compare.py`) follows.
+
+| Option | Meaning |
+|--------|---------|
+| `-c`, `--config` | PAM configuration, UID or title. Its KSM application decides which records are in scope. |
+| `-f`, `--filename` | The import JSON: a file, or the JSON text itself. |
+| `-d`, `--dry-run` | Show the plan, write nothing. |
+| `-v`, `--verbose` | Every change field by field, identical records included. |
+| `--estimate` | Only count the records that differ; never writes. |
+| `--format {text,json}` | Output format; `json` needs `-y`, `-d` or `--estimate`. |
+| `-y`, `--yes` | Do not ask for confirmation. Required in Service Mode and when input is not a terminal. |
+| `--include-passwords` | Replace the vault passwords with the JSON ones (skipped by default). |
+| `--skip-attachments` | Do not compare or upload attachment / script files. |
+| `--syntax-help` | The long help; cannot be combined with other options. |
+
+**Which records are compared.** The records in the folders shared to the KSM application of the configuration. A JSON item is matched by `uid`, else by `folder_path` + title, else by title. These are **plan errors**: everything is listed and nothing is written: the record is not found, it is in a folder that is not shared to the application, the title matches several records, two JSON items match one record, the record type differs, the record belongs to another configuration or is not linked to this one (`update` does not link resources), you have no write permission (checked for classic records and for Nested Share Folder records), or a file named in the JSON is missing on this computer (fix the path or use `--skip-attachments`).
+
+**The JSON keys you wrote decide.** The comparison looks only at the keys that are written in the JSON item. A key you did not write is never reset to a default: a JSON without `"port"` does not change a port that is already in the vault.
+
+**`update` only merges** - the keys the JSON sets win, everything else in the record stays, including keys this version of Commander does not know. Lists are merged (custom fields are matched by type and label; KeeperAI tags and workflow approvers are added to the existing ones), except the workflow `allowed_days` and `time_ranges`, which the JSON replaces as a whole.
+
+**Graph settings** (`options` flags, `jit_settings`, `ai_settings`, links, rotation, workflow): written keys are compared and updated, nothing is removed from the graph. A workflow approver that is in the vault but not in the JSON (for example one added in the Web Vault) is kept (update never removes an approver) and is reported as a warning (`the vault workflow has approver(s) the JSON does not list`); it is not a difference, so the record still counts as identical. Remove such an approver in the Web Vault.
+
+Never touched: the record UID, type, folder and (when the match was made by title) the title; `locked`; `service_names`; attachments are only added or replaced, never removed.
+
+**Passwords** (password, private key, one-time-code seed) are replaced only with `--include-passwords`; by default a differing password is only counted in a warning. Omitting a password from the JSON never removes it. Passwords, secrets and notes are never printed (`<hidden>`).
+
+**What a write run does** (`-y`, or the confirmation prompt), in this order:
+
+1. **Graph settings**, through the router: one `configure_resource` request per resource, the workflow through its own API.
+2. **Record fields**: chunks of `vault/records_update`, or `vault/records/v3/update` for records in a Nested Share Folder. A record that changed in the vault while the update ran (`out of sync`) is read again, compared again and sent once more with what still differs; a password is written on that retry only if it was scheduled and the vault password is still the one that was read.
+3. **Attachment and script files**, compared by name and size: a new name is uploaded and added (a script keeps its command and additional credentials from the JSON), the same name with another size is uploaded and its reference takes the place of the old one (the old file record stays in the vault, unreferenced), the same name and size is left alone; files are never removed.
+4. **Rotations of existing users**: one `set_record_rotation` request per user whose rotation differs. `enabled`, `schedule` and `password_complexity` take the JSON value; everything else (type, configuration, machine, the stored schedule text, service accounts) is sent back as it is. `general` rotations and changes of `iam_user` / `scripts_only` / `saas` rotations are written. The rotation cache has no NOOP flag, so the profile of the vault rotation is read from the user's ACL edge to the PAM configuration and the request keeps it (a `saas` request names the vault's SaaS configuration record again; `update` never changes which one); a JSON profile that is not the vault's is a warning and is not written.
+5. **New rotations**: a top-level `iam_user` / `scripts_only` / `saas` user that has no rotation yet gets it with the import's arguments (`saas` needs `saas_config` to name one SaaS configuration record in the vault). A `general` user that has no rotation yet gets it the way the import writes it, through the `pam rotation edit` command (it links the user to the machine): it needs the machine and an administrative credential on the machine (in the vault, or set by the same run) and, like the import, it sets the machine's "rotation allowed" flag from the user's `enabled`.
+
+**Errors.** A plan error stops the run before anything is written (in `--format json` the errors are returned, not raised). An error while writing is reported for that record and the run goes on; run the same command again to finish. In Service Mode attachment and script files are skipped with a warning.
+
+**Not written yet.** These are listed as `NOT WRITTEN YET` and still show as differences on the next run: a rotation the user does not have yet when the machine is unknown or has no administrative credential; a change of an `iam_user` / `scripts_only` / `saas` rotation whose profile the graph does not confirm, or a `saas` rotation that does not name exactly one SaaS configuration record (a `saas` rotation always has exactly one SaaS record in every supported client - use `pam rotation edit` for anything else); a nested `iam_user` / `scripts_only` / `saas` user (like the import, `update` does not add these under a machine: move the user to the top-level `pam_data.users`, or use `pam rotation edit`). A rotation that has a SaaS record besides its IAM or machine profile (the Web Vault's "IAM User + SaaS Account" / "General + SaaS Account", which it cannot save either) is a warning and is never rewritten; a `saas_config` that names another SaaS record than the vault rotation uses is a warning and nothing is written for that user (`update` never moves a rotation), and a `saas_config` it cannot find is reported as "not compared".
+
+`--format json` with `-y` returns `{summary (applied, failed, not_applied), apply {applied, errors, warnings, not_applied}, ...}` and does not raise.
+
+**Settings saved in the Web Vault.** A save in the Web Vault can change values the JSON also sets: it rewrites the password complexity of a rotation to one of each character class, and the Cron Spec form does not keep a changed time zone (the Daily form does). `update` shows such a value as a difference and writes the JSON value back.
+
+**No undo.** Record fields can be restored from the record history in the Web Vault; graph settings cannot be restored with a Commander command. Run with `--dry-run` first.
+
+### Phase 0 skeleton (not batched)
+
+Before `BatchPamImportEngine.run()`, import still runs sequentially:
+
+1. Shared folder tree (`process_folders`) — classic SF or NSF
+2. KSM application (`process_ksm_app`)
+3. Gateway / controller (`process_gateway`)
+4. PAM configuration (`process_pam_config`) — may stash `pam_config_object` for scripts deferred to **import tail**
+5. **Batch engine** — `process_data` / extend equivalent (`1a→1b→1c→Step 2`)
+6. **Import tail only** — [`import_tail.py`](import_tail.py): batched pamConfiguration cred scripts, then domain `pamDomainConfiguration` admin link (NSF-aware)
+
+Extend skips steps 1–4 (config already exists) and runs its own domain-admin update after the engine when needed.
+
+### Batch pipeline (import / extend)
+
+Vault record creation uses **`BatchPamImportEngine`** ([`batch_pipeline.py`](batch_pipeline.py)):
+
+1. **Step 0** — `assign_uids` / `assign_record_keys` (pre-assign UIDs and AES keys)
+2. **Step 1a** — tiered `vault/records_add` via `pam_object_to_typed_record` + `pb_only=True` (chunks of 999)
+3. **Step 1b** — deferred ref updates (`deferred_refs.py`): **Channel B** — strip/patch embedded `pamSettings` JSON refs via typed setters; **Channel A** — strip/patch typed `recordRef` / script `recordRef` + `record_links` via batch `records_update`
+4. **Step 1c** — global `files_add` (300/chunk) + parallel PUTs + batch `records_update` for `fileRef` / rotation scripts ([`batch_attachments.py`](batch_attachments.py))
+5. **Step 2** — shared deferred `TunnelDAG` + per-resource micro-order ([`batch_step2.py`](batch_step2.py)); tunnel validation via [`tunnel_setup.py`](tunnel_setup.py) helpers (**no** `PAMTunnelEditCommand.execute` on batch path); graph flush every 100 resources + final flush (`save_batch_count=50` chunked `add_data`, halves on HTTP 5xx down to 10)
+
+**Folder routing:** Explicit ``folder_path`` in import JSON wins (import via ``safe_folder_map`` / nested path materialization; extend via ``path_to_folder_uid``). When unspecified: machine-like types → Resources; ``pamUser`` / ``login`` → Users.
+
+**NSF (`--nsf`):** Phase 0 creates NSF folders; Step 1a uses ``vault/records/v3/add`` for NSF folder targets (classic ``vault/records_add`` otherwise); Step 1b uses ``vault/records/v3/update`` for NSF records; mid-pipeline sync preserves NSF folder keys.
+
+**Layer-B hygiene:** at `run()` start, `clear_layer_b_feature_cache()` runs and a warning is logged if `KEEPER_DAG_LB_FALLBACK` is set (does not override that env var).
+
+**Partial failure:** any `records_add` failure in a tier aborts before Step 1b/Step 2 and prints a per-record summary. A **Step 1b** or **Step 1c** `records_update` / upload failure also aborts before the next step.
+
+**Import re-run after partial success:** manual only — use extend with explicit `"uid"` values or vault cleanup.
+
+**PAM configuration scripts:** scripts without `additional_credentials` are uploaded during Phase 0 (`process_pam_config`). Scripts with resolved `recordRef`s run in the **import tail** after `engine.run()` via [`import_tail.py`](import_tail.py) (`run_import_tail` → batched `run_import_tail_config_scripts`; warn-only on failure). Domain admin link runs **after** cred scripts on the same config record (NSF uses `update_pam_record`).
+
+**Dry-run (`simulate()`):** returns creation tiers, Step 2 dispatch, deferred ref/link plans, `link_count_warnings` when projected typed `record_links` per record exceed 100, and **`import_tail`** flags for post–Step 2 import-only work.
+
+**Step 2 rotation:** `set_record_rotation` calls are throttled (10 per 10s pause) via [`rotation_throttle.py`](rotation_throttle.py). Schedule types are case-insensitive (`CRON` / `cron`). A user's `rotation_settings.schedule.cron` must have all 6 fields incl. seconds, with `?` in the day-of-month or day-of-week field (for example `0 30 18 * * ?` = every day at 18:30:00); a 5-field cron is rejected with an error and the schedule is skipped. `schedule.tz` (an IANA name such as `America/Chicago`) is applied: the cron is then evaluated in that time zone. Without `tz` (or with `UTC` / `Etc/UTC`) the schedule is stored in `Etc/UTC`. Extend/import skip rotation when `record_rotation_cache` already has the pamUser bound to the same resource.
+
+**Sample-data (`--sample-data` / `-s`):** [`playground.py`](playground.py) builds the same Pam* object graph as a JSON import (fresh credentials + discovery-playground services), then runs **`BatchPamImportEngine`** — same Step 1a/1b/1c/2 path as file import. Dry-run prints `simulate()` plus compose/seccomp target paths. Compose YAML generation is unchanged (post-engine).
+
 
 
 Import directly from a KCM/Guacamole database. Connects to the KCM database, extracts connections/users/groups, maps 130+ parameters, and feeds the result into the existing import engine.
@@ -327,15 +417,30 @@ _You can have only one `pam_configuration` section and the only required paramet
 </details>
 
 #### Resources (users, machines etc.):
-Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrative Credentials** (admin user) and **Launch Credentials** (the credentials used to establish the protocol connection). Both are identified by title or login/username of a pamUser (e.g. `"administrative_credentials": "admin1"`, `"launch_credentials": "user1"`). pamUser and pamRemoteBrowser do not have launch credentials; pamRemoteBrowser uses `pam_settings.connection.autofill_credentials` for RBI login.
+Each Machine (pamMachine, pamDatabase, pamDirectory) can specify **Administrative Credentials** (admin user) and **Launch Credentials** (the credentials used to establish the protocol connection). Both are identified by title or login/username of a pamUser (e.g. `"administrative_credentials": "admin1"`, `"launch_credentials": "user1"`). pamUser, pamRemoteBrowser and pamCloudResource do not have launch credentials; pamRemoteBrowser and pamCloudResource use `pam_settings.connection.autofill_credentials` for the browser / cloud login.
 - **Machines** are defined in `pam_data.resources` where each machine can have its own list of `"users": []` one of which is the admin user for that machine. Users that don't belong to a single machine are into global `pam_data.users` section (record type: `login`, `pamUser` for NOOP rotation or shared across multiple machines /ex. same user for ssh, vnc, rdp etc./)
   > **Note 1:** `pam_settings` _(options, connection)_ are explained only in pamMachine section below (per protocol) but they are present in all machine types.  
   > **Note 2:** `attachments` and `scripts` examples are in `pam_configuration: local` section.  
   > **Note 3:** Post rotation scripts (a.k.a. `scripts`) are executed in following order: `pamUser` scripts after any **successful** rotation for that user, `pamMachine` scripts after any **successful** rotation on the machine and `pamConfiguration` scripts after any rotation using that configuration.
   > **Note 4:** Post-rotation scripts can only be attached by the **record owner**. Non-owners will see an upload error during import or when using `pam rotate script add`.
   > **Note 5:** When `allow_supply_user` is false and JIT ephemeral is not used, vault may require a launch credential; import can provide it via `launch_credentials` in the resource's `connection` block.
+  > **Note 6:** RBI (pamRemoteBrowser) `connection` supports `allow_supply_user` (true/false; omit to leave unset), `accept_language` (e.g. `en-US,en;q=0.9`) and `suppress_js_dialogs` (true/false). `clipboard_buffer_size` - the clipboard data size limit: `256kb`, `1mb`, `10mb` or `50mb` (case-insensitive; stored in bytes) - is supported by RBI and by RDP, VNC, Telnet, SSH and all database protocols (not Kubernetes). `default` or omitted leaves it unset; any other value is ignored with a warning (use `--dry-run` to see these warnings before importing).
+  > **Note 7:** `pam_settings.port_forward` (remote/local port, Keeper proxy gates `allow_keeper_db_proxy` / `allow_keeper_rdp_proxy` / `allow_keeper_ssh_proxy`) is explained in the _Port forwarding and Keeper proxies_ section below, including the validation that runs before any vault write.
+  > **Note 8:** SFTP settings (RDP, SSH, VNC) are in `pam_settings.connection.sftp`. RDP/VNC: `enable_sftp`, `sftp_resource` (title or login of the SFTP server machine), `sftp_user_credentials` (title or login of the pamUser), `sftp_root_directory`, `sftp_upload_directory`, `sftp_keepalive_interval`, `sftp_timeout` (SFTP connection timeout in whole **seconds**, same unit as KCM `sftp-timeout`; the KCM default is 10 seconds when omitted; `0` and non-numeric values are not written; the sign is ignored, as for `sftp_keepalive_interval`), `sftp_disable_download`, `sftp_disable_upload`. SSH reuses its own connection and credentials, so it only takes `enable_sftp`, `sftp_root_directory`, `sftp_disable_download` and `sftp_disable_upload`; Telnet and other protocols have no SFTP. All sftp keys are added even when `enable_sftp` is not true, with a warning that they stay disabled until SFTP is enabled. Other warnings: RDP/VNC with `enable_sftp` true but no `sftp_resource`, and keys the protocol does not support (ignored).  
+  > **Note 9:** VNC display, clipboard and audio options (`pam_settings.connection`, protocol `vnc`): `read_only` (no input accepted), `swap_red_blue` (fixes wrong colors: blue shown as orange/red), `force_lossless` (lossless compression only), `cursor` (`local` default | `remote`), `color_depth` (bits per pixel: `8`, `16`, `24` or `32`; omitted = server decides), `compress_level` (whole number 0-9: 0 = no compression/fastest, 9 = maximum compression), `quality_level` (whole number 0-9: JPEG quality for the `tight` encoding, 0 = lowest, 9 = best), `encodings` (space separated list of `copyrect`, `hextile`, `raw`, `rre`, `tight`, `zrle`, `ultra`, `zlib`, `corre`; a JSON list is also accepted; unknown names are skipped with a warning; omitted = plugin default order `zrle ultra copyrect hextile zlib corre rre raw`), `clipboard_encoding` (`ISO8859-1` default | `UTF-8` | `UTF-16` | `CP1252` | `MacRoman`), `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800), `enable_audio` (opens a second PulseAudio connection) and `audio_servername` (PulseAudio server name; default device when omitted). Booleans accept true/false. Invalid values are ignored with a warning. The Web Vault UI names the compression, quality and encodings options differently, so the Vault does not show the values set here.  
+  > **Note 10:** SSH terminal and session options (`pam_settings.connection`, protocol `ssh`): `font_name` (font family name, free text), `read_only` (no input accepted), `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H), `terminal_type` (the `TERM` value sent to the server, free text; the common values are `xterm`, `xterm-256color`, `vt220`, `vt100`, `ansi`, `linux` - other values are written with a warning because the target host may not know them), `locale` (the `$LANG` value, e.g. `en_US.UTF-8`), `timezone` (the `$TZ` value, an IANA name e.g. `America/New_York`), `server_alive_interval` (whole seconds between SSH keepalive packets: `0` = disabled, the default; the minimum is `2`, `1` is stored as `2` with a warning; negative values are ignored with a warning), plus `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). Invalid values are ignored with a warning.  
+  > **Note 11:** RDP options (`pam_settings.connection`, protocol `rdp`): `initial_program` (full path of the program to run after connecting), `client_name` (shown on Windows servers as `%CLIENTNAME%`; guacd truncates it to 32 bytes - a guacd limitation, longer names are written unchanged with a warning), `server_layout` (keyboard layout: `cs-cz-qwertz`, `da-dk-qwerty`, `de-ch-qwertz`, `de-de-qwertz`, `en-gb-qwerty`, `en-us-qwerty` - the default, `es-es-qwerty`, `es-latam-qwerty`, `failsafe` - Unicode events, `fr-be-azerty`, `fr-ca-qwerty`, `fr-ch-qwertz`, `fr-fr-azerty`, `hu-hu-qwertz`, `it-it-qwerty`, `ja-jp-qwerty`, `nb-no-qwerty`, `no-no-qwerty`, `pl-pl-qwerty`, `pt-br-qwerty`, `pt-pt-qwerty`, `ro-ro-qwerty`, `sv-se-qwerty`, `tr-tr-qwerty`; an unknown name is skipped with a warning and guacd uses `en-us-qwerty`), `timezone` (IANA name, e.g. `America/New_York`; defaults to the client timezone), `enable_touch` (multi-touch), `console` (connect to the console/admin session), `width`, `height` (pixels) and `dpi` (whole numbers greater than 0; defaults follow the connecting client; guacd rounds the width down to a multiple of 4), `color_depth` (bits per pixel: `8`, `16`, `24` or `32`; guacd always uses 32 while the RDP Graphics Pipeline is enabled, which is the default, so lower values are ignored), `force_lossless` (lossless compression only), `read_only` (no input accepted), `normalize_clipboard` (`preserve` = unchanged, `unix` = LF line endings, `windows` = CRLF line endings), `console_audio`, `enable_audio_input` (microphone), `enable_printing`, `printer_name` (name of the redirected printer; defaults to `Guacamole Printer`), performance flags `enable_theming`, `enable_font_smoothing`, `enable_desktop_composition`, `enable_menu_animations` (all off by default) and `disable_bitmap_caching`, `disable_offscreen_caching`, `disable_glyph_caching` (true turns that cache off), `remote_app` (RemoteApp to start - on Windows servers the published name needs the `||` prefix, e.g. `||notepad`), `remote_app_dir` (working directory) and `remote_app_args` (command-line arguments). Booleans accept true/false. Invalid values are ignored with a warning.  
+  > **Note 12:** Telnet options (`pam_settings.connection`, protocol `telnet`): `username_regex` and `password_regex` are POSIX extended regular expressions (case-insensitive) that guacd matches against the server output to find the login and password prompts (defaults `[Ll]ogin:` and `[Pp]assword:`; used only when a username is set). `login_success_regex` and `login_failure_regex` detect a successful or failed login with the same kind of expression - give both or neither: guacd ignores a single one (the import warns and writes it anyway). The patterns are not validated by the import. `font_name` (font family, default `monospace`), `font_size` (points: 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72 or 96, default 12; the closest value is used), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000), `read_only` (no input accepted), `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H), `terminal_type` (the `TERM` value sent to the server, default `linux`; common values `xterm`, `xterm-256color`, `vt220`, `vt100`, `ansi`, `linux` - other values are written with a warning because the target host may not know them) and `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). Telnet has no SFTP: an `sftp` object on a Telnet resource is ignored with a warning. Invalid values are ignored with a warning.  
+  > **Note 13:** Kubernetes options (`pam_settings.connection`, protocol `kubernetes`): `use_ssl` (use SSL/TLS for the connection to the Kubernetes API server, default false), `ignore_server_cert` (accept a server certificate that cannot be validated), `ca_certificate`, `client_certificate` and `client_key` (PEM-encoded), `namespace` (the namespace of the pod), `pod_name` (the pod to connect to - required), `container` (the container inside the pod), `exec_command` (the command to run in the container; omitted = the default shell), `font_name` (font family, default `monospace`), `font_size` (points: 8, 9, 10, 11, 12, 14, 18, 24, 30, 36, 48, 60, 72 or 96, default 12), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000), `read_only` (no input accepted) and `backspace` (`127` = Delete, Ctrl-? - default | `8` = Backspace, Ctrl-H). Invalid values are ignored with a warning. The Web Vault names the exec command option differently, so the Vault does not show the value set here.  
+  > **Note 14:** Database options (`pam_settings.connection`, protocols `mysql`, `postgresql`, `sql-server`, `mariadb`, `oracle`, `mongodb`, `redis`, `elasticsearch`, `clickhouse`, `dynamodb`): `default_database` (database name), `disable_csv_export` / `disable_csv_import` (true blocks CSV download / upload), `clipboard_buffer_size` (`256kb` = 262144 bytes, `1mb` = 1048576, `10mb` = 10485760, `50mb` = 52428800). For `mysql`, `postgresql` and `sql-server` only (the CLI-capable protocols): `font_name` (font family, default `monospace`), `font_size` (points, default 12), `color_scheme` (`black-white`, `gray-black`, `green-black` or `white-black`), `scrollback` (rows, default 1000) and `read_only` (no input accepted). `db_connection_method` (`cli` = guacd database client, `keeperDB` = KeeperDB proxy session, `both` = the user chooses at launch; case-insensitive): for `mysql`, `postgresql` and `sql-server` it is written as given and nothing is written when omitted (CLI); the other seven protocols are KeeperDB-only, so the record always gets `keeperDB` - any other value is replaced with `keeperDB` and a warning says so. `session_persistence` (`none` = incognito, no profile storage; `user` = profile stored per user and resource; `resource` = one profile shared per resource) is written as `rbiSettings.sessionPersistence` and only applies to KeeperDB sessions (`keeperDB` or `both`); with `cli` it has no effect and a warning is printed. The pamDatabase `database_type` has nine values (the Web Vault "Database Type" list): `postgresql`, `postgresql-flexible`, `mysql`, `mysql-flexible`, `mariadb`, `mariadb-flexible`, `mssql`, `oracle` and `mongodb`. `redis`, `elasticsearch`, `clickhouse` and `dynamodb` are chosen through `pam_settings.connection.protocol` instead (leave `database_type` out; `dynamodb` also needs `provider_region`) - the Gateway uses `database_type` first and `connection.protocol` only when `database_type` is empty, so a `database_type` that differs from the connection protocol gets a warning. A KeeperDB-only database resource that has no `pam_settings.connection` at all gets a warning that shows the connection to add, e.g. `"pam_settings": { "connection": { "protocol": "oracle", "db_connection_method": "keeperDB" } }`. Invalid values are ignored with a warning.  
+  > **Note 15:** DAG-only flags of a pamMachine / pamDatabase / pamDirectory (never RBI): `pam_settings.connection.rotate_creds_on_session_termination` (true/false) rotates the **launch credentials** when the session ends (the Web Vault checkbox "Rotate launch credentials upon session termination"); it needs a `connection.protocol`, is ignored while `jit_settings.create_ephemeral` is on, and has no effect without `launch_credentials` (a warning says so). `pam_settings.options.update_services` (`on`/`off`/`default` or true/false; Web Vault "Update services", default on) controls whether service / scheduled-task / IIS-pool passwords are updated after a rotation. `locked` is controlled by the back-end (KeeperAI session termination) and is never read or written by the import - a `locked` key in the JSON is ignored like any unknown key.
+  > **Note 16:** `pam_settings.options.jit_settings` extras: `default_elevation_time` ("Expire privilege after") is a duration string with ONE unit - `30m`, `8h`, `1d` (a bare number means minutes; `1h30m` is not supported, write `90m`), between 5 minutes and 1 year; it is stored in milliseconds on the resource meta (not in the encrypted JIT settings) and is read by the Gateway for elevation. `use_idp_elevation` (true/false) is stored in the encrypted JIT settings, written only when given, and used by the Gateway when `elevate` is on. JIT does not apply to pamRemoteBrowser (the Web Vault has no JIT tab for it); it does for pamCloudResource (Note 20).
+  > **Note 17:** KeeperAI for pamRemoteBrowser (and pamCloudResource): `pam_settings.options.ai_threat_detection`, `ai_terminate_session_on_detection` and `ai_settings` work like on machines (same JSON as in the KeeperAI section). KeeperAI only runs when the PAM configuration has `ai_threat_detection` on, `graphical_session_recording` is `on` and `connection.recording_include_keys` is true - the Web Vault disables the switch otherwise; the import warns and still writes what the JSON says (the PAM-configuration part is checked by the dry-run pre-flight, which reads the existing configuration). `pam connection ai` edits the same settings on existing records.
+  > **Note 18:** Service accounts: a pamUser nested under a machine (`rotation: "general"`) can control services / scheduled tasks / IIS pools on Windows machines: `rotation_settings.service_resources` (list of pamMachine titles or uids from this import or the vault) and `rotation_settings.update_services` (true/false, default true when `service_resources` is given). The links are sent with the rotation after all records exist, so the machines can be defined anywhere in the file. A machine that is not a pamMachine or not found is skipped with a warning (non-Windows machines are warned). `pam project extend` only applies this to NEW users; changing existing users is done with `pam action service` / the future update command.
+  > **Note 19:** SaaS rotation (`rotation_settings.rotation: "saas"`, users in the global `pam_data.users[]` only - a `saas` user nested under a machine is skipped with a warning because the Gateway would look for the SaaS configuration on the machine): `saas_config` is the title or uid of the SaaS configuration record - a regular vault record of type `saasConfiguration`, or a legacy `login` record that has the custom field `SaaS Type`. Define it in the import with `pam_data.saas_configurations[]` (created in the Users folder, which is shared with the Gateway application) or reference an existing record. Plugin field values are stored as Hidden fields unless an entry gives its own `type`; the plugin catalog is not checked offline (field names / required fields are not validated). `iam_user` and `scripts_only` rotation of users in the global `pam_data.users[]` is applied for **new** users (the PAM-configuration profiles of `pam rotation set --rotation-profile`, like the Web Vault); users that already have a rotation are left alone. `iam_user` hangs off the PAM configuration (no resource) and needs an AWS, Azure, GCP, Domain or Okta configuration; like `saas`, an `iam_user` user nested under a machine is skipped with a warning - put it in the global `users[]`. `scripts_only` (NOOP) is the same: it runs the user's and the PAM configuration's scripts on the Gateway, never the machine's, so a `scripts_only` user nested under a machine is skipped with a warning - use `general` to run the machine's scripts (it also rotates the password). Example: `{"title": "AWS keys", "saas_type": "AWS Access Key", "active": true, "fields": {"AWS Region": "us-east-1"}}` and `"rotation_settings": {"rotation": "saas", "saas_config": "AWS keys", "enabled": "on", "schedule": {"type": "on-demand"}}`.
+  > **Note 20:** `pamCloudResource` ("PAM Cloud"): an RBI-style resource that opens a cloud console / IdP application (AWS, Azure/Entra, Okta, GCP) in an isolated browser with a launch credential. Keys: `url` (required console / application URL), `account_identifier` (Okta app-instance id `0oa...` or Entra application (client) id; not used for AWS), and `pam_settings` with `options` (`connections`, `remote_browser_isolation`, `graphical_session_recording`, `ai_*`, `jit_settings`, `workflow`) and `connection` (`protocol: "http"` is always written, `autofill_credentials` = a **pamUser**, plus the RBI browser options). It requires a PAM configuration that can federate an IdP (AWS / Azure / GCP / Domain / Okta configuration, or a configuration with `identityProviderUid`). `jit_settings` supports `create_ephemeral`, `elevate`, `elevation_method`, `elevation_string` and `default_elevation_time`; `use_idp_elevation`, `ephemeral_account_type`, `base_distinguished_name` and `pam_directory_record` are not used (always IdP). With `create_ephemeral` the autofill credential is ignored at launch. Okta needs the credential's password and fails over to autofill when MFA is required; Azure still signs in through autofill. `otp` is not used (the pamCloudResource record type has no one-time code field; the import warns and ignores it). `pam project export` does not export pamCloudResource yet.
 
-JIT and KeeperAI settings below are shared across all resource types (pamMachine, pamDatabase, pamDirectory) except User and RBI (pamRemoteBrowser) records. **Workflow** (approvals / checkout / temporal restrictions) is supported on all four resource types: pamMachine, pamDatabase, pamDirectory, **and** pamRemoteBrowser.
+JIT and KeeperAI settings below are shared across the resource types: **JIT** applies to pamMachine, pamDatabase, pamDirectory and pamCloudResource (not to pamRemoteBrowser or users); **KeeperAI** applies to pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser and pamCloudResource; **Workflow** (approvals / checkout / temporal restrictions) is supported on pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser **and** pamCloudResource.
 
 <details>
 <summary>Just-In-Time Access (JIT)</summary>
@@ -353,6 +458,10 @@ JIT and KeeperAI settings below are shared across all resource types (pamMachine
         "elevation_method": "group",
         "elevation_string": "arn:aws:iam::12345:role/Admin",
         "base_distinguished_name": "OU=Users,DC=example,DC=net",
+        "_comment_default_elevation_time": "Expire privilege after: one unit, 30m | 8h | 1d (5 minutes .. 1 year); omit to leave unset",
+        "default_elevation_time": "1d",
+        "_comment_use_idp_elevation": "optional, elevate through the identity provider (IdP-capable PAM configuration)",
+        "use_idp_elevation": false,
         "_comment_ephemeral_account_types": "<linux|mac|windows|domain>",
         "ephemeral_account_type": "linux",
         "_comment_pam_directory_record": "by title, requried if ephemeral_account_type: domain",
@@ -509,6 +618,51 @@ Workflow controls how privileged access to a resource is gated: how many approva
 - **Pre-flight validation runs in `--dry-run`.** Bad durations, malformed `HH:MM`, missing timezone, escalation rule violations, and unknown team UIDs are reported during dry-run before any vault writes.
 - **Dry-run skips the Router calls.** Workflow is applied (Router create/update + approver reconcile) only on a real run.
 - **`extend` only applies workflow to newly created resources** (existing resources are not touched).
+- **A workflow approver must be a user that exists.** The workflow API accepts any existing Keeper username and refuses a name that does not exist (`User a@b.com does not exist`). The dry-run (`--dry-run`) asks the server once for the approvers' public keys, which it returns only for users of YOUR enterprise (or with an accepted share); for any other name - a user that does not exist AND a user of another enterprise - it gives the same answer. So the dry-run prints a warning `Resource "X": workflow approver "a@b.com" was not found among the users of your enterprise - if this user does not exist at all, the workflow of this resource will fail`. It is a warning only and can also appear for an existing user of another enterprise (the workflow would accept it). When the server cannot answer (for example sharing is restricted: `not_allowed_to_share_to_group`, or the lookup itself fails) a neutral line is printed instead: `NOTE: Resource "X": workflow approver "a@b.com" could not be verified (server answered "<code>")` / `NOTE: workflow approvers could not be verified (lookup failed: <code>)`. If a workflow cannot be applied, the rest of that resource is still set up (credentials, rotation, settings); the failure is counted in the final "PAM configuration (DAG) error(s)" message as one line (the stack trace is shown only with `--debug`).
+</details>
+<details>
+<summary>Port forwarding and Keeper proxies (pam_settings.port_forward)</summary>
+
+`pam_settings.port_forward` (tunneling) is present on pamMachine, pamDatabase and pamDirectory; it sits next to `connection`, not inside it. pamRemoteBrowser has no port forward settings. The keys are written to the record's `pamSettings.portForward`:
+
+| Key | Type | Notes |
+|---|---|---|
+| `port` | string | Remote tunnel port override (the Gateway reads it) |
+| `reuse_port` | boolean | Reuse the last local port (Vault clients only) |
+| `use_specified_local_port` | boolean | Use `local_port` instead of a generated local port (Vault clients only). **Requires `local_port`** |
+| `local_port` | string/number | Local port, 1-65535 (Vault clients only) |
+| `allow_keeper_db_proxy` | boolean | KeeperDB Proxy - **MySQL, MariaDB, PostgreSQL, SQL Server, Oracle, DynamoDB** (not MongoDB) |
+| `allow_keeper_rdp_proxy` | boolean | KeeperRDP Proxy - **RDP** machines |
+| `allow_keeper_ssh_proxy` | boolean | KeeperSSH Proxy - **SSH** machines |
+
+```json
+{
+    "type": "pamDatabase",
+    "title": "PAM MySQL",
+    "pam_settings": {
+        "options": { "tunneling": "on", "connections": "on" },
+        "port_forward": {
+            "port": "3306",
+            "use_specified_local_port": true,
+            "local_port": "13306",
+            "allow_keeper_db_proxy": true
+        },
+        "connection": { "protocol": "mysql", "port": "3306", "launch_credentials": "db-user1" }
+    }
+}
+```
+
+**Validation** - checked for the whole file *before* anything is written to the vault (app, folders, records, DAG), also in `--dry-run`, for both `pam project import` and `pam project extend`. All problems are listed together and the command aborts without changes. Errors:
+- a proxy gate on a protocol it does not support (RDP gate on non-RDP, SSH gate on non-SSH, DB gate on a protocol outside the list above) or without `connection.protocol`;
+- a proxy gate without a launch credential - set `connection.launch_credentials` (not needed with `connection.allow_supply_user`, `allow_supply_host` or `jit_settings.create_ephemeral`; ephemeral JIT does not count for DynamoDB);
+- `use_specified_local_port` without `local_port`, or a `local_port` that is not a valid port number;
+- `connection.allow_keeper_db_proxy` / `connection.allowKeeperDBProxy` - the KeeperDB Proxy gate moved to `port_forward.allow_keeper_db_proxy`.
+
+`port_forward` settings on a resource with `options.tunneling` set to `off` only produce a warning: the values are still stored (like switching the Vault toggle off and on again) but have no effect while tunneling is off.
+
+**Notes:**
+- The proxy gates are read by the Gateway; the Web Vault shows the KeeperRDP / KeeperSSH proxy switches from Vault 18.7.0. `use_specified_local_port`, `local_port` and `reuse_port` are used by Vault clients only (the Gateway and `pam tunnel` ignore them).
+- `pam tunnel edit --keeper-db-proxy` and `--keeper-proxy` write the KeeperDB Proxy gate to `portForward.allowKeeperDBProxy` only. A legacy `connection.allowKeeperDBProxy` on existing records is left as is (the Gateway still honours it as a fallback).
 </details>
 <details>
 <summary>pam_data.resources.pamMachine (RDP)</summary>
@@ -548,7 +702,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
             "_comment": "Tunneling settings",
             "_comment_port": "remote tunneling port",
             "port": "2222",
-            "reuse_port": true
+            "reuse_port": true,
+            "_comment_proxy": "optional: allow_keeper_rdp_proxy (RDP) - see Port forwarding and Keeper proxies above",
+            "allow_keeper_rdp_proxy": true
         },
         "connection" : {
             "_comment": "Connections settings per protocol - RDP",
@@ -561,6 +717,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
             "recording_include_keys": true,
             "disable_copy": true,
             "disable_paste": true,
+            "clipboard_buffer_size": "10mb",
+            "_comment_clipboard_buffer_size": "default | 256kb | 1mb | 10mb | 50mb (all protocols with clipboard settings, not Kubernetes)",
             "_comment_security": "any|nla|tls|vmconnect|rdp",
             "security": "any",
             "disable_authentication": true,
@@ -574,14 +732,51 @@ Workflow controls how privileged access to a resource is gated: how many approva
                 "sftp_user_credentials": "sftp user2",
                 "sftp_root_directory": "/opt/sftp",
                 "sftp_upload_directory": "/opt/uploads",
-                "sftp_keepalive_interval": 12
+                "sftp_keepalive_interval": 12,
+                "sftp_timeout": 30,
+                "sftp_disable_download": false,
+                "sftp_disable_upload": false
             },
+            "_comment_sftp": "RDP/VNC sftp object: see section 'SFTP settings (RDP, SSH, VNC)'; all sftp keys are added even when enable_sftp is not true (warning: they stay disabled until SFTP is enabled)",
             "disable_audio": true,
-            "disable_dynamic_resizing": false,
+            "resize_method": "display-update",
+            "_comment_resize_method": "RDP resize-method: \"\" (empty) = no dynamic resizing | display-update (default when omitted) | reconnect (replaces the removed disable_dynamic_resizing)",
             "enable_full_window_drag": true,
             "enable_wallpaper": true,
             "_comment_drive_redirection_path": "none|user|resource",
-            "drive_redirection_path": "resource"
+            "drive_redirection_path": "resource",
+            "initial_program": "C:\\Windows\\notepad.exe",
+            "client_name": "keeper-client",
+            "_comment_server_layout": "keyboard layout, e.g. en-us-qwerty (default) | en-gb-qwerty | de-de-qwertz | fr-fr-azerty | ja-jp-qwerty | failsafe",
+            "server_layout": "en-us-qwerty",
+            "timezone": "America/New_York",
+            "enable_touch": false,
+            "console": false,
+            "_comment_display": "width/height in pixels and dpi: whole numbers greater than 0",
+            "width": 1920,
+            "height": 1080,
+            "dpi": 96,
+            "_comment_color_depth": "bits per pixel: 8 | 16 | 24 | 32. guacd uses 32 while the RDP Graphics Pipeline is enabled (default) and ignores other values",
+            "color_depth": 32,
+            "force_lossless": false,
+            "read_only": false,
+            "_comment_normalize_clipboard": "preserve | unix (LF line endings) | windows (CRLF line endings)",
+            "normalize_clipboard": "preserve",
+            "console_audio": false,
+            "enable_audio_input": false,
+            "enable_printing": false,
+            "printer_name": "Keeper Printer",
+            "enable_theming": false,
+            "enable_font_smoothing": true,
+            "enable_desktop_composition": false,
+            "enable_menu_animations": false,
+            "disable_bitmap_caching": false,
+            "disable_offscreen_caching": false,
+            "disable_glyph_caching": false,
+            "_comment_remote_app": "Windows servers: the published RemoteApp name needs the || prefix, e.g. ||notepad",
+            "remote_app": "||notepad",
+            "remote_app_dir": "C:\\Users\\Public",
+            "remote_app_args": "/safe"
         }
     }
 }
@@ -621,7 +816,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
 		"port_forward": {
 			"_comment": "Tunneling settings",
 			"port": "2222",
-			"reuse_port": true
+			"reuse_port": true,
+			"allow_keeper_ssh_proxy": true
 		},
 		"connection" : {
 			"_comment": "Connections settings per protocol - SSH",
@@ -638,9 +834,20 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"scrollback": 5000,
 			"public_host_key": "<Public Host Key (Base64)>",
 			"command": "/bin/bash",
+			"font_name": "Menlo",
+			"read_only": false,
+			"_comment_backspace": "127 = Delete (Ctrl-?, default) | 8 = Backspace (Ctrl-H)",
+			"backspace": "127",
+			"terminal_type": "xterm-256color",
+			"locale": "en_US.UTF-8",
+			"timezone": "America/New_York",
+			"_comment_server_alive_interval": "seconds between SSH keepalive packets; 0 = disabled (default), minimum 2",
+			"server_alive_interval": 30,
 			"sftp": {
 			  "enable_sftp": true,
-			  "sftp_root_directory": "/tmp"
+			  "sftp_root_directory": "/tmp",
+			  "sftp_disable_download": false,
+			  "sftp_disable_upload": false
 			}
 		}
 	}
@@ -692,13 +899,35 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"disable_paste": true,
 			"destination_host": "127.0.0.2",
 			"destination_port": "2121",
+			"disable_display_resize": false,
+			"_comment_disable_display_resize": "VNC only (disable-display-resize): do not send display resize requests; RDP uses resize_method instead",
+			"read_only": false,
+			"swap_red_blue": false,
+			"force_lossless": false,
+			"_comment_cursor": "local (default, rendered by the client) | remote (rendered on the server; the local pointer is shown as a small dot)",
+			"cursor": "local",
+			"_comment_color_depth": "bits per pixel: 8 | 16 | 24 | 32 (omit to let the server decide)",
+			"color_depth": "24",
+			"_comment_compress_level": "0 (no compression, fastest) .. 9 (maximum compression); Web Vault presets: 0 None, 3 Low, 6 Balanced, 8 High, 9 Maximum",
+			"compress_level": 6,
+			"_comment_quality_level": "0 (lowest) .. 9 (best) JPEG quality, used with the tight encoding; Web Vault presets: 0 Low, 3 Medium, 6 High, 9 Best",
+			"quality_level": 6,
+			"_comment_encodings": "space separated list (a JSON list also works): copyrect hextile raw rre tight zrle (also ultra zlib corre); omit for the default order",
+			"encodings": "tight zrle",
+			"_comment_clipboard_encoding": "ISO8859-1 (default) | UTF-8 | UTF-16 | CP1252 | MacRoman",
+			"clipboard_encoding": "UTF-8",
+			"enable_audio": true,
+			"audio_servername": "pulse.example.com",
 			"sftp": {
 			  "enable_sftp": true,
 			  "sftp_resource": "Machine2",
 			  "sftp_user_credentials": "sftp user2",
 			  "sftp_root_directory": "/opt/sftp",
 			  "sftp_upload_directory": "/opt/uploads",
-			  "sftp_keepalive_interval": 12
+			  "sftp_keepalive_interval": 12,
+			  "sftp_timeout": 30,
+			  "sftp_disable_download": false,
+			  "sftp_disable_upload": false
 			}
 		}
 	}
@@ -755,7 +984,12 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"username_regex": "regex: username",
 			"password_regex": "regex: password",
 			"login_success_regex": "regex: login success",
-			"login_failure_regex": "regex: login failure"
+			"login_failure_regex": "regex: login failure",
+			"font_name": "Menlo",
+			"read_only": false,
+			"_comment_backspace": "127 = Delete (Ctrl-?, default) | 8 = Backspace (Ctrl-H)",
+			"backspace": "127",
+			"terminal_type": "xterm-256color"
 		}
 	}
 }
@@ -812,7 +1046,14 @@ Workflow controls how privileged access to a resource is gated: how many approva
 			"ignore_server_cert": true,
 			"ca_certificate": "cert authority certificate\nline2",
 			"client_certificate": "client certificate\nline2\n",
-			"client_key": "client key\nline2"
+			"client_key": "client key\nline2",
+			"use_ssl": true,
+			"_comment_exec_command": "command to run in the container; omit for the default shell",
+			"exec_command": "/bin/bash",
+			"font_name": "Menlo",
+			"read_only": false,
+			"_comment_backspace": "127 = Delete (Ctrl-?, default) | 8 = Backspace (Ctrl-H)",
+			"backspace": "127"
 		}
 	}
 }
@@ -854,7 +1095,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					"allow_supply_host": false,
 					"port_forward": {
 						"port": "2222",
-						"reuse_port": true
+						"reuse_port": true,
+						"allow_keeper_db_proxy": true
 					},
 					"connection" : {
 						"protocol": "mysql",
@@ -871,7 +1113,13 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"scrollback": 5000,
 						"disable_csv_import": true,
 						"disable_csv_export": true,
-						"default_database": "db1"
+						"default_database": "db1",
+						"font_name": "Menlo",
+						"read_only": false,
+						"_comment_db_connection_method": "cli | keeperDB | both (omit for cli on mysql / postgresql / sql-server; KeeperDB-only protocols always use keeperDB)",
+						"db_connection_method": "both",
+						"_comment_session_persistence": "KeeperDB sessions only: none (incognito) | user (profile per user and resource) | resource (profile shared per resource)",
+						"session_persistence": "user"
 					}
 				},
 				"users": []
@@ -989,6 +1237,9 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"recording_include_keys": true,
 						"disable_copy": true,
 						"disable_paste": true,
+						"clipboard_buffer_size": "10mb",
+						"_comment_clipboard_buffer_size": "default | 256kb | 1mb | 10mb | 50mb (case-insensitive); default or omitted = unset",
+						"allow_supply_user": true,
 						"autofill_credentials": "rbi_hotmail_user1",
 						"allow_url_manipulation": true,
 						"allowed_url_patterns": "*.com\n*.org",
@@ -999,6 +1250,8 @@ Workflow controls how privileged access to a resource is gated: how many approva
 						"_comment_session_persistence": "none | user | resource",
 						"allow_file_uploads": true,
 						"allow_file_downloads": true,
+						"accept_language": "en-US,en;q=0.9",
+						"suppress_js_dialogs": true,
 						"disable_audio": false,
 						"audio_channels": 2,
 						"_comment_audio_channels": "1 (mono) or 2 (stereo)",
@@ -1015,6 +1268,46 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"pam_settings": {
 					"options" : { "remote_browser_isolation": "on" },
 					"connection" : { "protocol": "http" }
+				}
+			},
+			{
+				"type": "pamRemoteBrowser",
+				"title": "RBI with KeeperAI",
+				"url": "https://intranet.example.com",
+				"pam_settings": {
+					"options" : {
+						"remote_browser_isolation": "on",
+						"graphical_session_recording": "on",
+						"ai_threat_detection": "on",
+						"ai_terminate_session_on_detection": "on",
+						"ai_settings": {
+							"risk_levels": {
+								"critical": {"ai_session_terminate": true, "activities": {"deny": ["Delete Database"]}},
+								"low": {"ai_session_terminate": false}
+							}
+						}
+					},
+					"connection" : { "protocol": "http", "recording_include_keys": true, "autofill_credentials": "rbi_user1" }
+				}
+			},
+			{
+				"type": "pamCloudResource",
+				"title": "AWS Console",
+				"url": "https://console.aws.amazon.com/",
+				"pam_settings": {
+					"options" : {
+						"connections": "on",
+						"remote_browser_isolation": "on",
+						"graphical_session_recording": "on",
+						"jit_settings": {
+							"create_ephemeral": false,
+							"elevate": true,
+							"elevation_method": "role",
+							"elevation_string": "arn:aws:iam::12345:role/Admin",
+							"default_elevation_time": "8h"
+						}
+					},
+					"connection" : { "protocol": "http", "autofill_credentials": "aws_console_user" }
 				}
 			}
 		]
@@ -1078,7 +1371,7 @@ Workflow controls how privileged access to a resource is gated: how many approva
 				"rotation_settings": {
 					"rotation": "iam_user",
 					"enabled": "on",
-					"schedule": {"type": "CRON", "cron": "30 18 * * *" },
+					"schedule": {"type": "CRON", "cron": "0 30 18 * * ?", "tz": "America/Chicago" },
 					"password_complexity": "32,5,5,5,5"
 				}
 			},
@@ -1093,9 +1386,35 @@ Workflow controls how privileged access to a resource is gated: how many approva
 					"schedule": {"type": "on-demand"},
 					"password_complexity": "32,5,5,5,5"
 				}
+			},
+			{
+				"type": "pamUser",
+				"title": "PAM User4 - SaaS rotation",
+				"login": "pamuser4",
+				"password": "*****",
+				"rotation_settings": {
+					"rotation": "saas",
+					"saas_config": "AWS keys",
+					"enabled": "on",
+					"schedule": {"type": "on-demand"}
+				}
+			}
+		],
+		"saas_configurations": [
+			{
+				"title": "AWS keys",
+				"saas_type": "AWS Access Key",
+				"active": true,
+				"fields": { "AWS Region": "us-east-1" }
 			}
 		]
 	}
 }
+```
+A pamUser nested under a machine can also control Windows services / scheduled tasks (Note 18):
+```json
+{ "type": "pamUser", "login": "svc-app", "password": "*****",
+  "rotation_settings": { "rotation": "general", "enabled": "on", "schedule": {"type": "on-demand"},
+                         "service_resources": ["WinSrv-01", "WinSrv-02"], "update_services": true } }
 ```
 </details>
