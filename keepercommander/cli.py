@@ -21,7 +21,6 @@ import subprocess
 import sys
 import threading
 import time
-import uuid
 from collections import OrderedDict
 from pathlib import Path
 from typing import Union
@@ -81,11 +80,6 @@ KEEPER_LOG_FILE_ATTR = '_keeper_log_file'
 LOG_DIR_NAME = 'logs'
 # Startup commands that open the shell. --output-file is honored only for these.
 SHELL_START_COMMANDS = {'shell', '-'}
-# Global options that take a value, so the shell command can be found after them.
-_STARTUP_VALUE_OPTIONS = frozenset({
-    '--config', '--server', '-ks', '--user', '-ku', '--password', '-kp',
-    '--launched-with-shortcut', '-lwsc', '--proxy', '--data-dir',
-})
 
 
 def display_command_help(show_enterprise=False, show_shell=False, show_legacy=False, show_nested_share_folder=True):
@@ -253,23 +247,7 @@ def is_enterprise_command(name, command, args):   # type: (str, CliCommand, str)
         return False
 
 
-def _startup_command(tokens):
-    """Return the keeper command in a process startup argument list."""
-    skip_next = False
-    for token in tokens:
-        if skip_next:
-            skip_next = False
-            continue
-        if token.startswith('-'):
-            name = token.split('=', 1)[0]
-            if name in _STARTUP_VALUE_OPTIONS and '=' not in token:
-                skip_next = True
-            continue
-        return token
-    return None
-
-
-def split_output_file_tokens(tokens):
+def split_output_file_tokens(tokens, command):
     """Take ``--output-file`` from a shell startup command line.
 
     The flag is honored when this process is starting the shell (``shell`` or
@@ -282,27 +260,25 @@ def split_output_file_tokens(tokens):
 
     When the flag is given more than once, the last one wins.
 
-    Returns ``(log_file, explicit_name, remaining_tokens)``. ``log_file`` is None
+    ``command`` is the startup command found by the main argument parser, or
+    None when no command is given.
+
+    Returns ``(log_file, remaining_tokens)``. ``log_file`` is None
     when the flag is absent or this command is not a shell start.
     """
-    command = _startup_command(tokens)
-    if command not in SHELL_START_COMMANDS and command is not None:
-        return None, False, list(tokens)
+    if command is not None and command not in SHELL_START_COMMANDS:
+        return None, list(tokens)
 
-    log_file, explicit = None, False
+    log_file = None
     remaining = []
     for token in tokens:
         if token == '--output-file':
-            log_file, explicit = DEFAULT_LOG_FILE, False
+            log_file = DEFAULT_LOG_FILE
         elif token.startswith('--output-file='):
-            value = token.split('=', 1)[1].strip()
-            if value:
-                log_file, explicit = value, True
-            else:
-                log_file, explicit = DEFAULT_LOG_FILE, False
+            log_file = token.split('=', 1)[1].strip() or DEFAULT_LOG_FILE
         else:
             remaining.append(token)
-    return log_file, explicit, remaining
+    return log_file, remaining
 
 
 def command_and_args_from_cmd(command_line):
@@ -737,18 +713,19 @@ class DebugManager:
     def __init__(self):
         self.logger = logging.getLogger()
 
-    def _place_in_log_folder(self, file_path):
-        """Put a bare file name in a logs folder in the current directory.
+    def _resolve_log_file_path(self, file_path):
+        """Return the path the log file is written to.
 
-        A path that already names a directory is kept.
+        An absolute path, including one starting with ``~``, is kept. A relative
+        path is reduced to its file name and placed in a logs folder in the
+        current directory, so ``sub/a.log`` and ``../a.log`` both become
+        ``./logs/a.log``.
         """
         expanded = os.path.expanduser(file_path)
         path = Path(expanded)
         if path.is_absolute():
             return expanded
-        directory = Path.cwd() / LOG_DIR_NAME
-        directory.mkdir(parents=True, exist_ok=True)
-        return str(directory / path.name)
+        return str(Path.cwd() / LOG_DIR_NAME / path.name)
     
     def has_file_logging(self):
         """Check if file logging is active."""
@@ -771,7 +748,7 @@ class DebugManager:
                 continue
             h.setLevel(level)
 
-    def attach_log_file(self, file_path, explicit_name=False):
+    def attach_log_file(self, file_path):
         """Copy every root-logger record into file_path. Console logging is unchanged.
 
         Child loggers propagate to the root logger, so this one handler covers
@@ -782,7 +759,7 @@ class DebugManager:
         """
         fh = None
         try:
-            expanded = self._place_in_log_folder(file_path)
+            expanded = self._resolve_log_file_path(file_path)
             validated_path = self._validate_log_file_path(expanded)
 
             log_dir = os.path.dirname(validated_path)

@@ -118,7 +118,6 @@ def show_brief_help():
     print('  --config CONFIG          Config file to use')
     print('  --debug                  Turn on debug mode')
     print('  --silent                 Turn off all logging statements') 
-    print('  --log-file[=FILE]        Also write logs to FILE in ./logs (default: keeper.log)')
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --skip-scan              Skip login-time BreachWatch/security scans and device registration')
     print('                           Vault and enterprise sync still run')
@@ -220,10 +219,12 @@ def main(from_package=False):
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
     # --output-file is a shell startup option. A bare flag does not take the next token.
-    log_file, log_file_explicit, argv = cli.split_output_file_tokens(sys.argv[1:])
+    # The main parser leaves it unparsed but still finds the command, so parse once to
+    # get the command, take the flag out, then parse the remaining arguments.
+    startup_opts, _ = parser.parse_known_args(sys.argv[1:])
+    log_file, argv = cli.split_output_file_tokens(sys.argv[1:], startup_opts.command)
     opts, flags = parser.parse_known_args(argv)
     opts.log_file = log_file
-    opts.log_file_explicit = log_file_explicit
 
     # Store the original command arguments for proper reconstruction
     if opts.command:
@@ -286,9 +287,7 @@ def main(from_package=False):
         or (from_package and not opts.command and not wants_help and not opts.version)
     )
     if shell_will_start and opts.log_file and not opts.silent:
-        log_file_path = cli.debug_manager.attach_log_file(
-            opts.log_file, explicit_name=bool(getattr(opts, 'log_file_explicit', False)),
-        )
+        log_file_path = cli.debug_manager.attach_log_file(opts.log_file)
 
     params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 

@@ -13,10 +13,10 @@ from keepercommander.params import KeeperParams
 
 
 def _resolved(argv):
-    log_file, explicit, remaining = cli.split_output_file_tokens(argv)
+    startup_opts, _ = parser.parse_known_args(argv)
+    log_file, remaining = cli.split_output_file_tokens(argv, startup_opts.command)
     opts, _ = parser.parse_known_args(remaining)
     opts.log_file = log_file
-    opts.log_file_explicit = explicit
     return opts
 
 
@@ -37,28 +37,24 @@ class TestLogFileOption(TestCase):
     def test_shell_bare_flag_uses_default_name(self):
         opts = _resolved(['shell', '--output-file'])
         self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertFalse(opts.log_file_explicit)
         self.assertEqual(opts.command, 'shell')
         self.assertEqual(opts.options, [])
 
     def test_shell_equals_form_uses_the_given_name(self):
         opts = _resolved(['shell', '--output-file=custom.log'])
         self.assertEqual(opts.log_file, 'custom.log')
-        self.assertTrue(opts.log_file_explicit)
         self.assertEqual(opts.command, 'shell')
         self.assertEqual(opts.options, [])
 
     def test_shell_equals_form_keeps_the_following_subcommand(self):
         opts = _resolved(['shell', '--output-file=session.log', 'login', 'user@example.com'])
         self.assertEqual(opts.log_file, 'session.log')
-        self.assertTrue(opts.log_file_explicit)
         self.assertEqual(opts.command, 'shell')
         self.assertEqual(opts.options, ['login', 'user@example.com'])
 
     def test_bare_flag_does_not_take_the_next_token_as_the_file_name(self):
         opts = _resolved(['shell', '--output-file', 'login', 'user@example.com'])
         self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertFalse(opts.log_file_explicit)
         self.assertEqual(opts.command, 'shell')
         self.assertEqual(opts.options, ['login', 'user@example.com'])
 
@@ -71,7 +67,6 @@ class TestLogFileOption(TestCase):
     def test_empty_equals_form_uses_default_name(self):
         opts = _resolved(['shell', '--output-file='])
         self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertFalse(opts.log_file_explicit)
         self.assertEqual(opts.command, 'shell')
 
     def test_user_value_is_not_treated_as_the_command(self):
@@ -81,11 +76,10 @@ class TestLogFileOption(TestCase):
         self.assertEqual(opts.user, 'user@example.com')
 
     def test_flag_on_a_non_shell_command_is_left_alone(self):
-        log_file, explicit, remaining = cli.split_output_file_tokens(
-            ['import', '--output-file', 'https://metron.secretservercloud.com']
+        log_file, remaining = cli.split_output_file_tokens(
+            ['import', '--output-file', 'https://metron.secretservercloud.com'], 'import'
         )
         self.assertIsNone(log_file)
-        self.assertFalse(explicit)
         self.assertEqual(
             remaining,
             ['import', '--output-file', 'https://metron.secretservercloud.com'],
@@ -94,20 +88,17 @@ class TestLogFileOption(TestCase):
     def test_last_flag_wins(self):
         opts = _resolved(['shell', '--output-file=a.log', '--output-file'])
         self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertFalse(opts.log_file_explicit)
         self.assertEqual(opts.command, 'shell')
         self.assertEqual(opts.options, [])
 
     def test_flag_without_a_command_is_kept_for_the_package_launcher(self):
         opts = _resolved(['--output-file=file1.log'])
         self.assertEqual(opts.log_file, 'file1.log')
-        self.assertTrue(opts.log_file_explicit)
         self.assertIsNone(opts.command)
 
     def test_bare_flag_without_a_command_uses_the_default_name(self):
         opts = _resolved(['--output-file'])
         self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertFalse(opts.log_file_explicit)
         self.assertIsNone(opts.command)
 
 
@@ -214,7 +205,7 @@ class TestLogFileHandler(TestCase):
             original = os.path.join(tmp, 'custom.log')
             with open(original, 'w', encoding='utf-8') as handle:
                 handle.write('previous contents\n')
-            attached = cli.debug_manager.attach_log_file(original, explicit_name=True)
+            attached = cli.debug_manager.attach_log_file(original)
             logging.getLogger('keepercommander.api').info('sync complete')
             _close_log_files()
 
@@ -240,7 +231,7 @@ class TestLogFileHandler(TestCase):
             previous = 'x' * 200
             with open(original, 'w', encoding='utf-8') as handle:
                 handle.write(previous)
-            attached = cli.debug_manager.attach_log_file(original, explicit_name=True)
+            attached = cli.debug_manager.attach_log_file(original)
             logging.getLogger('keepercommander.api').info('sync complete')
             _close_log_files()
 
@@ -258,7 +249,7 @@ class TestLogFileHandler(TestCase):
             original = os.path.join(tmp, 'keeper.log')
             with open(original, 'w', encoding='utf-8') as handle:
                 handle.write('previous contents\n')
-            attached = cli.debug_manager.attach_log_file(original, explicit_name=False)
+            attached = cli.debug_manager.attach_log_file(original)
             logging.getLogger('keepercommander.api').info('sync complete')
             _close_log_files()
             with open(attached, encoding='utf-8') as handle:
@@ -274,7 +265,7 @@ class TestLogFileHandler(TestCase):
         self.root.setLevel(logging.INFO)
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch('keepercommander.cli.Path.cwd', return_value=Path(tmp)):
-                attached = cli.debug_manager.attach_log_file('custom.log', explicit_name=True)
+                attached = cli.debug_manager.attach_log_file('custom.log')
                 logging.getLogger('keepercommander.api').info('stored in the logs folder')
                 _close_log_files()
             self.assertEqual(
@@ -307,7 +298,7 @@ class TestLogFileHandler(TestCase):
                 'keepercommander.cli._session_start_line',
                 return_value='==================== NEW SESSION STARTED AT : 2026-11-25T01:40:00+05:30 ====================',
             ):
-                cli.debug_manager.attach_log_file(original, explicit_name=True)
+                cli.debug_manager.attach_log_file(original)
                 logging.getLogger('keepercommander.api').info('sync complete')
                 _close_log_files()
             with open(original, encoding='utf-8') as handle:
@@ -368,19 +359,19 @@ class TestLogFileMain(TestCase):
     def test_shell_default_file_keeps_the_subcommand(self):
         with mock.patch.object(cli.debug_manager, 'attach_log_file', return_value='keeper.log') as attach:
             params = self._run(['keeper', 'shell', '--output-file', 'login', 'user@example.com'])
-        attach.assert_called_once_with(cli.DEFAULT_LOG_FILE, explicit_name=False)
+        attach.assert_called_once_with(cli.DEFAULT_LOG_FILE)
         self.assertEqual(params.commands, ['login user@example.com'])
 
     def test_shell_custom_file_is_not_forwarded_as_a_command(self):
         with mock.patch.object(cli.debug_manager, 'attach_log_file', return_value='custom.log') as attach:
             params = self._run(['keeper', 'shell', '--output-file=custom.log', 'login', 'user@example.com'])
-        attach.assert_called_once_with('custom.log', explicit_name=True)
+        attach.assert_called_once_with('custom.log')
         self.assertEqual(params.commands, ['login user@example.com'])
 
     def test_flag_before_shell_does_not_swallow_the_command(self):
         with mock.patch.object(cli.debug_manager, 'attach_log_file', return_value='keeper.log') as attach:
             params = self._run(['keeper', '--output-file', 'shell', 'login', 'user@example.com'])
-        attach.assert_called_once_with(cli.DEFAULT_LOG_FILE, explicit_name=False)
+        attach.assert_called_once_with(cli.DEFAULT_LOG_FILE)
         self.assertEqual(params.commands, ['login user@example.com'])
 
     def test_non_shell_command_does_not_open_a_log_file(self):
@@ -392,13 +383,13 @@ class TestLogFileMain(TestCase):
     def test_keeper_py_without_the_shell_word_opens_the_named_file(self):
         with mock.patch.object(cli.debug_manager, 'attach_log_file', return_value='file1.log') as attach:
             params = self._run(['keeper.py', '--output-file=file1.log'], from_package=True)
-        attach.assert_called_once_with('file1.log', explicit_name=True)
+        attach.assert_called_once_with('file1.log')
         self.assertEqual(params.commands, [])
 
     def test_keeper_py_bare_flag_uses_the_default_file(self):
         with mock.patch.object(cli.debug_manager, 'attach_log_file', return_value='keeper.log') as attach:
             self._run(['keeper.py', '--output-file'], from_package=True)
-        attach.assert_called_once_with(cli.DEFAULT_LOG_FILE, explicit_name=False)
+        attach.assert_called_once_with(cli.DEFAULT_LOG_FILE)
 
     def test_keeper_py_writes_the_named_file(self):
         with tempfile.TemporaryDirectory() as tmp:
