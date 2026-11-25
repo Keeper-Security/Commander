@@ -4,15 +4,17 @@ import unittest
 from unittest import mock
 
 import requests
-from keepercommander.importer.thycotic.thycotic import _SECRET_ACCESS_COMMENT
 from keepercommander.importer import commands
 from keepercommander.importer.thycotic.thycotic import (
+    READ_PARAMS_NO_CHECKOUT,
+    READ_PARAMS_WITH_AUTOCHECKOUT,
+    SECRET_ACCESS_COMMENT,
+    SecretAccessMode,
     ThycoticAttachment,
     ThycoticAuth,
     ThycoticImporter,
     build_secrets_lookup_query,
     lookup_secret_ids,
-    secret_access_params,
     with_secret_access_params,
 )
 
@@ -51,6 +53,13 @@ def _response(status_code, text='', json_value=None, reason=''):
 def _checkout_required():
     body = {'message': CHECKOUT_ERROR}
     return _response(400, '{"message": "API_SecretRequiresCheckout"}', body)
+
+
+def _unpack(result):
+    if result.success is not None:
+        assert result.error is None
+        return result.success.secret, None, None
+    return None, result.error.status, result.error.message
 
 
 def _auth():
@@ -110,18 +119,18 @@ class TestLookupDeduplication(unittest.TestCase):
 
 class TestSecretAccessParams(unittest.TestCase):
     def test_plain_read_does_not_check_out(self):
-        self.assertEqual(secret_access_params(False), [
+        self.assertEqual(list(READ_PARAMS_NO_CHECKOUT), [
             ('autoCheckout', 'false'),
-            ('autoComment', _SECRET_ACCESS_COMMENT),
+            ('autoComment', SECRET_ACCESS_COMMENT),
             ('noAutoCheckout', 'true'),
         ])
 
     def test_checkout_read_checks_back_in(self):
-        params = secret_access_params(True)
+        params = list(READ_PARAMS_WITH_AUTOCHECKOUT)
         self.assertEqual(params, [
             ('autoCheckout', 'true'),
             ('autoCheckIn', 'true'),
-            ('autoComment', _SECRET_ACCESS_COMMENT),
+            ('autoComment', SECRET_ACCESS_COMMENT),
         ])
         self.assertNotIn('forceCheckIn', dict(params))
         self.assertNotIn('noAutoCheckout', dict(params))
@@ -129,23 +138,23 @@ class TestSecretAccessParams(unittest.TestCase):
 
 class TestAccessParams(unittest.TestCase):
     def test_other_query_params_are_kept(self):
-        endpoint = with_secret_access_params('/v1/secrets/42?includeInactive=true', enabled=False)
+        endpoint = with_secret_access_params('/v1/secrets/42?includeInactive=true', mode=SecretAccessMode.PLAIN)
         self.assertEqual(endpoint, f'/v1/secrets/42?includeInactive=true&{PLAIN_QUERY}')
 
     def test_space_is_percent_encoded(self):
-        endpoint = with_secret_access_params('/v1/secrets/42', enabled=False)
+        endpoint = with_secret_access_params('/v1/secrets/42', mode=SecretAccessMode.PLAIN)
         self.assertIn('autoComment=Checking%20out%20for%20Keeper%20Import', endpoint)
         self.assertNotIn('+', endpoint)
 
     def test_plain_read_strips_a_checkout_left_on_the_url(self):
         endpoint = with_secret_access_params(
             '/v1/secrets/42?autoCheckout=true&autoCheckIn=true',
-            enabled=False,
+            mode=SecretAccessMode.PLAIN,
         )
         self.assertEqual(endpoint, f'/v1/secrets/42?{PLAIN_QUERY}')
 
 
-class TestFetchThycoticSecret(unittest.TestCase):
+class TestReadSecret(unittest.TestCase):
     def setUp(self):
         sleep = mock.patch(SLEEP)
         sleep.start()
@@ -154,7 +163,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
     def test_plain_read_does_not_check_out(self):
         secret_body = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, return_value=secret_body) as get:
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertEqual(secret, {'id': 42})
         self.assertIsNone(status)
         self.assertIsNone(message)
@@ -164,7 +173,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
     def test_checkout_required_retries_with_checkout(self):
         secret_body = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), secret_body]) as get:
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertEqual(secret, {'id': 42})
         self.assertIsNone(status)
         self.assertIsNone(message)
@@ -172,20 +181,29 @@ class TestFetchThycoticSecret(unittest.TestCase):
         self.assertTrue(get.call_args_list[0][0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
         self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
 
-    def test_any_400_is_retried_with_checkout(self):
+    def test_other_400_is_not_retried_with_checkout(self):
         body = {'message': 'Comment is required.', 'errorCode': 'API_CommentRequired'}
         denied = _response(400, '{"message": "Comment is required."}', body)
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertIsNone(secret)
         self.assertEqual((status, message), (400, 'Comment is required.'))
+        self.assertEqual(get.call_count, 1)
+        self.assertNotIn('autoCheckout=true', get.call_args[0][0])
+
+    def test_checkout_required_error_code_retries_with_checkout(self):
+        body = {'message': 'The requested secret requires checkout.', 'errorCode': CHECKOUT_ERROR}
+        denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
+        ok = _response(200, '{"id": 42}', {'id': 42})
+        with mock.patch(REQUESTS_GET, side_effect=[denied, ok]) as get:
+            secret, _, _ = _unpack(_auth().read_secret(42))
+        self.assertEqual(secret, {'id': 42})
         self.assertEqual(get.call_count, 2)
-        self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
 
     def test_failed_checkout_read_returns_the_retry_error(self):
         failed = _response(500, '{"message": "boom"}', {'message': 'boom'})
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), failed]) as get:
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertIsNone(secret)
         self.assertEqual((status, message), (500, 'boom'))
         self.assertEqual(get.call_count, 2)
@@ -194,7 +212,7 @@ class TestFetchThycoticSecret(unittest.TestCase):
     def test_other_error_is_not_retried_as_checkout(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertIsNone(secret)
         self.assertEqual((status, message), (403, 'Access denied'))
         self.assertEqual(get.call_count, 1)
@@ -203,14 +221,14 @@ class TestFetchThycoticSecret(unittest.TestCase):
     def test_non_json_secret_error_is_returned(self):
         html = _response(502, '<html>Bad Gateway</html>', reason='Bad Gateway')
         with mock.patch(REQUESTS_GET, return_value=html):
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertIsNone(secret)
         self.assertEqual(status, 502)
         self.assertEqual(message, '<html>Bad Gateway</html>')
 
     def test_network_failure_returns_the_error(self):
         with mock.patch(REQUESTS_GET, side_effect=requests.exceptions.ConnectionError('refused')) as get:
-            secret, status, message = _auth().fetch_thycotic_secret(42)
+            secret, status, message = _unpack(_auth().read_secret(42))
         self.assertIsNone(secret)
         self.assertEqual(status, 'N/A')
         self.assertEqual(message, 'refused')
@@ -220,18 +238,18 @@ class TestFetchThycoticSecret(unittest.TestCase):
         auth = _auth()
         with mock.patch.object(auth, 'ensure_auth_token', side_effect=Exception('refresh failed')), \
                 mock.patch(REQUESTS_GET) as get:
-            secret, status, message = auth.fetch_thycotic_secret(42)
+            secret, status, message = _unpack(auth.read_secret(42))
         self.assertIsNone(secret)
         self.assertEqual(status, 'N/A')
         self.assertEqual(message, 'refresh failed')
         get.assert_not_called()
 
 
-class TestThycoticSecretGet(unittest.TestCase):
+class TestReadSecretField(unittest.TestCase):
     def test_plain_field_read_does_not_check_out(self):
         ok = _response(200, 'key')
         with mock.patch(REQUESTS_GET, return_value=ok) as get:
-            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
+            rs = _auth().read_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 1)
         self.assertTrue(get.call_args[0][0].endswith(
@@ -241,7 +259,7 @@ class TestThycoticSecretGet(unittest.TestCase):
         ok = _response(200, 'key')
         denied = _checkout_required()
         with mock.patch(REQUESTS_GET, side_effect=[denied, ok]) as get:
-            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
+            rs = _auth().read_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 2)
         self.assertTrue(get.call_args_list[0][0][0].endswith(
@@ -258,15 +276,22 @@ class TestThycoticSecretGet(unittest.TestCase):
         denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
         ok = _response(200, 'key')
         with mock.patch(REQUESTS_GET, side_effect=[denied, ok]) as get:
-            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
+            rs = _auth().read_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 2)
         self.assertIn('autoCheckout=true', get.call_args_list[1][0][0])
 
+    def test_field_other_400_is_not_retried_with_checkout(self):
+        denied = _response(400, '{"message": "Bad request"}', {'message': 'Bad request'})
+        with mock.patch(REQUESTS_GET, return_value=denied) as get:
+            rs = _auth().read_secret_field(42, 'private-key')
+        self.assertIs(rs, denied)
+        self.assertEqual(get.call_count, 1)
+
     def test_field_error_is_returned_without_a_checkout_retry(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
-            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
+            rs = _auth().read_secret_field(42, 'private-key')
         self.assertIs(rs, denied)
         self.assertEqual(get.call_count, 1)
         self.assertNotIn('autoCheckout=true', get.call_args[0][0])
@@ -275,7 +300,7 @@ class TestThycoticSecretGet(unittest.TestCase):
         ok = _response(200, 'key')
         with mock.patch(SLEEP), mock.patch(REQUESTS_GET, side_effect=[
                 requests.exceptions.ConnectionError('reset'), ok]) as get:
-            rs = _auth().fetch_thycotic_secret_field(42, 'private-key')
+            rs = _auth().read_secret_field(42, 'private-key')
         self.assertIs(rs, ok)
         self.assertEqual(get.call_count, 2)
         self.assertIn(PLAIN_QUERY, get.call_args_list[1][0][0])
@@ -293,7 +318,7 @@ class TestThycoticSecretGet(unittest.TestCase):
 
         with mock.patch(REQUESTS_GET, side_effect=get), mock.patch(SLEEP), \
                 self.assertRaises(requests.exceptions.ConnectionError):
-            _auth().fetch_thycotic_secret_field(42, 'private-key')
+            _auth().read_secret_field(42, 'private-key')
         self.assertGreaterEqual(len(calls), 2)
         self.assertIn(PLAIN_QUERY, calls[0])
         self.assertIn('autoCheckout=true', calls[1])
@@ -347,7 +372,7 @@ class TestThycoticAttachment(unittest.TestCase):
         ok.__enter__ = mock.Mock(return_value=ok)
         ok.__exit__ = mock.Mock(return_value=False)
         auth = _auth()
-        with mock.patch.object(auth, 'fetch_thycotic_secret_field', return_value=ok) as get_field:
+        with mock.patch.object(auth, 'read_secret_field', return_value=ok) as get_field:
             attachment = ThycoticAttachment(auth, 42, 'cert', 'cert.pem')
             attachment.prepare()
         get_field.assert_called_once_with(42, 'cert')
@@ -358,7 +383,7 @@ class TestThycoticAttachment(unittest.TestCase):
         denied.__enter__ = mock.Mock(return_value=denied)
         denied.__exit__ = mock.Mock(return_value=False)
         auth = _auth()
-        with mock.patch.object(auth, 'fetch_thycotic_secret_field', return_value=denied), \
+        with mock.patch.object(auth, 'read_secret_field', return_value=denied), \
                 self.assertLogs(level='WARNING') as logs:
             attachment = ThycoticAttachment(auth, 42, 'cert', 'cert.pem')
             attachment.prepare()
@@ -369,7 +394,7 @@ class TestThycoticAttachment(unittest.TestCase):
 
     def test_network_error_warns_instead_of_raising(self):
         auth = _auth()
-        with mock.patch.object(auth, 'fetch_thycotic_secret_field',
+        with mock.patch.object(auth, 'read_secret_field',
                                side_effect=requests.exceptions.ConnectionError('reset')), \
                 self.assertLogs(level='WARNING') as logs:
             ThycoticAttachment(auth, 42, 'cert', 'cert.pem').prepare()

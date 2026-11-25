@@ -1,7 +1,7 @@
 import unittest
 from unittest import mock
 from keepercommander.importer.importer import Record
-from keepercommander.importer.thycotic.thycotic import ThycoticImporter, ThycoticMixin
+from keepercommander.importer.thycotic.thycotic import ReadSecretResult, ThycoticImporter, ThycoticMixin
 
 L1, L2, L3, L4 = 'Test_Folder_l1', r'Test_Folder_l1\Test_Folder_l2', \
     r'Test_Folder_l1\Test_Folder_l2\Test_Folder_L3', r'Test_Folder_l1\Test_Folder_l2\Test_Folder_L3\Test_Folder_l4'
@@ -274,8 +274,8 @@ class ImportFolderSelectionTests(unittest.TestCase):
         def secret(secret_id):
             secret_data = secrets_by_id.get(int(secret_id))
             if secret_data:
-                return secret_data, None, None
-            return None, 'N/A', 'Not found'
+                return ReadSecretResult.ok(secret_data)
+            return ReadSecretResult.failed('N/A', 'Not found')
 
         input_patch = mock.patch('builtins.input', side_effect=input_error,
                                  return_value=None if input_error is not None else choice)
@@ -288,7 +288,7 @@ class ImportFolderSelectionTests(unittest.TestCase):
             auth = auth_cls.return_value
             auth.thycotic_search.side_effect = search
             auth.thycotic_entity.side_effect = entity
-            auth.fetch_thycotic_secret.side_effect = secret
+            auth.read_secret.side_effect = secret
             kwargs = {} if filter_folder is None else {'filter_folder': filter_folder}
             try:
                 records = [x for x in ThycoticImporter().do_import('user@thycotic.example', **kwargs)
