@@ -105,6 +105,16 @@ def build_secrets_lookup_query(folder_id=None, include_restricted=True):
     )
 
 
+def build_secrets_search_query(include_restricted=True):
+    # type: (bool) -> str
+    """GET /v2/secrets summary search. Each record has id, name, folderId, and inheritsPermissions.
+
+    The search does not return field values and does not check a secret out.
+    """
+    restricted = 'true' if include_restricted else 'false'
+    return f'/v2/secrets?filter.includeRestricted={restricted}'
+
+
 def _ids_from_lookup_response(response):
     # type: (Any) -> List
     """Extract secret IDs from lookup response, handling non-list responses safely."""
@@ -718,7 +728,7 @@ class ThycoticMixin:
         """
         folder_id = secret.get('folderId') if isinstance(secret, dict) else None
         secret_id = secret.get('id') if isinstance(secret, dict) else None
-        inherits = isinstance(secret, dict) and secret.get('inheritPermissions') is True
+        inherits = isinstance(secret, dict) and secret.get('inheritsPermissions') is True
 
         if inherits:
             rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
@@ -746,24 +756,22 @@ class ThycoticMixin:
         return rows if isinstance(rows, list) else []
 
     @staticmethod
-    def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
-        # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
-        """Fetch one secret and its permission rows. Runs on a worker thread."""
-        secret = auth.thycotic_entity('/v1/secrets/{0}'.format(secret_id)) or {}
-        if not isinstance(secret, dict):
+    def _fetch_secret_permissions(auth, folders, secret, folder_cache, secret_permissions=None):
+        # type: (ThycoticAuth, Dict, dict, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
+        """Permission rows for one secret from /v2/secrets summary."""
+        if not isinstance(secret, dict) or secret.get('id') is None:
             return None, []
-        secret['id'] = secret.get('id') or secret_id
         return secret, ThycoticMixin.permission_rows_for_secret(
             auth, folders, secret, folder_cache, secret_permissions)
 
     @staticmethod
-    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, entry):
-        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], Tuple[dict, Any]) -> Tuple[Optional[dict], list, Optional[Exception]]
+    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, secret):
+        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], dict) -> Tuple[Optional[dict], list, Optional[Exception]]
         """Worker task: (secret, rows, None) on success, (None, [], error) on failure. Never raises."""
         try:
-            secret, rows = ThycoticMixin._fetch_secret_permissions(
-                auth, folders, entry[1], folder_cache, secret_permissions)
-            return secret, rows, None
+            loaded, rows = ThycoticMixin._fetch_secret_permissions(
+                auth, folders, secret, folder_cache, secret_permissions)
+            return loaded, rows, None
         except Exception as exc:
             return None, [], exc
 
@@ -876,14 +884,14 @@ class ThycoticMixin:
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search('/v1/secrets/lookup') or []
+            lookup = auth.thycotic_search(build_secrets_search_query()) or []
         except Exception as exc:
-            logging.warning('secret lookup for permissions: %s', exc)
+            logging.warning('secret search for permissions: %s', exc)
             return
         if not isinstance(lookup, list):
             lookup = []
         folders = folders or {}
-        entries = [(row, row.get('id')) for row in lookup if isinstance(row, dict) and row.get('id')]
+        entries = [row for row in lookup if isinstance(row, dict) and row.get('id') is not None]
         written = 0
         seen = 0
         unmapped = 0
@@ -895,7 +903,8 @@ class ThycoticMixin:
         logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(entries), workers)
 
         fetch = functools.partial(ThycoticMixin._fetch_secret_entry, auth, folders, folder_cache, secret_permissions)
-        for (row, secret_id), (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
+        for row, (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
+            secret_id = row.get('id')
             if error is not None:
                 logging.warning('Secret %s permissions skipped: %s', secret_id, error)
                 failed += 1
@@ -903,7 +912,7 @@ class ThycoticMixin:
             if secret is None:
                 continue
             seen += 1
-            title = secret.get('name') or row.get('name') or ''
+            title = secret.get('name') or ''
             if not title:
                 continue
             if ThycoticMixin._warn_unmapped_roles(title, secret_id, perm_rows):
