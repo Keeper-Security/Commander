@@ -162,6 +162,7 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
         ]
 
     def print_integration_specific_resources(self, config: ZoomConfig):
+        print(f"    • Zoom Client ID: {bcolors.OKBLUE}{config.client_id}{bcolors.ENDC}")
         print(f"    • Bot JID: {bcolors.OKBLUE}{config.bot_jid}{bcolors.ENDC}")
         print(
             f"    • Approvals Channel JID: "

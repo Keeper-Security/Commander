@@ -115,6 +115,16 @@ class TestZoomAppSetupCommand(unittest.TestCase):
             'https://abc123.ngrok.app/zoom/webhook',
         )
 
+    def test_prints_client_id_without_printing_secrets(self):
+        with mock.patch('builtins.print') as print_mock:
+            self.command.print_integration_specific_resources(self._config())
+
+        output = '\n'.join(str(call.args[0]) for call in print_mock.call_args_list)
+        self.assertIn('Zoom Client ID:', output)
+        self.assertIn('client-id', output)
+        self.assertNotIn('client-secret', output)
+        self.assertNotIn('secret-token', output)
+
     def test_compose_contains_zoom_and_commander_services(self):
         setup_result = SetupResult(
             folder_uid='folder-uid',
