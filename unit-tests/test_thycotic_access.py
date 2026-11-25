@@ -1044,7 +1044,7 @@ class TestSecretServerPagination(TestCase):
             self._page([{'id': 3}], False, 4, 3),
         ]
         with mock.patch.object(thycotic.requests, 'get', side_effect=pages) as get:
-            with self.assertLogs(level='INFO') as logs:
+            with self.assertLogs(level='DEBUG') as logs:
                 result = self._auth().thycotic_search('/v1/secrets/lookup')
         self.assertEqual([row['id'] for row in result], [1, 2, 3])
         self.assertEqual(get.call_count, 2)
@@ -1060,7 +1060,7 @@ class TestSecretServerPagination(TestCase):
             self._page([{'id': 2}], False, 2, 2),
         ]
         with mock.patch.object(thycotic.requests, 'get', side_effect=pages) as get:
-            with self.assertLogs(level='INFO') as logs:
+            with self.assertLogs(level='DEBUG') as logs:
                 result = self._auth().thycotic_search('/v1/secrets/lookup')
         self.assertEqual([row['id'] for row in result], [1, 2])
         self.assertEqual(get.call_count, 2)
@@ -1081,6 +1081,16 @@ class TestSecretServerPagination(TestCase):
                 result = self._auth().thycotic_search('/v1/users')
         self.assertEqual(result, [])
         self.assertIn('has no records list', '\n'.join(logs.output))
+
+    def test_full_page_with_has_next_false_stops(self):
+        full_page = self._page([{'id': i} for i in range(1, 1001)], False, 1000, 1000)
+        with mock.patch.object(thycotic.requests, 'get', return_value=full_page) as get:
+            with self.assertLogs(level='INFO') as logs:
+                result = self._auth().thycotic_search('/v1/secrets')
+        self.assertEqual(len(result), 1000)
+        get.assert_called_once()
+        log_text = '\n'.join(logs.output)
+        self.assertNotIn('short page', log_text)
 
 
 class TestSecretShareHelpers(TestCase):

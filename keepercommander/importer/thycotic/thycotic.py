@@ -2300,15 +2300,15 @@ class ThycoticAuth:
             has_next = chunk_rs.get('hasNext') is True
             next_skip = chunk_rs.get('nextSkip')
             count = len(records) if isinstance(records, list) else None
-            logging.info(
+            logging.debug(
                 'Secret Server page %d %s skip=%s take=%s records=%s total=%s hasNext=%s nextSkip=%s accumulated=%s',
                 page, endpoint, skip, take, count, chunk_rs.get('total'), has_next, next_skip, len(result) + (count or 0))
             if not isinstance(records, list):
                 logging.warning('Secret Server page %d %s has no records list, stopping pagination', page, endpoint)
                 break
             result.extend(records)
-            if count != take:
-                logging.info(
+            if count < take:
+                logging.debug(
                     'Secret Server page %d %s short page records=%d take=%d hasNext=%s',
                     page, endpoint, count, take, has_next)
             if not has_next:
