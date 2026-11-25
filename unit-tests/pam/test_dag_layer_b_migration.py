@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from keepercommander.commands.pam._layer_b import RouterResponseError, clear_layer_b_feature_cache
 from keepercommander.commands.pam_import import keeper_ai_settings as ai_mod
+from keepercommander.keeper_dag import EdgeType
 from keepercommander.proto import pam_pb2, router_pb2
 
 
@@ -154,6 +155,29 @@ class TestSetResourceKeeperAiSettingsMigration:
             'rotateOnTermination': False,
         }).encode()
         meta_mock.assert_called_once()
+
+    def test_upgrades_versionless_meta_to_v1(self):
+        """krouter rejects meta without version after a prior v1 write."""
+        captured = {}
+
+        def _capture(params, rq):
+            captured['rq'] = rq
+            return None
+
+        # Stale/partial meta missing version (e.g. pre-flush DAG read).
+        versionless = {'allowedSettings': {'connections': True}}
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'CIPHER_BYTES'), \
+             patch.object(ai_mod, 'get_resource_settings', return_value=versionless), \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource', side_effect=_capture):
+            ok = ai_mod.set_resource_keeper_ai_settings(
+                _mock_params(), RESOURCE_UID_STR, {'level': 'high'}, config_uid=CONFIG_UID_STR
+            )
+        assert ok is True
+        sent = json.loads(captured['rq'].meta.decode())
+        assert sent['version'] == 1
+        assert sent['allowedSettings'] == {'connections': True}
+        assert sent['rotateOnTermination'] is False
 
     def test_happy_path_bundles_current_meta_so_krouter_persists_ai_edge(self):
         """Regression: krouter's configure_resource only writes a settings edge
@@ -316,6 +340,111 @@ class TestSetResourceJitSettingsMigration:
             )
         assert ok is True
         assert captured['rq'].jitSettings == b''
+
+
+# --------------------------------------------------------------------------- #
+# Deferred-graph writes (batch import)                                         #
+# --------------------------------------------------------------------------- #
+
+
+class _FakeEdge:
+    def __init__(self, edge_type, path, active=True, version=1):
+        self.edge_type = edge_type
+        self.path = path
+        self.active = active
+        self.version = version
+
+
+class _FakeVertex:
+    def __init__(self, edges=None):
+        self.edges = edges if edges is not None else []
+        self.added = []
+
+    def add_data(self, **kwargs):
+        self.added.append(kwargs)
+
+
+class _FakeGraph:
+    def __init__(self, vertex=None):
+        self._vertex = vertex
+        self.save_count = 0
+
+    def get_vertex_by_uid(self, uid):
+        return self._vertex
+
+    def save(self):
+        self.save_count += 1
+
+
+class TestDeferredGraphWrites:
+    """Batch import passes its shared deferred graph via `graph=`.
+
+    The resource vertex only exists in that in-memory graph until the final
+    flush, so neither krouter nor a freshly server-loaded DAG can find it —
+    both would silently drop the settings.
+    """
+
+    def test_jit_writes_to_supplied_graph_without_router_or_save(self):
+        vertex = _FakeVertex()
+        graph = _FakeGraph(vertex)
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'JIT_CIPHER'), \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource') as call_mock:
+            ok = ai_mod.set_resource_jit_settings(
+                _mock_params(), RESOURCE_UID_STR, {'elevate': True},
+                config_uid=CONFIG_UID_STR, graph=graph,
+            )
+        assert ok is True
+        call_mock.assert_not_called()
+        # The caller owns persistence — the batch flush saves once for everything.
+        assert graph.save_count == 0
+        assert len(vertex.added) == 1
+        assert vertex.added[0]['path'] == 'jit_settings'
+        assert vertex.added[0]['content'] == b'JIT_CIPHER'
+        assert vertex.added[0]['is_encrypted'] is True
+
+    def test_ai_writes_to_supplied_graph_and_skips_meta_round_trip(self):
+        vertex = _FakeVertex()
+        graph = _FakeGraph(vertex)
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'AI_CIPHER'), \
+             patch.object(ai_mod, 'get_resource_settings') as meta_mock, \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource') as call_mock:
+            ok = ai_mod.set_resource_keeper_ai_settings(
+                _mock_params(), RESOURCE_UID_STR, {'level': 'critical'},
+                config_uid=CONFIG_UID_STR, graph=graph,
+            )
+        assert ok is True
+        call_mock.assert_not_called()
+        # meta is only bundled to make krouter persist the edge; irrelevant here.
+        meta_mock.assert_not_called()
+        assert graph.save_count == 0
+        assert len(vertex.added) == 1
+        assert vertex.added[0]['path'] == 'ai_settings'
+        assert vertex.added[0]['content'] == b'AI_CIPHER'
+
+    def test_prior_active_edge_at_same_path_is_deactivated(self):
+        stale = _FakeEdge(EdgeType.DATA, 'jit_settings', active=True, version=3)
+        other = _FakeEdge(EdgeType.DATA, 'meta', active=True, version=2)
+        vertex = _FakeVertex([other, stale])
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'JIT_CIPHER'):
+            ok = ai_mod.set_resource_jit_settings(
+                _mock_params(), RESOURCE_UID_STR, {'elevate': True},
+                config_uid=CONFIG_UID_STR, graph=_FakeGraph(vertex),
+            )
+        assert ok is True
+        assert stale.active is False
+        assert other.active is True, 'unrelated paths must not be deactivated'
+
+    def test_missing_vertex_returns_false_so_caller_can_warn(self):
+        with _patch_inputs(), \
+             patch.object(ai_mod, 'encrypt_aes', return_value=b'JIT_CIPHER'):
+            ok = ai_mod.set_resource_jit_settings(
+                _mock_params(), RESOURCE_UID_STR, {'elevate': True},
+                config_uid=CONFIG_UID_STR, graph=_FakeGraph(None),
+            )
+        assert ok is False
 
 
 # --------------------------------------------------------------------------- #
@@ -1103,6 +1232,53 @@ class TestTunnelGraphSetResourceAllowedMigration:
         assert allowed.get('connections') is True
         tg.linking_dag.save.assert_called_once()
 
+    def test_legacy_v1_write_preserves_unmanaged_meta_keys(self):
+        """B1: the legacy write replaces the whole meta edge and the v1 payload is
+        rebuilt from version/allowedSettings/rotateOnTermination only. Keys owned
+        elsewhere (locked, defaultElevationTime, no_update_services, idpConfigUid)
+        must survive the rewrite."""
+        from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
+
+        tg, resource_vertex = self._build_tg()
+        existing = {
+            'version': 1,
+            'allowedSettings': {'connections': True, 'aiEnabled': True},
+            'rotateOnTermination': False,
+            'locked': True,
+            'defaultElevationTime': 7200000,
+            'no_update_services': True,
+            'idpConfigUid': 'CCCCCCCCCCCCCCCCCCCCCC',
+        }
+
+        with patch.object(tg_mod, 'get_vertex_content', return_value=existing), \
+             patch('keepercommander.commands.pam.router_helper.router_configure_resource') as cr_mock:
+            # 'default' reset forces the legacy whole-edge write; meta_version=1
+            # selects the rebuilt v1 payload (the batch import path).
+            tg.set_resource_allowed(RESOURCE_UID_STR, ai_enabled='default', meta_version=1)
+
+        cr_mock.assert_not_called()
+        written = resource_vertex.add_data.call_args.kwargs['content']
+        assert written['version'] == 1
+        assert 'aiEnabled' not in written['allowedSettings']
+        assert written['allowedSettings'].get('connections') is True
+        assert written['locked'] is True
+        assert written['defaultElevationTime'] == 7200000
+        assert written['no_update_services'] is True
+        assert written['idpConfigUid'] == 'CCCCCCCCCCCCCCCCCCCCCC'
+
+    def test_preserve_unmanaged_meta_keys_payload_wins(self):
+        from keepercommander.commands.tunnel.port_forward.TunnelGraph import TunnelDAG
+
+        out = TunnelDAG._preserve_unmanaged_meta_keys(
+            {'version': 1, 'allowedSettings': {'rotation': True}, 'rotateOnTermination': True},
+            {'version': 0, 'allowedSettings': {'connections': True}, 'rotateOnTermination': False,
+             'locked': True})
+        assert out['version'] == 1
+        assert out['allowedSettings'] == {'rotation': True}
+        assert out['rotateOnTermination'] is True
+        assert out['locked'] is True
+        assert TunnelDAG._preserve_unmanaged_meta_keys(None, None) == {}
+
     def test_config_happy_path_uses_configure_network_graph(self):
         """is_config=True flips the call to configure_network_graph with the
         inner allowedSettings dict (matches edit_tunneling_config's shape)."""
@@ -1259,7 +1435,8 @@ class TestTunnelGraphSetResourceAllowedMigration:
 
         meta = json.loads(captured['rq'].meta.decode())
         assert set(meta) <= router_meta_keys
-        assert meta == {'allowedSettings': {'rotation': False}}
+        # set_resource_allowed also sends version 1 and rotateOnTermination (the v1 meta of the batch import)
+        assert meta['allowedSettings'] == {'rotation': False}
 
     def test_pam_rotation_edit_enable_does_not_override_settings_name(self):
         """pam rotation edit --enable/--disable must use the default 'allowedSettings'
@@ -1335,7 +1512,7 @@ class TestTunnelGraphUpgradeResourceMetaToV1Migration:
 
     def test_v0_upgrade_uses_configure_resource(self):
         """No version or version=0 -> upgrade to v1 via configure_resource(meta=...).
-        The proto's meta carries a VERSION-ONLY payload (empty allowedSettings)."""
+        Meta is inclusive: existing allowedSettings are re-sent with version=1."""
         from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod
         from keepercommander.commands.tunnel.port_forward.TunnelGraph import RESOURCE_META_VERSION_V1
 
@@ -1357,13 +1534,11 @@ class TestTunnelGraphUpgradeResourceMetaToV1Migration:
         assert len(rq.recordUid) == 16
         assert len(rq.networkUid) == 16
         assert rq.recordUid != rq.networkUid
-        # meta bumps version only; allowedSettings is sent EMPTY so krouter's
-        # deep-merge preserves the server's existing flags (connections stays True)
-        # rather than re-asserting a possibly-stale in-memory snapshot.
+        # Inclusive meta: bump version and re-send current allowedSettings
+        # (empty {} would clear connections on the server).
         meta = json.loads(rq.meta.decode())
         assert meta.get('version') == RESOURCE_META_VERSION_V1
-        assert meta['allowedSettings'] == {}
-
+        assert meta['allowedSettings'] == {'connections': True}
     def test_no_resource_vertex_returns_early(self):
         """If get_vertex returns None, no write at all."""
         from keepercommander.commands.tunnel.port_forward import TunnelGraph as tg_mod

@@ -85,28 +85,37 @@ def ensure_resource_meta_v1(content):
     # Normalize allowedSettings key if content used a different key (e.g. allowedSettings)
     if "allowedSettings" not in out and "allowed_settings" in out:
         out["allowedSettings"] = out.pop("allowed_settings", {})
+    if not isinstance(out.get("allowedSettings"), dict):
+        out["allowedSettings"] = {}
+    else:
+        out["allowedSettings"] = dict(out["allowedSettings"])
     return out
 
 
-def build_meta_version_upgrade():
-    """Meta payload that bumps a resource's meta to v1 WITHOUT re-asserting any
-    allowedSettings flags.
+def build_configure_resource_meta(content=None):
+    """Inclusive meta payload for ``configure_resource`` (Web Vault parity).
 
-    Used by the launch-credential / version-upgrade Layer-B calls. krouter
-    deep-merges the ``meta`` JSON edge (krouter Serialization.kt ``mergeJson``)
-    and never deletes keys absent from the new payload, so an EMPTY
-    ``allowedSettings`` preserves the server's current connections / portForwards /
-    recording flags while still bumping ``version``. ``allowedSettings`` must be
-    present (even if empty) because krouter strictly decodes the incoming meta
-    into its non-nullable ``Meta.allowedSettings`` DTO before merging.
-
-    This avoids the revert bug: ``set_resource_allowed``'s Layer-B path enables
-    ``connections`` on the server but does not refresh the in-memory vertex, so a
-    follow-up ``ensure_resource_meta_v1(get_vertex_content(...))`` would re-send a
-    STALE ``connections=false`` that deep-merges and flips connections back off —
-    making the vault hide the (still-present) connection port/protocol.
+    krouter DEEP-MERGES the ``meta`` edge (``mergeJsonEdges`` / ``mergeJson``,
+    checked in krouter ``UserRest.kt`` on master and release/1.11.3): keys in the
+    request overwrite, keys left out keep their stored value, so
+    ``allowedSettings: {}`` changes nothing and a flag can only be set to
+    true / false, never removed. (Older routers replaced ``allowedSettings``
+    as a whole; Commander still sends the full snapshot, like the Web Vault's
+    ``updatePamResourceGraph``, which is harmless with both behaviours.) The
+    legacy direct DAG write, used as a fallback, DOES replace the whole edge.
     """
-    return {"version": int(RESOURCE_META_VERSION_V1), "allowedSettings": {}}
+    return ensure_resource_meta_v1(content)
+
+
+def build_meta_version_upgrade(content=None):
+    """Build v1 meta for configure_resource; prefer :func:`build_configure_resource_meta`.
+
+    ``content`` should be the resource's current meta (local vertex and/or
+    Layer-B overlay). Passing ``None`` yields empty allowedSettings: with the
+    current router (deep merge) that leaves the stored flags as they are, but
+    the legacy direct DAG fallback would replace the edge and lose them.
+    """
+    return build_configure_resource_meta(content)
 
 
 class TunnelDAG:
@@ -138,6 +147,31 @@ class TunnelDAG:
         except Exception as e:
             import logging
             logging.debug(f"Error loading config: {e}")
+        self._defer_saves = False
+
+    def _persist_graph(self):
+        if not getattr(self, '_defer_saves', False):
+            self.linking_dag.save()
+
+    def defer_saves(self, enabled: bool = True):
+        """When True, suppress intermediate graph saves until final flush."""
+        self._defer_saves = enabled
+
+    def _sync_local_resource_meta(self, resource_uid, meta_payload):
+        """Remember meta applied via Layer-B so later inclusive writes keep flags."""
+        if not hasattr(self, '_resource_meta_overlay'):
+            self._resource_meta_overlay = {}
+        if isinstance(meta_payload, dict):
+            self._resource_meta_overlay[resource_uid] = dict(meta_payload)
+
+    def _local_resource_meta(self, resource_uid, resource_vertex=None):
+        """Current resource meta: Layer-B overlay wins over in-memory vertex."""
+        overlay = getattr(self, '_resource_meta_overlay', {}).get(resource_uid)
+        if overlay is not None:
+            return dict(overlay)
+        if resource_vertex is None:
+            resource_vertex = self.linking_dag.get_vertex(resource_uid)
+        return get_vertex_content(resource_vertex)
 
     def resource_belongs_to_config(self, resource_uid):
         if not self.linking_dag.has_graph:
@@ -346,7 +380,7 @@ class TunnelDAG:
 
             # Fallback: legacy direct DAG-write.
             config_vertex.add_data(content=content, path='meta', needs_encryption=False, path_aware=True)
-            self.linking_dag.save()
+            self._persist_graph()
 
     def get_all_owners(self, uid):
         owners = []
@@ -387,7 +421,7 @@ class TunnelDAG:
 
         if not config_vertex.has(resource_vertex, EdgeType.LINK):
             resource_vertex.belongs_to(config_vertex, EdgeType.LINK)
-            self.linking_dag.save()
+            self._persist_graph()
 
     def user_linked_to_config_for_noop(self, user_uid):
         if not self.linking_dag.has_graph:
@@ -445,7 +479,7 @@ class TunnelDAG:
                                edge_type=EdgeType.ACL,
                                content=acl,
                                is_encrypted=False)
-        self.linking_dag.save()
+        self._persist_graph()
         return True
 
     def _permission_check_iam_user_link(self, user_uid):
@@ -526,11 +560,11 @@ class TunnelDAG:
             if dirty:
                 user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=existing_content)
                 # user_vertex.add_data(content=existing_content, needs_encryption=False)
-                self.linking_dag.save()
+                self._persist_graph()
         else:
             content = {k: v for k, v in content.items() if v not in (None, '')}
             user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
-            self.linking_dag.save()
+            self._persist_graph()
 
     def unlink_user_from_resource(self, user_uid, resource_uid) -> bool:
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
@@ -551,12 +585,17 @@ class TunnelDAG:
                 for link_key in link_keys:
                     edge_content.pop(link_key, None)
                 user_vertex.belongs_to(resource_vertex, EdgeType.ACL, content=edge_content)
-                self.linking_dag.save()
+                self._persist_graph()
                 return True
 
         return False
 
     def link_user_to_resource(self, user_uid, resource_uid, is_admin=None, belongs_to=None, is_launch_credential=None):
+        if user_uid and resource_uid and user_uid == resource_uid:
+            logging.warning(
+                f"Skipping ACL link: user_uid and resource_uid are the same ({user_uid})"
+            )
+            return False
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None or not self.resource_belongs_to_config(resource_uid):
             print(f"{bcolors.FAIL}Resource {resource_uid} does not belong to the configuration{bcolors.ENDC}")
@@ -568,7 +607,9 @@ class TunnelDAG:
         # fall through to the legacy in-memory + save path.
         # Other flag-only paths (belongs_to / is_launch_credential without is_admin) stay
         # legacy because PAMResourceConfig doesn't model those flags independently.
-        if is_admin is True:
+        # Deferred batch import accumulates local graph edges and flushes later —
+        # skip Layer-B so a KRouter 5xx does not abort the run mid-Step-2.
+        if is_admin is True and not getattr(self, '_defer_saves', False):
             from ...pam.router_helper import router_configure_resource, get_router_url
             from ...pam._layer_b import is_layer_b_feature_disabled
             host = get_router_url(self.params)
@@ -639,10 +680,10 @@ class TunnelDAG:
             if dirty:
                 user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
                 # user_vertex.add_data(content=content, needs_encryption=False)
-                self.linking_dag.save()
+                self._persist_graph()
         else:
             user_vertex.belongs_to(source_vertex, EdgeType.ACL, content=content)
-            self.linking_dag.save()
+            self._persist_graph()
 
     def link_saas_user(self, user_uid: str, saas_config_record: TypedRecord, pam_config_record_type: str) -> bool:
 
@@ -699,7 +740,7 @@ class TunnelDAG:
                                content=acl,
                                is_encrypted=False)
 
-        self.linking_dag.save()
+        self._persist_graph()
 
         return True
 
@@ -775,7 +816,7 @@ class TunnelDAG:
                 user_vertex.belongs_to(resource_vertex, EdgeType.ACL, content=edge_content)
                 dirty = True
         if dirty:
-            self.linking_dag.save()
+            self._persist_graph()
 
     def set_launch_credentials(self, resource_uid, launch_uid=None, admin_uid=None):
         """
@@ -799,11 +840,12 @@ class TunnelDAG:
         pamUser, krouter sets both is_admin and is_launch_credential on one edge
         (UserRest.kt:258-273).
 
-        For a fresh launch_uid (no existing edge), krouter creates the new edge with
-        belongs_to=null; a follow-up local DAG-write must set belongs_to=True AND
-        preserve is_launch_credential (and is_admin when admin_uid == launch_uid).
-        Writing belongs_to alone clobbers krouter flags (KC-1330). For existing
-        edges where belongs_to is already true, an unchanged follow-up is a no-op.
+        For a fresh launch_uid (no existing edge), krouter may create the edge with
+        belongs_to=null. The local follow-up sets is_launch_credential (and is_admin
+        when admin_uid == launch_uid) but does **not** force belongs_to=True —
+        Web Vault admin/launch ACLs omit belongs_to; belongs_to is reserved for
+        rotation targets (Rotate Now). Prior Step 2 links that already set
+        belongs_to (e.g. self-rotating SSH admin) are preserved via edge merge.
 
         Fallback on RRC_NOT_ALLOWED* (or feature-disabled) with KEEPER_DAG_LB_FALLBACK
         enabled: legacy clear + link (if set) + admin link (if set) + meta-upgrade.
@@ -812,11 +854,12 @@ class TunnelDAG:
         if resource_vertex is None:
             return
 
-        # Version-only meta: bump to v1 (so the vault reads ACL launch credentials)
-        # WITHOUT re-asserting a possibly-stale allowedSettings snapshot. See
-        # build_meta_version_upgrade() — re-sending the in-memory allowedSettings
-        # here would clobber connections that set_resource_allowed just enabled.
-        upgraded_meta = build_meta_version_upgrade()
+        # Inclusive meta (WV parity): send full current allowedSettings snapshot.
+        # (krouter deep-merges meta, so omitted flags are kept; the full snapshot
+        # is still needed for the legacy DAG-write fallback, which replaces the edge.)
+        # Prefer Layer-B overlay from a prior set_resource_allowed in this session.
+        content = self._local_resource_meta(resource_uid, resource_vertex)
+        upgraded_meta = build_configure_resource_meta(content)
         uids = [url_safe_str_to_bytes(launch_uid)] if launch_uid is not None else []
 
         from ...pam.router_helper import router_configure_resource, get_router_url
@@ -838,8 +881,15 @@ class TunnelDAG:
                     f"set_launch_credentials: resource={resource_uid} "
                     f"launch_uid={launch_uid} admin_uid={admin_uid} via configure_resource"
                 )
+                self._sync_local_resource_meta(resource_uid, upgraded_meta)
                 if launch_uid is not None:
-                    link_kwargs = dict(belongs_to=True, is_launch_credential=True)
+                    # Web Vault parity: admin/launch ACL is is_admin +
+                    # is_launch_credential without belongs_to. belongs_to is for
+                    # rotation targets and makes the vault show Rotate Now. Do not
+                    # force belongs_to=True here — preserve whatever Step 2 already
+                    # set (SSH self-rotating admin keeps belongs_to; MySQL/RDP/VNC
+                    # admin stays without it).
+                    link_kwargs = dict(is_launch_credential=True)
                     if admin_uid is not None and admin_uid == launch_uid:
                         link_kwargs['is_admin'] = True
                     self.link_user(launch_uid, resource_vertex, **link_kwargs)
@@ -855,11 +905,15 @@ class TunnelDAG:
 
         self.clear_launch_credential_for_resource(resource_uid, exclude_user_uid=launch_uid)
         if admin_uid is not None:
-            # Legacy fallback: write is_admin directly on the resource ACL edge.
-            self.link_user(admin_uid, resource_vertex, is_admin=True, belongs_to=True)
+            # Legacy fallback: admin credential without forcing belongs_to (WV parity).
+            # Do not pass belongs_to=False: link_user lets explicit keys win, which would
+            # strip belongs_to from a rotation-target admin linked earlier in Step 2.
+            self.link_user(admin_uid, resource_vertex, is_admin=True)
         if launch_uid is not None:
-            self.link_user_to_resource(launch_uid, resource_uid,
-                                       is_launch_credential=True, belongs_to=True)
+            link_kwargs = dict(is_launch_credential=True)
+            if admin_uid is not None and admin_uid == launch_uid:
+                link_kwargs['is_admin'] = True
+            self.link_user_to_resource(launch_uid, resource_uid, **link_kwargs)
         self.upgrade_resource_meta_to_v1(resource_uid)
 
     def upgrade_resource_meta_to_v1(self, resource_uid):
@@ -867,18 +921,14 @@ class TunnelDAG:
         resource_vertex = self.linking_dag.get_vertex(resource_uid)
         if resource_vertex is None:
             return
-        content = get_vertex_content(resource_vertex)
+        content = self._local_resource_meta(resource_uid, resource_vertex)
         if content and content.get('version', 0) >= RESOURCE_META_VERSION_V1:
             return
-        upgraded = ensure_resource_meta_v1(content)
+        upgraded = build_configure_resource_meta(content)
 
-        # Primary: Layer-B configure_resource (permission-checked). Send a
-        # version-only meta — krouter deep-merges the meta edge, so an empty
-        # allowedSettings bumps `version` (the `oldMetaVersion <= newMetaVersion`
-        # upgrade check) while preserving the server's current flags. Re-sending
-        # the in-memory `upgraded` here would clobber flags set earlier in the
-        # same command (the Layer-B set_resource_allowed does not refresh the
-        # in-memory vertex). See build_meta_version_upgrade().
+        # Primary: Layer-B configure_resource (permission-checked). Send the full
+        # inclusive meta snapshot (WV parity); krouter merges it into the stored
+        # meta, the legacy fallback replaces the edge with it.
         from ...pam.router_helper import router_configure_resource, get_router_url
         from ...pam._layer_b import is_layer_b_feature_disabled
         host = get_router_url(self.params)
@@ -888,12 +938,13 @@ class TunnelDAG:
                 rq = pam_pb2.PAMResourceConfig(
                     recordUid=url_safe_str_to_bytes(resource_uid),
                     networkUid=url_safe_str_to_bytes(self.record.record_uid),
-                    meta=json.dumps(build_meta_version_upgrade()).encode(),
+                    meta=json.dumps(upgraded).encode(),
                 )
                 router_configure_resource(self.params, rq)
                 logging.debug(
                     f"upgrade_resource_meta_to_v1: applied to {resource_uid} via configure_resource"
                 )
+                self._sync_local_resource_meta(resource_uid, upgraded)
                 return
             except Exception as err:
                 if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
@@ -906,11 +957,11 @@ class TunnelDAG:
 
         # Fallback: legacy direct DAG-write.
         resource_vertex.add_data(content=upgraded, path='meta', needs_encryption=False)
-        self.linking_dag.save()
+        self._sync_local_resource_meta(resource_uid, upgraded)
+        self._persist_graph()
 
     def check_if_resource_allowed(self, resource_uid, setting):
-        resource_vertex = self.linking_dag.get_vertex(resource_uid)
-        content = get_vertex_content(resource_vertex)
+        content = self._local_resource_meta(resource_uid)
         return content.get('allowedSettings', {}).get(setting, False) if content else False
 
     def get_resource_setting(self, resource_uid: str, settings_name: str, setting: str) -> str:
@@ -919,8 +970,7 @@ class TunnelDAG:
         # ex. rotation: user -> machine -> pam_config -> Gobal Default settings
         # Note: Different clients (even different client versions)
         # may have different view on these defaults (Commander, Web Vault, etc.)
-        resource_vertex = self.linking_dag.get_vertex(resource_uid)
-        content = get_vertex_content(resource_vertex)
+        content = self._local_resource_meta(resource_uid)
         res = ''
         if content and isinstance(content, dict):
             if settings_name in content and isinstance(content[settings_name], dict):
@@ -951,7 +1001,13 @@ class TunnelDAG:
                              ai_enabled=None, ai_session_terminate=None,
                              allowed_settings_name='allowedSettings', is_config=False,
                              v_type: RefType=str(RefType.PAM_MACHINE), meta_version=None,
-                             rotate_on_termination=None):
+                             rotate_on_termination=None, default_elevation_time=None,
+                             update_services=None):
+        # default_elevation_time: JIT "Expire privilege after" in MILLISECONDS (int), stored on the
+        #   plaintext meta edge (`defaultElevationTime`), NOT in the encrypted jit_settings blob.
+        # update_services: bool, Vault "Update services" (default on); stored as meta
+        #   `no_update_services = not update_services`.
+        # NB: meta `locked` is back-end controlled and is deliberately never a parameter here.
         resetting_allowed_settings = any(
             self._is_allowed_setting_default_reset(v)
             for v in (
@@ -975,10 +1031,15 @@ class TunnelDAG:
         if is_config:
             resource_vertex.vertex_type = RefType.PAM_NETWORK
         dirty = False
-        content = get_vertex_content(resource_vertex)
+        content = self._local_resource_meta(resource_uid, resource_vertex)
         if content is None:
             content = {allowed_settings_name: {}}
             dirty = True
+        else:
+            # Mutate a copy so overlay / vertex originals stay intact until sync.
+            content = dict(content)
+            if isinstance(content.get(allowed_settings_name), dict):
+                content[allowed_settings_name] = dict(content[allowed_settings_name])
         if allowed_settings_name not in content:
             content[allowed_settings_name] = {}
             dirty = True
@@ -1072,8 +1133,33 @@ class TunnelDAG:
                 content = ensure_resource_meta_v1(dict(content))
                 content["rotateOnTermination"] = bool(rotate_on_termination)
 
+        explicit_meta = {}  # meta keys set by this call; the v1 rebuild below would otherwise drop them
+        if default_elevation_time is not None:
+            if content is None:
+                content = {allowed_settings_name: {}}
+                dirty = True
+            dur = int(default_elevation_time)
+            if content.get("defaultElevationTime") != dur:
+                dirty = True
+                content = dict(content)
+                content["defaultElevationTime"] = dur
+            explicit_meta["defaultElevationTime"] = dur
+
+        if update_services is not None:
+            if content is None:
+                content = {allowed_settings_name: {}}
+                dirty = True
+            no_update = not bool(update_services)
+            if bool(content.get("no_update_services", False)) != no_update or "no_update_services" not in content:
+                dirty = True
+                content = dict(content)
+                content["no_update_services"] = no_update
+            explicit_meta["no_update_services"] = no_update
+
         if dirty:
             # Compute the meta payload (same shape legacy would write).
+            # krouter rejects decreasing meta.version (null/0 after a prior v1).
+            # Always emit version=1 when writing resource meta — Web Vault parity.
             if meta_version is not None and meta_version != 0:
                 meta_payload = build_resource_meta(
                     meta_version,
@@ -1081,7 +1167,21 @@ class TunnelDAG:
                     rotate_on_termination=bool(content.get("rotateOnTermination", False)),
                 )
             else:
-                meta_payload = content
+                meta_payload = dict(content) if isinstance(content, dict) else {}
+                meta_payload["version"] = int(RESOURCE_META_VERSION_V1)
+                if "rotateOnTermination" not in meta_payload:
+                    meta_payload["rotateOnTermination"] = False
+                # Standard resources use allowedSettings; RBI may use a custom key.
+                if allowed_settings_name == "allowedSettings":
+                    if not isinstance(meta_payload.get("allowedSettings"), dict):
+                        meta_payload["allowedSettings"] = {}
+                    else:
+                        meta_payload["allowedSettings"] = dict(meta_payload["allowedSettings"])
+                elif allowed_settings_name not in meta_payload or not isinstance(
+                    meta_payload.get(allowed_settings_name), dict
+                ):
+                    meta_payload[allowed_settings_name] = {}
+            meta_payload.update(explicit_meta)
 
             # Primary: Layer-B (permission-checked). is_config=True writes the
             # config record's network-level allowedSettings via configure_network_graph
@@ -1092,13 +1192,16 @@ class TunnelDAG:
             # _router_resource_meta). Same fallback policy as edit_tunneling_config and
             # link_user_to_resource: strict by default, opt INTO legacy fallback
             # via KEEPER_DAG_LB_FALLBACK=1.
+            # Deferred batch import writes meta into the local graph and flushes
+            # later — skip Layer-B so a KRouter 5xx does not abort mid-Step-2.
             from ...pam.router_helper import (
                 router_configure_resource, router_configure_network_graph, get_router_url
             )
             from ...pam._layer_b import is_layer_b_feature_disabled
             host = get_router_url(self.params)
+            defer = getattr(self, '_defer_saves', False)
 
-            if not resetting_allowed_settings and is_config:
+            if not defer and not resetting_allowed_settings and is_config:
                 endpoint = 'configure_network_graph'
                 if not is_layer_b_feature_disabled(host, endpoint):
                     try:
@@ -1113,6 +1216,7 @@ class TunnelDAG:
                         logging.debug(
                             f"set_resource_allowed: applied to config {resource_uid} via configure_network_graph"
                         )
+                        self._sync_local_resource_meta(resource_uid, meta_payload)
                         return
                     except Exception as err:
                         if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
@@ -1122,19 +1226,25 @@ class TunnelDAG:
                             f"configure_network_graph denied/unavailable for config {resource_uid}; "
                             f"falling back to legacy DAG-write: {err}"
                         )
-            elif not resetting_allowed_settings:
+            elif not defer and not resetting_allowed_settings:
                 endpoint = 'configure_resource'
                 if not is_layer_b_feature_disabled(host, endpoint):
                     try:
+                        # no_update_services travels in the dedicated updateServices field
+                        # (Vault parity; KRouter gates it with the rotation enforcement).
+                        lb_meta = {k: v for k, v in meta_payload.items() if k != 'no_update_services'}
                         rq = pam_pb2.PAMResourceConfig(
                             recordUid=url_safe_str_to_bytes(resource_uid),
                             networkUid=url_safe_str_to_bytes(self.record.record_uid),
-                            meta=json.dumps(self._router_resource_meta(meta_payload, allowed_settings_name)).encode(),
+                            meta=json.dumps(self._router_resource_meta(lb_meta, allowed_settings_name)).encode(),
                         )
+                        if 'no_update_services' in explicit_meta:
+                            rq.updateServices = not explicit_meta['no_update_services']
                         router_configure_resource(self.params, rq)
                         logging.debug(
                             f"set_resource_allowed: applied to resource {resource_uid} via configure_resource"
                         )
+                        self._sync_local_resource_meta(resource_uid, meta_payload)
                         return
                     except Exception as err:
                         if not should_fallback_on_layer_b_error(err, host=host, endpoint=endpoint):
@@ -1148,11 +1258,31 @@ class TunnelDAG:
             # Fallback: legacy direct DAG-write (also used when resetting any
             # allowedSettings key to default — krouter mergeJson never deletes
             # keys absent from a Layer-B payload).
-            if meta_version is not None and meta_version != 0:
-                resource_vertex.add_data(content=meta_payload, path='meta', needs_encryption=False)
-            else:
-                resource_vertex.add_data(content=content, path='meta', needs_encryption=False)
-            self.linking_dag.save()
+            # The legacy write replaces the WHOLE meta edge (Layer-B is merged
+            # server-side), and the v1 payload above is rebuilt from only
+            # version / allowedSettings / rotateOnTermination: carry over every
+            # other key already on the edge (locked, defaultElevationTime,
+            # no_update_services, idpConfigUid, ...) so they are never erased.
+            legacy_payload = self._preserve_unmanaged_meta_keys(meta_payload, content)
+            resource_vertex.add_data(content=legacy_payload, path='meta', needs_encryption=False)
+            self._sync_local_resource_meta(resource_uid, legacy_payload)
+            self._persist_graph()
+
+    @staticmethod
+    def _preserve_unmanaged_meta_keys(payload, existing):
+        """Return ``payload`` plus every key of ``existing`` that ``payload`` lacks.
+
+        Used before a legacy whole-edge ``meta`` write. ``payload`` always wins
+        for the keys it carries (version, allowedSettings, rotateOnTermination).
+        NB: ``locked`` is controlled by the back-end; this only keeps whatever
+        value is already on the edge, it never sets one.
+        """
+        out = dict(payload) if isinstance(payload, dict) else {}
+        if isinstance(existing, dict):
+            for key, value in existing.items():
+                if key not in out:
+                    out[key] = value
+        return out
 
     def is_tunneling_config_set_up(self, resource_uid):
         if not self.linking_dag.has_graph:

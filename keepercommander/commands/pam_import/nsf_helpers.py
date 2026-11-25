@@ -156,25 +156,32 @@ def get_folder_record_uids(params, folder_uid: str) -> set:
     return record_uids
 
 
+def get_record_summary(params, record_uid: str) -> Optional[tuple]:
+    """Return (uid, title, record_type, login) for *record_uid*, or None when the record cannot be loaded."""
+    try:
+        rec = load_pam_record(params, record_uid)
+        if not rec:
+            return None
+        title = getattr(rec, 'title', '') or ''
+        rtype = getattr(rec, 'record_type', '') or ''
+        login = ''
+        fields = getattr(rec, 'fields', None)
+        if isinstance(fields, list):
+            field = next((x for x in fields if getattr(x, 'type', '') == 'login'), None)
+            if field and hasattr(field, 'get_default_value'):
+                login = (field.get_default_value() or '') or ''
+        return (record_uid, title, rtype, login)
+    except Exception:
+        return None
+
+
 def get_records_in_folder(params, folder_uid: str) -> list:
     """Return (uid, title, record_type, login) tuples for records in *folder_uid*."""
     result = []
     for ruid in get_folder_record_uids(params, folder_uid):
-        try:
-            rec = load_pam_record(params, ruid)
-            if not rec:
-                continue
-            title = getattr(rec, 'title', '') or ''
-            rtype = getattr(rec, 'record_type', '') or ''
-            login = ''
-            fields = getattr(rec, 'fields', None)
-            if isinstance(fields, list):
-                field = next((x for x in fields if getattr(x, 'type', '') == 'login'), None)
-                if field and hasattr(field, 'get_default_value'):
-                    login = (field.get_default_value() or '') or ''
-            result.append((ruid, title, rtype, login))
-        except Exception:
-            continue
+        summary = get_record_summary(params, ruid)
+        if summary:
+            result.append(summary)
     return result
 
 
@@ -207,6 +214,112 @@ def sync_down_preserving_nsf_keys(params) -> None:
     preserved = snapshot_nsf_folder_keys(params)
     api.sync_down(params)
     restore_nsf_folder_keys(params, preserved)
+
+
+def fetch_file_record_infos(params, file_uids) -> dict:
+    """Name / size / mime type / time of file records the local caches do not hold.
+
+    Found on QA 2026-11-19 (``resend_test/probe_file_records.py``): the files of a record in a Nested Share Folder are
+    linked to it (the Web Vault shows them) but the sync does not deliver them to Commander - they are in no cache.
+    ``vault/records/v3/details/data`` hands them out by uid (version 4 records; the key is encrypted with the data key,
+    the data holds ``name``, ``size``, ``title``, ``type``, ``lastModified``). One request for all uids. Returns
+    ``{uid: info}`` in the shape of ``record_state.file_record_info``; a uid the server does not give (or that cannot be
+    decrypted) is simply absent, and a failing request returns ``{}`` - the caller then reports the file as unreadable.
+    """
+    import json
+    from ... import crypto, utils
+    from ...nested_share_folder.record_api import _try_decrypt_record_key
+    from ...proto import record_details_pb2
+
+    uids = [u for u in dict.fromkeys(file_uids or []) if u]
+    if not uids:
+        return {}
+    rq = record_details_pb2.RecordDataRequest()
+    for uid in uids:
+        rq.recordUids.append(utils.base64_url_decode(uid))
+    rq.clientTime = utils.current_milli_time()
+    try:
+        rs = api.communicate_rest(params, rq, 'vault/records/v3/details/data', rs_type=record_details_pb2.RecordDataResponse)
+    except Exception as e:      # pylint: disable=broad-except
+        logging.debug('file record fetch failed: %s', e)
+        return {}
+    out = {}
+    for rd in rs.data:
+        uid = utils.base64_url_encode(rd.recordUid)
+        try:
+            key = _try_decrypt_record_key(params, rd.recordKey, rd.recordKeyType, uid)
+            enc = rd.encryptedRecordData
+            enc = utils.base64_url_decode(enc) if isinstance(enc, str) else enc
+            if not (key and enc):
+                continue
+            data = json.loads(crypto.decrypt_aes_v2(enc, key).decode().rstrip(' '))
+        except Exception as e:      # pylint: disable=broad-except
+            logging.debug('file record %s could not be decrypted: %s', uid, e)
+            continue
+        out[uid] = {'record_uid': uid, 'name': data.get('name') or data.get('title') or '', 'size': data.get('size'),
+                    'mime_type': data.get('type') or '', 'last_modified': data.get('lastModified')}
+    return out
+
+
+def stale_nsf_records(params, record_uids) -> List[str]:
+    """UIDs of the records whose local DATA is older than what the server has.
+
+    Found on QA 2026-11-19 (``resend_test/probe_nsf_read.py --write``): after a ``records/v3/update`` an INCREMENTAL
+    sync moves the revision in ``nested_share_records`` (here 6274004) and drops the NSF data copy
+    (``nested_share_record_data[uid]['data_json']``), but the classic ``record_cache`` copy keeps the OLD data and the
+    OLD revision (6273968), and ``load_pam_record`` then returns the old data. Only a full sync (revision 0, no token)
+    brings the new data. Such a record must not be read for a comparison, nor be the base of an update.
+    """
+    nsf_records = getattr(params, 'nested_share_records', None) or {}
+    nsf_data = getattr(params, 'nested_share_record_data', None) or {}
+    classic = getattr(params, 'record_cache', None) or {}
+    stale = []
+    for uid in record_uids:
+        nsf = nsf_records.get(uid)
+        if not nsf:
+            continue                                  # a classic record: the normal sync is enough
+        nsf_rev = int(nsf.get('revision') or 0)
+        copy = classic.get(uid)
+        if copy is not None:
+            if int(copy.get('revision') or 0) < nsf_rev:
+                stale.append(uid)
+        elif not (nsf_data.get(uid) or {}).get('data_json'):
+            stale.append(uid)                         # known to the NSF cache but no data at all
+    return stale
+
+
+def refresh_stale_nsf_records(params, record_uids) -> int:
+    """Full sync when ``stale_nsf_records`` finds any; returns how many records were stale (0 = no sync was made)."""
+    stale = stale_nsf_records(params, record_uids)
+    if stale:
+        logging.debug('%d NSF record(s) have stale local data (first: %s): full sync', len(stale), stale[0])
+        params.revision = 0
+        params.sync_down_token = b''
+        sync_down_preserving_nsf_keys(params)
+    return len(stale)
+
+
+def nsf_record_can_edit(params, record_uid: str) -> Optional[bool]:
+    """Can the current user edit this Nested Share Folder record? ``None`` = not known.
+
+    Reads the access rows that sync stores in ``params.nested_share_record_accesses`` (the current user's rows, direct
+    or inherited): an OWNER row or a row with ``can_edit`` grants, a row that is ``denied_access`` does not. ``True``
+    when any of the user's rows grants, ``False`` when the user has rows and none grants (a viewer, for example).
+    ``None`` for a record that is not an NSF record, for a record without access rows (a partial first sync) and for
+    rows that cannot be matched to the user: the server stays the source of truth there and rejects the write, which
+    is better than a wrong refusal in the plan.
+    """
+    if record_uid not in (getattr(params, 'nested_share_records', None) or {}):
+        return None
+    accesses = (getattr(params, 'nested_share_record_accesses', None) or {}).get(record_uid) or []
+    if not accesses:
+        return None
+    from ..nested_share_folder.helpers import _current_user_account_uid, _is_current_user_access
+    me = _current_user_account_uid(params)
+    mine = [a for a in accesses if _is_current_user_access(a, params, me)]
+    if not mine:
+        return None
+    return any((a.get('owner') or a.get('can_edit')) and not a.get('denied_access') for a in mine)
 
 
 def collect_nsf_subtree_uids(params, root_uid: str) -> List[str]:

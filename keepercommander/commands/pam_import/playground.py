@@ -14,15 +14,16 @@ Everything the ``--sample-data`` flow needs lives in this single module:
 
     1. Constants           - GATEWAY_DEPENDS_ON, SECCOMP_B64, SECCOMP_URL, images
     2. Credentials         - PlaygroundCredentials (+ RSA SSH keygen)
-    3. Session             - PlaygroundSession (creds -> records -> compose -> save)
-    4. Record creators     - _create_* helpers (one per playground service)
-    5. Compose             - build_compose() + per-service YAML builders
-    6. Output              - save_compose_and_seccomp()
+    3. Session             - PlaygroundSession (creds -> Pam* objects -> batch engine
+                             -> compose -> save)
+    4. Compose             - build_compose() + per-service YAML builders
+    5. Output              - save_compose_and_seccomp()
 
-The credentials are generated once per run (no hard-coded secrets) and shared
-between the vault records and the generated ``docker-compose.yaml`` so the two
-always agree.  The compose template mirrors the discovery-playground repo's
-``origin/main:docker-compose.yaml``.
+Vault record creation uses ``BatchPamImportEngine`` (same path as
+``pam project import`` / ``extend``). Credentials are generated once per run
+(no hard-coded secrets) and shared between the vault records and the generated
+``docker-compose.yaml`` so the two always agree. The compose template mirrors
+the discovery-playground repo's ``origin/main:docker-compose.yaml``.
 """
 
 from __future__ import annotations
@@ -41,10 +42,30 @@ from typing import Any, Callable, Dict, List, Optional
 from ... import api
 from ...display import bcolors
 from ...generator import KeeperPasswordGenerator, DEFAULT_PASSWORD_LENGTH
-from ..record_edit import RecordAddCommand as RecordEditAddCommand
-from ..tunnel.port_forward.TunnelGraph import TunnelDAG
-from ..tunnel.port_forward.tunnel_helpers import get_keeper_tokens
-from ..tunnel_and_connections import PAMTunnelEditCommand
+from .base import (
+    PamDatabaseObject,
+    PamDirectoryObject,
+    PamMachineObject,
+    PamRemoteBrowserObject,
+    PamRotationParams,
+    PamUserObject,
+    find_user,
+    get_admin_credential,
+    get_launch_credential,
+    resolve_script_creds,
+    set_launch_record_uid,
+    set_user_record_uid,
+)
+from .batch_pipeline import BatchPamImportEngine, assign_uids
+
+# On-demand rotation profile used by playground users that the origin
+# path configured via PAMCreateRecordRotationCommand(on_demand=True, ...).
+_ON_DEMAND_ROTATION = {
+    "rotation": "general",
+    "enabled": "on",
+    "schedule": {"type": "on-demand"},
+    "password_complexity": "20,4,4,4,4",
+}
 
 # =====================================================================
 # 1. Constants
@@ -494,7 +515,7 @@ def _build_password_factory(params) -> Callable[[], str]:
 def _generate_ssh_keypair(comment: str = "linuxuser@local"):
     """Generate an RSA-2048 keypair (OpenSSH PEM private, OpenSSH public).
 
-    Matches the origin/vault sample (RSA, not Ed25519).  Returns
+    RSA-2048 to match the Web Vault sample (not Ed25519).  Returns
     ``(private_openssh_pem, public_openssh_line)``.
     """
     from cryptography.hazmat.primitives import serialization
@@ -513,6 +534,18 @@ def _generate_ssh_keypair(comment: str = "linuxuser@local"):
     if comment:
         public_line = f"{public_line} {comment}"
     return private_pem, public_line
+
+
+# Default DAG options for playground machines/DBs — matches sequential
+# ``_enable_connection`` + ``_allow_resource`` (connections must be on for Launch).
+_DEFAULT_PAM_OPTIONS = {
+    "rotation": "on",
+    "connections": "on",
+    "tunneling": "on",
+    "graphical_session_recording": "on",
+    "text_session_recording": "on",
+    "remote_browser_isolation": "off",
+}
 
 
 class PlaygroundCredentials:
@@ -557,11 +590,12 @@ class PlaygroundCredentials:
         self.mongo_user_password = gen()
         # SSH password (server-ssh-with-pwd-1)
         self.ssh_password = gen()
-        # SSH key (server-ssh-with-key-1)
+        # SSH key (server-ssh-with-key-1) — private key is primary auth; also
+        # store a strong vault password so pamUser validation stays quiet.
         self.ssh_private_key, self.ssh_public_key = _generate_ssh_keypair()
+        self.ssh_key_user_password = gen()
         # VNC (server-vnc)
-        self.vnc_password = gen()
-        # RDP (server-rdp)
+        self.vnc_password = gen()        # RDP (server-rdp)
         self.rdp_user_password = gen()
         self.rdp_root_password = gen()
         # Telnet (server-telnet) - compose has no auth; used for rotation testing only
@@ -586,343 +620,362 @@ class PlaygroundSession:
         # Generate credentials compliant with the enterprise password policy
         # (passphrase or random), all shell/YAML-safe.
         self.creds = PlaygroundCredentials(_build_password_factory(params))
+        self.resources: List[Any] = []
 
-        # Command/DAG helpers (initialized in create_all_records).
-        self._command: Optional[RecordEditAddCommand] = None
-        self._pte: Optional[PAMTunnelEditCommand] = None
-        self._tdag: Optional[TunnelDAG] = None
+    # ---- record creation (batched) --------------------------------------
 
-    # ---- record creation ------------------------------------------------
+    def create_all_records(self) -> bool:
+        """Build playground Pam* objects and create them via BatchPamImportEngine."""
+        self.resources = self.build_resources()
+        assign_uids(self.resources, only_new=False)
+        self._resolve_refs()
 
-    def create_all_records(self):
-        """Create every playground record + DAG link, matching the origin services."""
-        from ..discoveryrotation import PAMCreateRecordRotationCommand
-        self._rotation_cls = PAMCreateRecordRotationCommand
-
-        self._command = RecordEditAddCommand()
-        self._pte = PAMTunnelEditCommand()
-
-        encrypted_session_token, encrypted_transmission_key, transmission_key = get_keeper_tokens(self.params)
-        self._tdag = TunnelDAG(
-            self.params, encrypted_session_token, encrypted_transmission_key,
-            self.pam_config_uid, True, transmission_key=transmission_key)
-        # Fix: rotation/connections disabled by the PAM configuration.
-        self._tdag.set_resource_allowed(
-            self.pam_config_uid, is_config=True, rotation=True, connections=True, tunneling=True,
-            session_recording=True, typescript_recording=True, remote_browser_isolation=True)
-
-        self._create_mysql_records()
-        self._create_ssh_password_records()
-        self._create_ssh_key_records()
-        self._create_vnc_records()
-        self._create_rdp_records()
-        self._create_rbi_record()
-        self._create_postgresql_records()
-        self._create_mariadb_records()
-        self._create_mssql_records()
-        # MongoDB interactive connect is not yet wired end-to-end: the gateway's
-        # WebRTC ConversationType enum (keeper-pam-webrtc-rs models.rs) has no
-        # "mongodb" variant, so a KeeperDB connect fails with
-        #   "'mongodb' is not a valid ConversationType"
-        # even though a guacr MongoDbHandler exists (it's never reached). WV sends
-        # conversationType="mongodb"+useKeeperDb=true correctly; only
-        # mysql/postgresql/sql-server are routable DB conversation types today.
-        # Re-enable this call + the db-mongo compose service + its GATEWAY_DEPENDS_ON
-        # entry once the gateway/keeper-pam-connections adds mongodb (and the other
-        # DB protocols) to ConversationType.
-        # self._create_mongodb_records()
-        self._create_telnet_records()
-        self._create_openldap_records()
-
+        engine = BatchPamImportEngine(
+            self.params, self.project,
+            users=[],
+            resources=self.resources,
+            users_folder_uid=self.users_folder_uid,
+            resources_folder_uid=self.resources_folder_uid,
+            pam_cfg_uid=self.pam_config_uid,
+            extend_mode=False,
+        )
+        # OpenLDAP demo passwords are intentionally weak (image-fixed); suppress
+        # the expected policy/BreachWatch noise the sequential path also muted.
+        with _suppress_expected_warnings():
+            ok = engine.run()
+        if not ok:
+            logging.error(f"{bcolors.FAIL}Playground sample-data batch import aborted.{bcolors.ENDC}")
+            return False
         api.sync_down(self.params)
+        return True
 
-    # ---- record-creation helpers ---------------------------------------
+    def simulate(self) -> dict:
+        """Dry-run batch plan for playground resources (no vault writes)."""
+        self.resources = self.build_resources()
+        assign_uids(self.resources, only_new=False)
+        self._resolve_refs()
+        engine = BatchPamImportEngine(
+            self.params, self.project,
+            users=[],
+            resources=self.resources,
+            users_folder_uid=self.users_folder_uid,
+            resources_folder_uid=self.resources_folder_uid,
+            pam_cfg_uid=self.pam_config_uid,
+            extend_mode=False,
+        )
+        return engine.simulate()
+
+    def _resolve_refs(self) -> None:
+        """Resolve administrative/launch credentials / rotation resourceUid like process_data."""
+        for mach in self.resources:
+            if isinstance(mach, PamRemoteBrowserObject):
+                continue
+            admin_cred = get_admin_credential(mach)
+            if admin_cred:
+                matches = find_user(mach, [], admin_cred)
+                if len(matches) != 1:
+                    logging.warning(
+                        f"{bcolors.WARNING}{len(matches)} matches for "
+                        f"administrative_credentials '{admin_cred}' in {mach.title}.{bcolors.ENDC}",
+                    )
+                if matches:
+                    set_user_record_uid(mach, matches[0].uid, False)
+            launch_cred = get_launch_credential(mach)
+            if launch_cred:
+                matches = find_user(mach, [], launch_cred)
+                if len(matches) != 1:
+                    logging.warning(
+                        f"{bcolors.WARNING}{len(matches)} matches for "
+                        f"launch_credentials '{launch_cred}' in {mach.title}.{bcolors.ENDC}",
+                    )
+                if matches:
+                    set_launch_record_uid(mach, matches[0].uid)
+            for usr in getattr(mach, "users", None) or []:
+                if (usr and getattr(usr, "rotation_settings", None)
+                        and usr.rotation_settings
+                        and getattr(usr.rotation_settings, "rotation", None) == "general"):
+                    usr.rotation_settings.resourceUid = mach.uid
+            resolve_script_creds(mach, [], self.resources)
 
     def _title(self, suffix: str) -> str:
         # Record titles are NOT project-prefixed - the enclosing folders
         # (e.g. "<project> - Resources"/"- Users") already provide that context.
         return suffix
 
-    def _add(self, record_type: str, folder_uid: str, suffix: str,
-             fields: List[str], notes: Optional[str] = None,
-             quiet_policy: bool = False) -> str:
-        """Create a typed record via the record-add command; return its UID.
-
-        Uses dot-notation field specs (``f.login=..``, ``c.pamSettings=$JSON:..``)
-        exactly like the PAM importer (pam_import/base.py) so records are built
-        from the record-type definition - no legacy "Unknown field types" noise -
-        and ``force=True`` bypasses the interactive password-policy prompt.
-
-        ``quiet_policy`` suppresses the (expected) complexity-policy and
-        BreachWatch "High-Risk password" noise for records whose credentials are
-        intentionally weak/fixed (image-baked OpenLDAP demo users); ``force=True``
-        still creates them.
-        """
-        args: Dict[str, Any] = {
-            "force": True, "folder": folder_uid,
-            "record_type": record_type, "title": self._title(suffix),
-        }
-        if fields:
-            args["fields"] = fields
-        if notes:
-            args["notes"] = notes
-        if quiet_policy:
-            with _suppress_expected_warnings():
-                return self._command.execute(self.params, **args)
-        return self._command.execute(self.params, **args)
-
-    def _add_user(self, suffix: str, login: str, password: Optional[str] = None,
-                  private_key: Optional[str] = None, notes: Optional[str] = None,
-                  distinguished_name: Optional[str] = None, quiet_policy: bool = False) -> str:
-        """Create a pamUser record and return its UID.
-
-        ``distinguished_name`` is required to rotate a directory (LDAP/AD) user -
-        kdnrm modifies the entry by its DN, not by the login/uid.
-        """
-        fields = [f"f.login={login}"]
+    def _user(
+        self,
+        title: str,
+        login: str,
+        *,
+        password: Optional[str] = None,
+        private_key: Optional[str] = None,
+        distinguished_name: Optional[str] = None,
+        notes: Optional[str] = None,
+        rotate: bool = False,
+    ) -> dict:
+        data: Dict[str, Any] = {"type": "pamUser", "title": self._title(title), "login": login}
         if private_key is not None:
-            fields.append(f"f.secret.privatePEMKey={private_key}")  # password left empty
-        elif password:
-            fields.append(f"f.password={password}")
+            data["private_pem_key"] = private_key
+        if password is not None:
+            data["password"] = password
+        elif private_key is not None:
+            # pamUser validation requires a password field; key remains primary SSH auth.
+            data["password"] = self.creds.ssh_key_user_password
         if distinguished_name:
-            fields.append(f"f.text.distinguishedName={distinguished_name}")
-        return self._add("pamUser", self.users_folder_uid, suffix, fields, notes,
-                         quiet_policy=quiet_policy)
+            data["distinguished_name"] = distinguished_name
+        if notes:
+            data["notes"] = notes
+        if rotate:
+            data["rotation_settings"] = dict(_ON_DEMAND_ROTATION)
+        return data
 
-    def _add_resource(self, record_type: str, suffix: str, *, host: Optional[str] = None,
-                      port: Optional[str] = None, database_type: Optional[str] = None,
-                      directory_type: Optional[str] = None, domain_name: Optional[str] = None,
-                      rbi_url: Optional[str] = None, connection: Optional[dict] = None,
-                      port_forward: Optional[dict] = None, notes: Optional[str] = None) -> str:
-        """Create a resource record (pamMachine/pamDatabase/pamDirectory/pamRemoteBrowser).
+    def _conn(
+        self,
+        protocol: str,
+        admin_title: str,
+        *,
+        database: Optional[str] = None,
+        extra: Optional[dict] = None,
+        port_forward: bool = True,
+        options: Optional[dict] = None,
+    ) -> dict:
+        connection: Dict[str, Any] = {
+            "protocol": protocol,
+            "administrative_credentials": admin_title,
+            # Same user as admin — vault Launch Credential / connections need this
+            # (old sequential path passed admin into PAMTunnelEdit as connect user).
+            "launch_credentials": admin_title,
+        }
+        if database is not None:
+            connection["database"] = database
+        if extra:
+            connection.update(extra)
+        pam_settings: Dict[str, Any] = {
+            "connection": connection,
+            "port_forward": {"reuse_port": True} if port_forward else {},
+            "options": {**_DEFAULT_PAM_OPTIONS, **(options or {})},
+        }
+        return pam_settings
 
-        ``trafficEncryptionSeed`` is intentionally omitted - it is populated later
-        by the tunnel/DAG step (matches pam_import/base.py).
-        """
-        fields: List[str] = []
-        if host is not None or port is not None:
-            fields.append("f.pamHostname=$JSON:" + json.dumps({"hostName": host or "", "port": port or ""}))
-        if database_type:
-            fields.append(f"f.databaseType={database_type}")
-        if directory_type:
-            fields.append(f"f.directoryType={directory_type}")
-        if domain_name:
-            fields.append(f"f.text.domainName={domain_name}")
-        if record_type == "pamRemoteBrowser":
-            if rbi_url:
-                fields.append(f"rbiUrl={rbi_url}")
-            if connection is not None:
-                fields.append("pamRemoteBrowserSettings=$JSON:" + json.dumps({"connection": connection}))
-        elif connection is not None or port_forward is not None:
-            fields.append("c.pamSettings=$JSON:" + json.dumps(
-                {"allowSupplyHost": False, "portForward": port_forward or {}, "connection": connection or {}}))
-        return self._add(record_type, self.resources_folder_uid, suffix, fields, notes)
-
-    def _allow_resource(self, resource_uid: str, rotation=True, connections=True, tunneling=True,
-                        session_recording=True, typescript_recording=True, remote_browser_isolation=True):
-        self._tdag.set_resource_allowed(
-            resource_uid=resource_uid, rotation=rotation, connections=connections, tunneling=tunneling,
-            session_recording=session_recording, typescript_recording=typescript_recording,
-            remote_browser_isolation=remote_browser_isolation)
-
-    def _enable_connection(self, resource_uid: str, admin_user_uid: Optional[str] = None,
-                           enable_connections=True, enable_tunneling=True):
-        self._tdag.link_resource_to_config(resource_uid)
-        kwargs = dict(record=resource_uid, config=self.pam_config_uid,
-                      enable_connections=enable_connections, enable_tunneling=enable_tunneling, silent=True)
-        if admin_user_uid:
-            kwargs["admin"] = admin_user_uid
-        self._pte.execute(self.params, **kwargs)
-
-    def _rotate(self, record_uid: str, admin_user_uid: str, resource_uid: str):
-        # PAMCreateRecordRotationCommand resolves the record/admin/resource from
-        # the local cache; records are created with sync deferred (sync_data), so
-        # sync first or the rotation SETTINGS silently fail to persist (the record
-        # would then show RRS_NO_ROTATION even though the DAG rotation flag is set).
-        api.sync_down(self.params)
-        self._rotation_cls().execute(
-            self.params, record_name=record_uid, admin=admin_user_uid,
-            config=self.pam_config_uid, resource=resource_uid,
-            on_demand=True, pwd_complexity="20,4,4,4,4", enable=True, force=True, silent=True)
-
-    # ---- per-service record creators -----------------------------------
-
-    def _create_mysql_records(self):
-        admin_uid = self._add_user("MySQL Admin User", "root", self.creds.mysql_root_password)
-        rotation_uid = self._add_user("MySQL Rotation User", "sqluser", self.creds.mysql_user_password)
-        db_uid = self._add_resource(
-            "pamDatabase", "MySQL Database", host="db-mysql-1", port="3306",
-            connection={"protocol": "mysql", "database": "salesdb", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(db_uid, admin_uid)
-        self._allow_resource(db_uid)
-        self._tdag.link_user_to_resource(admin_uid, db_uid, True, True)
-        self._tdag.link_user_to_resource(rotation_uid, db_uid, False, True)
-        self._rotate(rotation_uid, admin_uid, db_uid)
-
-    def _create_ssh_password_records(self):
-        admin_uid = self._add_user("SSH Admin with Password", "linuxuser", self.creds.ssh_password)
-        machine_uid = self._add_resource(
-            "pamMachine", "SSH Machine with Password Access",
-            host="server-ssh-with-pwd-1", port="2222",
-            connection={"protocol": "ssh", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(machine_uid, admin_uid)
-        self._allow_resource(machine_uid)
-        self._tdag.link_user_to_resource(admin_uid, machine_uid, True, True)
-        self._rotate(admin_uid, admin_uid, machine_uid)
-
-    def _create_ssh_key_records(self):
-        admin_uid = self._add_user("SSH Admin with Private Key", "linuxuser",
-                                   private_key=self.creds.ssh_private_key)
-        machine_uid = self._add_resource(
-            "pamMachine", "SSH Machine with Private Key Access",
-            host="server-ssh-with-key-1", port="2222",
-            connection={"protocol": "ssh", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(machine_uid, admin_uid)
-        self._allow_resource(machine_uid)
-        self._tdag.link_user_to_resource(admin_uid, machine_uid, True, True)
-        self._rotate(admin_uid, admin_uid, machine_uid)
-
-    def _create_vnc_records(self):
-        admin_uid = self._add_user("VNC Admin", "vncuser", self.creds.vnc_password)
-        machine_uid = self._add_resource(
-            "pamMachine", "VNC Machine", host="server-vnc", port="5901",
-            connection={"protocol": "vnc", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(machine_uid, admin_uid)
-        self._allow_resource(machine_uid)
-        self._tdag.link_user_to_resource(admin_uid, machine_uid, True, True)
-
-    def _create_rdp_records(self):
-        user_uid = self._add_user("RDP User", "linuxuser", self.creds.rdp_user_password)
-        admin_uid = self._add_user("RDP Admin", "root", self.creds.rdp_root_password)
-        machine_uid = self._add_resource(
-            "pamMachine", "RDP Machine", host="server-rdp", port="3389",
-            connection={"protocol": "rdp", "security": "any", "ignoreCert": True,
-                        "resizeMethod": "display-update", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(machine_uid, admin_uid)
-        self._allow_resource(machine_uid)
-        self._tdag.link_user_to_resource(admin_uid, machine_uid, True, True)
-        self._tdag.link_user_to_resource(user_uid, machine_uid, False, True)
-
-    def _create_rbi_record(self):
-        rbi_uid = self._add_resource(
-            "pamRemoteBrowser", "Bing Remote Browser", rbi_url="https://bing.com",
-            connection={"protocol": "http", "allowUrlManipulation": True, "userRecords": []})
-        self._tdag.link_resource_to_config(rbi_uid)
-        self._pte.execute(self.params, record=rbi_uid, config=self.pam_config_uid,
-                          enable_rotation=False, enable_connections=True, enable_tunneling=False,
-                          enable_typescripts_recording=False, enable_connections_recording=True, silent=True)
-        self._allow_resource(rbi_uid, rotation=False, connections=True, tunneling=False,
-                             session_recording=True, typescript_recording=False, remote_browser_isolation=True)
-
-    def _create_postgresql_records(self):
-        admin_uid = self._add_user("PostgreSQL Admin User", "postgres", self.creds.postgres_password)
-        db_uid = self._add_resource(
-            "pamDatabase", "PostgreSQL Database", host="db-postgres-1", port="5432",
-            database_type="postgresql",
-            # database name must match compose POSTGRES_DB ("postgres"), not the type
-            connection={"protocol": "postgresql", "database": "postgres", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(db_uid, admin_uid)
-        self._allow_resource(db_uid)
-        self._tdag.link_user_to_resource(admin_uid, db_uid, True, True)
-        self._rotate(admin_uid, admin_uid, db_uid)
-
-    def _create_mariadb_records(self):
-        admin_uid = self._add_user("MariaDB Admin User", "root", self.creds.mariadb_root_password)
-        rotation_uid = self._add_user("MariaDB Rotation User", "max", self.creds.mariadb_user_password)
-        db_uid = self._add_resource(
-            "pamDatabase", "MariaDB Database", host="db-mariadb-1", port="3306",
-            database_type="mariadb",
-            connection={"protocol": "mysql", "database": "mydb", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(db_uid, admin_uid)
-        self._allow_resource(db_uid)
-        self._tdag.link_user_to_resource(admin_uid, db_uid, True, True)
-        self._tdag.link_user_to_resource(rotation_uid, db_uid, False, True)
-        self._rotate(rotation_uid, admin_uid, db_uid)
-
-    def _create_mssql_records(self):
-        admin_uid = self._add_user("Microsoft SQL Server Admin User", "sa", self.creds.mssql_sa_password)
-        db_uid = self._add_resource(
-            "pamDatabase", "Microsoft SQL Server Database", host="db-mssql", port="1433",
-            database_type="mssql",
-            connection={"protocol": "sql-server", "database": "master", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(db_uid, admin_uid)
-        self._allow_resource(db_uid)
-        self._tdag.link_user_to_resource(admin_uid, db_uid, True, True)
-        self._rotate(admin_uid, admin_uid, db_uid)
-
-    def _create_mongodb_records(self):
-        admin_uid = self._add_user("MongoDB Admin User", "root", self.creds.mongo_root_password)
-        rotation_uid = self._add_user("MongoDB Rotation User", "user1", self.creds.mongo_user_password)
-        db_uid = self._add_resource(
-            "pamDatabase", "MongoDB Database", host="db-mongo", port="27017",
-            database_type="mongodb",
-            connection={"protocol": "mongodb", "database": "mydatabase", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(db_uid, admin_uid)
-        self._allow_resource(db_uid)
-        self._tdag.link_user_to_resource(admin_uid, db_uid, True, True)
-        self._tdag.link_user_to_resource(rotation_uid, db_uid, False, True)
-        self._rotate(rotation_uid, admin_uid, db_uid)
-
-    def _create_telnet_records(self):
-        # Compose telnet (nyancat) has no auth; these creds exist only for
-        # rotation/discovery testing on the KC side.
-        admin_uid = self._add_user("Telnet Admin", "user", self.creds.telnet_password)
-        machine_uid = self._add_resource(
-            "pamMachine", "Telnet Machine", host="server-telnet", port="23",
-            connection={"protocol": "telnet", "userRecords": [admin_uid]},
-            port_forward={"reusePort": True})
-        self._enable_connection(machine_uid, admin_uid)
-        self._allow_resource(machine_uid)
-        self._tdag.link_user_to_resource(admin_uid, machine_uid, True, True)
-        self._rotate(admin_uid, admin_uid, machine_uid)
-
-    def _create_openldap_records(self):
-        # server-openldap-1 uses the rroemhild/test-openldap image with fixed
-        # demo credentials (documented, not generated).  No compose secrets.
+    def build_resources(self) -> List[Any]:
+        """Materialize playground services as Pam*Object trees (no vault writes)."""
         c = self.creds
-        admin_uid = self._add_user(
-            "OpenLDAP Admin", c.OPENLDAP_ADMIN_DN, c.OPENLDAP_ADMIN_PASSWORD,
-            notes=f"OpenLDAP directory admin (image-fixed). Domain: {c.OPENLDAP_DOMAIN}",
-            distinguished_name=c.OPENLDAP_ADMIN_DN,  # bind DN for directory rotation
-            quiet_policy=True)  # image-fixed creds intentionally don't meet policy
-        dir_uid = self._add_resource(
-            "pamDirectory", "OpenLDAP Directory", host="server-openldap-1", port="10389",
-            directory_type="openldap", domain_name=c.OPENLDAP_DOMAIN,
-            connection={"userRecords": [admin_uid]}, port_forward={"reusePort": True},
-            notes="OpenLDAP demo directory (rroemhild/test-openldap, image-fixed users).")
-        # Directories have no interactive connect protocol; enable tunneling for
-        # discovery/rotation reachability. The admin is image-fixed (not rotated).
-        self._tdag.link_resource_to_config(dir_uid)
-        self._pte.execute(self.params, record=dir_uid, config=self.pam_config_uid,
-                          admin=admin_uid, enable_connections=False, enable_tunneling=True, silent=True)
-        self._allow_resource(dir_uid, rotation=True, connections=False, tunneling=True,
-                             session_recording=False, typescript_recording=False,
-                             remote_browser_isolation=False)
-        self._tdag.link_user_to_resource(admin_uid, dir_uid, True, True)
+        rotation_params = PamRotationParams(configUid=self.pam_config_uid, profiles={})
+        resources: List[Any] = []
 
-        # Demo users. Their initial password comes from the image; the gateway
-        # rotates them via the cn=admin credential (rootDN has write access to the
-        # planetexpress DIT). Rotation must be CONFIGURED here - just linking a user
-        # to a rotation-allowed resource makes WV show a rotate button that would
-        # otherwise fail with RRS_NO_ROTATION (no rotation settings). Same pattern
-        # as the DB rotation users (sqluser, max, ...).
+        def add_db(data: dict):
+            resources.append(PamDatabaseObject.load(data, rotation_params))
+
+        def add_machine(data: dict):
+            resources.append(PamMachineObject.load(data, rotation_params))
+
+        def add_dir(data: dict):
+            resources.append(PamDirectoryObject.load(data, rotation_params))
+
+        def add_rbi(data: dict):
+            resources.append(PamRemoteBrowserObject.load(data, rotation_params))
+
+        # MySQL
+        add_db({
+            "type": "pamDatabase",
+            "title": self._title("MySQL Database"),
+            "host": "db-mysql-1",
+            "port": "3306",
+            "database_type": "mysql",
+            "pam_settings": self._conn("mysql", "MySQL Admin User", database="salesdb"),
+            "users": [
+                # Admin: credential only (is_admin+launch, no belongs_to / no Rotate Now).
+                self._user("MySQL Admin User", "root", password=c.mysql_root_password),
+                self._user("MySQL Rotation User", "sqluser", password=c.mysql_user_password, rotate=True),
+            ],
+        })
+
+        # SSH password
+        add_machine({
+            "type": "pamMachine",
+            "title": self._title("SSH Machine with Password Access"),
+            "host": "server-ssh-with-pwd-1",
+            "port": "2222",
+            "pam_settings": self._conn("ssh", "SSH Admin with Password"),
+            "users": [
+                self._user("SSH Admin with Password", "linuxuser",
+                           password=c.ssh_password, rotate=True),
+            ],
+        })
+
+        # SSH key
+        add_machine({
+            "type": "pamMachine",
+            "title": self._title("SSH Machine with Private Key Access"),
+            "host": "server-ssh-with-key-1",
+            "port": "2222",
+            "pam_settings": self._conn("ssh", "SSH Admin with Private Key"),
+            "users": [
+                self._user("SSH Admin with Private Key", "linuxuser",
+                           private_key=c.ssh_private_key,
+                           password=c.ssh_key_user_password,
+                           rotate=True),
+            ],
+        })
+        # VNC — admin credential/launch only; no rotation (Web Vault parity)
+        add_machine({
+            "type": "pamMachine",
+            "title": self._title("VNC Machine"),
+            "host": "server-vnc",
+            "port": "5901",
+            "pam_settings": self._conn("vnc", "VNC Admin"),
+            "users": [
+                self._user("VNC Admin", "vncuser", password=c.vnc_password),
+            ],
+        })
+
+        # RDP — Admin is credential/launch only; RDP User is vault-only (not
+        # linked onto the machine). Neither is set up for rotation.
+        add_machine({
+            "type": "pamMachine",
+            "title": self._title("RDP Machine"),
+            "host": "server-rdp",
+            "port": "3389",
+            "pam_settings": self._conn(
+                "rdp", "RDP Admin",
+                extra={"security": "any", "ignore_server_cert": True},
+            ),
+            "users": [
+                self._user("RDP User", "linuxuser", password=c.rdp_user_password),
+                self._user("RDP Admin", "root", password=c.rdp_root_password),
+            ],
+        })
+
+        # RBI
+        add_rbi({
+            "type": "pamRemoteBrowser",
+            "title": self._title("Bing Remote Browser"),
+            "url": "https://bing.com",
+            "pam_settings": {
+                "connection": {
+                    "protocol": "http",
+                    "allow_url_manipulation": True,
+                    "allow_supply_user": True,
+                    "clipboard_buffer_size": "10mb",
+                    "accept_language": "en-US,en;q=0.9",
+                    "suppress_js_dialogs": True,
+                },
+                "options": {
+                    "rotation": "off",
+                    "connections": "on",
+                    "tunneling": "off",
+                    "remote_browser_isolation": "on",
+                    "graphical_session_recording": "on",
+                    "text_session_recording": "off",
+                },
+            },
+        })
+
+        # PostgreSQL
+        add_db({
+            "type": "pamDatabase",
+            "title": self._title("PostgreSQL Database"),
+            "host": "db-postgres-1",
+            "port": "5432",
+            "database_type": "postgresql",
+            "pam_settings": self._conn("postgresql", "PostgreSQL Admin User", database="postgres"),
+            "users": [
+                self._user("PostgreSQL Admin User", "postgres",
+                           password=c.postgres_password, rotate=True),
+            ],
+        })
+
+        # MariaDB
+        add_db({
+            "type": "pamDatabase",
+            "title": self._title("MariaDB Database"),
+            "host": "db-mariadb-1",
+            "port": "3306",
+            "database_type": "mariadb",
+            "pam_settings": self._conn("mysql", "MariaDB Admin User", database="mydb"),
+            "users": [
+                # Admin credential only (no rotate) — matches Web Vault admin ACL.
+                self._user("MariaDB Admin User", "root", password=c.mariadb_root_password),
+                self._user("MariaDB Rotation User", "max",
+                           password=c.mariadb_user_password, rotate=True),
+            ],
+        })
+
+        # MSSQL
+        add_db({
+            "type": "pamDatabase",
+            "title": self._title("Microsoft SQL Server Database"),
+            "host": "db-mssql",
+            "port": "1433",
+            "database_type": "mssql",
+            "pam_settings": self._conn("sql-server", "Microsoft SQL Server Admin User", database="master"),
+            "users": [
+                self._user("Microsoft SQL Server Admin User", "sa",
+                           password=c.mssql_sa_password, rotate=True),
+            ],
+        })
+
+        # MongoDB intentionally omitted — see origin comment on ConversationType.
+
+        # Telnet — nyancat image has no auth; admin is launch/credential only
+        # (rotation is not possible against this backend).
+        add_machine({
+            "type": "pamMachine",
+            "title": self._title("Telnet Machine"),
+            "host": "server-telnet",
+            "port": "23",
+            "pam_settings": self._conn("telnet", "Telnet Admin"),
+            "users": [
+                self._user("Telnet Admin", "user", password=c.telnet_password),
+            ],
+        })
+
+        # OpenLDAP
+        # Admin is directory bind credential only — Gateway cannot rotate the
+        # image root DN (cn=admin,dc=… has no ou=; kdnrm openldap_req_ou).
+        # Demo users under ou=people are the rotation targets.
+        ldap_users = [
+            self._user(
+                "OpenLDAP Admin", c.OPENLDAP_ADMIN_DN, password=c.OPENLDAP_ADMIN_PASSWORD,
+                notes=f"OpenLDAP directory admin (image-fixed; not rotatable). "
+                      f"Domain: {c.OPENLDAP_DOMAIN}",
+                distinguished_name=c.OPENLDAP_ADMIN_DN,
+            ),
+        ]
         for login, password, dn in c.OPENLDAP_DEMO_USERS:
-            user_uid = self._add_user(f"OpenLDAP User ({login})", login, password,
-                                      notes="OpenLDAP demo user. Initial password from image; "
-                                            "rotated via cn=admin.",
-                                      distinguished_name=dn,  # kdnrm needs the DN to rotate the entry
-                                      quiet_policy=True)  # weak initial creds; policy noise expected
-            self._tdag.link_user_to_resource(user_uid, dir_uid, False, True)
-            self._rotate(user_uid, admin_uid, dir_uid)
+            ldap_users.append(self._user(
+                f"OpenLDAP User ({login})", login, password=password,
+                notes="OpenLDAP demo user. Initial password from image; "
+                      "rotated via cn=admin.",
+                distinguished_name=dn,
+                rotate=True,
+            ))
+        add_dir({
+            "type": "pamDirectory",
+            "title": self._title("OpenLDAP Directory"),
+            "host": "server-openldap-1",
+            "port": "10389",
+            "directory_type": "openldap",
+            "domain_name": c.OPENLDAP_DOMAIN,
+            "notes": "OpenLDAP demo directory (rroemhild/test-openldap, image-fixed users).",
+            # No interactive connect protocol for directories; use SSH settings shape
+            # only to carry administrative_credentials into the typed loader
+            # (same admin-link outcome as the sequential playground path).
+            "pam_settings": self._conn(
+                "ssh", "OpenLDAP Admin",
+                options={
+                    "rotation": "on",
+                    "connections": "off",
+                    "tunneling": "on",
+                    "graphical_session_recording": "off",
+                    "text_session_recording": "off",
+                    "remote_browser_isolation": "off",
+                },
+            ),
+            "users": ldap_users,
+        })
+
+        return resources
 
     # ---- compose --------------------------------------------------------
 
@@ -1008,6 +1061,24 @@ def _backend_block(name: str, image: str, env: List, network_id: str,
     return _service_lines(name, body)
 
 
+def _ephemeral_data_tmpfs(path: str) -> List[str]:
+    """Mount DB data on tmpfs so image entrypoint always re-inits from env.
+
+    Official DB images declare a VOLUME; Compose then keeps an anonymous volume
+    across recreate. Regenerated sample-data passwords in compose/vault then
+    no longer match the old data dir → ``Access denied`` / authentication failed
+    (seen on db-mariadb-1 / db-postgres-1). tmpfs avoids that class of drift.
+
+    Path must match the image VOLUME (postgres:18+ uses ``/var/lib/postgresql``,
+    not the older ``/var/lib/postgresql/data``).
+
+    Do **not** use this for ``db-mssql``: SQL Server 2022 runs as non-root
+    ``mssql`` (UID 10001) and fails on a root-owned tmpfs with
+    ``The system directory [/.system] could not be created`` (Access Denied).
+    """
+    return ["tmpfs:", f"  - {path}"]
+
+
 def build_compose(network_id: str, gateway_config_b64: str, creds: PlaygroundCredentials,
                   project_name: str = "") -> str:
     """Render the full docker-compose.yaml (name + network + gateway + 11 backends)."""
@@ -1015,6 +1086,10 @@ def build_compose(network_id: str, gateway_config_b64: str, creds: PlaygroundCre
     parts.append(
         "# Generated by Keeper Commander `pam project import --sample-data`.\n"
         "# Credentials below are also stored as records in your Keeper vault.\n"
+        "# DB data dirs (mysql/mariadb/postgres) use tmpfs so passwords always\n"
+        "# match this file. MSSQL keeps the image volume (non-root mssql user\n"
+        "# cannot write a root-owned tmpfs) — use `docker compose down -v` if\n"
+        "# SA password drifts after regenerating sample-data.\n"
         f"name: {compose_project_name(project_name)}\n"
         "\n"
         "# Docker auto-assigns this network's subnet to avoid pool overlaps. To\n"
@@ -1037,13 +1112,13 @@ def build_compose(network_id: str, gateway_config_b64: str, creds: PlaygroundCre
         ("MYSQL_DATABASE", "salesdb"),
         ("MYSQL_USER", "sqluser"),
         ("MYSQL_PASSWORD", creds.mysql_user_password),
-    ], network_id))
+    ], network_id, extra=_ephemeral_data_tmpfs("/var/lib/mysql")))
 
     parts.append(_backend_block("db-postgres-1", "postgres", [
         ("POSTGRES_DB", "postgres"),
         ("POSTGRES_USER", "postgres"),
         ("POSTGRES_PASSWORD", creds.postgres_password),
-    ], network_id))
+    ], network_id, extra=_ephemeral_data_tmpfs("/var/lib/postgresql")))
 
     parts.append(_backend_block("db-mariadb-1", "mariadb:10.8", [
         ("MARIADB_ROOT_HOST", "%"),
@@ -1051,7 +1126,7 @@ def build_compose(network_id: str, gateway_config_b64: str, creds: PlaygroundCre
         ("MARIADB_DATABASE", "mydb"),
         ("MARIADB_USER", "max"),
         ("MARIADB_PASSWORD", creds.mariadb_user_password),
-    ], network_id, extra=[
+    ], network_id, extra=_ephemeral_data_tmpfs("/var/lib/mysql") + [
         "ports:",
         "  - mode: host",
         "    target: 3306",

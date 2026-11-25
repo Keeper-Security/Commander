@@ -371,6 +371,113 @@ class TestPAMCreateRecordRotationCommand(unittest.TestCase):
         config_call = mock_TunnelDAG.call_args_list[1]
         self.assertTrue(config_call.kwargs.get('is_config'))
 
+    @patch('keepercommander.commands.discoveryrotation.api.sync_down')
+    @patch('keepercommander.commands.discoveryrotation.router_set_record_rotation_information')
+    @patch('keepercommander.vault_extensions.find_records')
+    @patch('keepercommander.commands.discoveryrotation.resolve_pam_record')
+    @patch('keepercommander.vault.KeeperRecord.load')
+    @patch('keepercommander.commands.discoveryrotation.get_keeper_tokens')
+    @patch('keepercommander.commands.discoveryrotation.TunnelDAG')
+    @patch('keepercommander.rest_api.SERVER_PUBLIC_KEYS', {8: ec.generate_private_key(ec.SECP256R1()).public_key()})
+    def test_execute_pam_user_self_admin_resource_has_no_graph(
+            self, mock_TunnelDAG, mock_get_keeper_tokens, mock_load,
+            mock_resolve_pam_record, mock_find_records,
+            mock_router_set_rotation, mock_sync_down):
+        """Fresh import: resource stream empty, --config known, admin == user (self-rotate).
+
+        Must open config DAG (is_config=True), link admin→resource — never ACL user→user.
+        """
+        user_uid = TEST_RECORD_UID
+        config_uid = TEST_CONFIG_UID
+        resource_uid = TEST_RESOURCE_UID
+
+        mock_params, mock_typed_record = create_mock_params_and_record()
+        mock_params.record_rotation_cache = {}
+        mock_params.nested_share_records = {}
+        mock_typed_record.record_uid = user_uid
+        mock_typed_record.record_type = 'pamUser'
+        mock_load.return_value = mock_typed_record
+
+        mock_pam_config_record = MagicMock(spec=vault.TypedRecord)
+        mock_pam_config_record.record_uid = config_uid
+        mock_pam_config_record.record_type = 'pamNetworkConfiguration'
+        mock_pam_config_record.version = 6
+        mock_pam_config_record.get_typed_field.return_value = None
+        mock_find_records.return_value = [mock_pam_config_record]
+
+        mock_resource_record = MagicMock(spec=vault.TypedRecord)
+        mock_resource_record.record_uid = resource_uid
+        mock_resource_record.record_type = 'pamMachine'
+        mock_resource_record.version = 3
+
+        def _resolve(params, identifier, rec_type=None):
+            if identifier == user_uid:
+                return mock_typed_record
+            if identifier == config_uid:
+                return mock_pam_config_record
+            if identifier == resource_uid:
+                return mock_resource_record
+            return None
+
+        mock_resolve_pam_record.side_effect = _resolve
+
+        mock_resource_dag = MagicMock()
+        mock_resource_dag.linking_dag.has_graph = False
+        mock_resource_dag.record.record_uid = resource_uid
+
+        linked = {'resource': False, 'admin': False}
+        mock_config_dag = MagicMock()
+        mock_config_dag.linking_dag.has_graph = True
+        mock_config_dag.record.record_uid = config_uid
+        mock_config_dag.resource_belongs_to_config.side_effect = lambda uid: linked['resource']
+        mock_config_dag.link_resource_to_config.side_effect = lambda uid: linked.__setitem__('resource', True)
+        mock_config_dag.check_if_resource_has_admin.side_effect = lambda uid: linked['admin']
+
+        def _link_user(u, r, **kw):
+            if kw.get('is_admin'):
+                linked['admin'] = True
+
+        mock_config_dag.link_user_to_resource.side_effect = _link_user
+        mock_config_dag.user_belongs_to_resource.return_value = False
+        mock_config_dag.get_resource_uid.return_value = None
+        mock_config_dag.get_all_admins.return_value = []
+
+        # Resource probe (empty graph) vs config DAG (is_config=True / config uid).
+        mock_TunnelDAG.side_effect = lambda *a, **k: (
+            mock_config_dag if k.get('is_config') or (len(a) > 3 and a[3] == config_uid)
+            else mock_resource_dag
+        )
+        mock_get_keeper_tokens.return_value = (b'token', b'encrypted_key', b'transmission_key')
+
+        kwargs = {
+            'record_name': user_uid,
+            'config': config_uid,
+            'resource': resource_uid,
+            'admin': user_uid,  # self-admin
+            'enable': True,
+            'force': True,
+            'silent': True,
+        }
+
+        self.command.execute(mock_params, **kwargs)
+
+        mock_config_dag.link_resource_to_config.assert_any_call(resource_uid)
+        # Admin ACL must target the resource, never the user itself
+        admin_links = [
+            c for c in mock_config_dag.link_user_to_resource.call_args_list
+            if c.kwargs.get('is_admin') is True
+        ]
+        self.assertTrue(admin_links, 'expected is_admin link onto the resource')
+        for call in admin_links:
+            self.assertEqual(call.args[0], user_uid)
+            self.assertEqual(call.args[1], resource_uid)
+        # No ACL-to-self
+        for call in mock_config_dag.link_user_to_resource.call_args_list:
+            if len(call.args) >= 2:
+                self.assertNotEqual(call.args[0], call.args[1],
+                                    f'ACL-to-self must not occur: {call}')
+        self.assertTrue(mock_router_set_rotation.called)
+
     @patch('keepercommander.vault_extensions.find_records')
     @patch('keepercommander.commands.discoveryrotation.resolve_pam_record')
     @patch('keepercommander.vault.KeeperRecord.load')

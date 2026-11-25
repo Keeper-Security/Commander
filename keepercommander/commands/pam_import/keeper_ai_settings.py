@@ -456,7 +456,8 @@ def set_resource_keeper_ai_settings(
     params: KeeperParams,
     resource_uid: str,
     settings: Dict[str, Any],
-    config_uid: Optional[str] = None
+    config_uid: Optional[str] = None,
+    graph: Optional[DAG] = None,
 ) -> bool:
     """
     Save KeeperAI settings on a PAM resource.
@@ -477,6 +478,9 @@ def set_resource_keeper_ai_settings(
         resource_uid: UID of the PAM resource (pamMachine, pamDatabase, pamDirectory, pamRemoteBrowser)
         settings: Dictionary containing KeeperAI settings to save
         config_uid: Optional PAM config UID. If not provided, will be looked up.
+        graph: Optional caller-owned DAG holding the resource vertex (batch
+            import). When given, the edge is written onto that graph and the
+            caller is responsible for persisting it.
 
     Returns:
         True if settings were saved successfully, False otherwise.
@@ -493,6 +497,12 @@ def set_resource_keeper_ai_settings(
 
     encrypted_content = encrypt_aes(json.dumps(settings).encode(), record_key)
 
+    # During a batch import the resource vertex exists only in the caller's
+    # deferred graph until the final flush, so neither krouter nor a
+    # server-loaded DAG can find it yet.
+    if graph is not None:
+        return _write_resource_data_edge(graph, resource_uid, 'ai_settings', encrypted_content)
+
     # krouter's configure_resource only writes a settings edge when it loads the
     # resource's existing edges (loopEdges), which it does only for requests that
     # carry meta/jit/connection (UserRest.kt). A keeperAiSettings-only request
@@ -500,13 +510,15 @@ def set_resource_keeper_ai_settings(
     # Vault avoids this by always sending meta alongside the AI settings, so mirror
     # that: include the resource's current meta in the same request. When the
     # resource is not in the DAG yet (first link), bootstrap v1 meta instead.
-    from ..tunnel.port_forward.TunnelGraph import build_resource_meta_v1
+    from ..tunnel.port_forward.TunnelGraph import build_configure_resource_meta
 
     current_meta = get_resource_settings(
         params, resource_uid, 'meta', resolved_config_uid, quiet_if_missing_vertex=True)
-    if not isinstance(current_meta, dict):
-        current_meta = build_resource_meta_v1({}, False)
-    meta_bytes = json.dumps(current_meta).encode()
+    # Always send v1 meta: a versionless payload after a prior v1 write is rejected
+    # by krouter ("Decreasing the version of a resource is not allowed").
+    meta_bytes = json.dumps(build_configure_resource_meta(
+        current_meta if isinstance(current_meta, dict) else None
+    )).encode()
 
     # Primary: Layer-B configure_resource (permission-checked).
     from ..pam.router_helper import router_configure_resource, get_router_url
@@ -575,6 +587,40 @@ def _resolve_resource_settings_inputs(
     return record_key, config_uid
 
 
+def _write_resource_data_edge(
+    linking_dag: DAG,
+    resource_uid: str,
+    dag_path: str,
+    encrypted_content: bytes,
+) -> bool:
+    """Deactivate the prior active DATA edge at ``dag_path`` and add a new one.
+
+    Does not save — the caller owns persistence, so this works both for the
+    load/write/save legacy paths and for a caller-supplied deferred graph.
+    """
+    resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
+    if not resource_vertex:
+        logging.warning(f"Resource vertex {resource_uid} not found in DAG")
+        return False
+
+    for edge in resource_vertex.edges:
+        if edge and (edge.edge_type == EdgeType.DATA and
+                     edge.path == dag_path and
+                     edge.active):
+            edge.active = False
+            logging.debug(f"Deactivated existing '{dag_path}' edge (version {edge.version})")
+            break
+
+    resource_vertex.add_data(
+        content=encrypted_content,
+        path=dag_path,
+        needs_encryption=False,
+        is_encrypted=True,
+        modified=True,
+    )
+    return True
+
+
 def _set_resource_keeper_ai_settings_legacy(
     params: KeeperParams,
     resource_uid: str,
@@ -612,27 +658,8 @@ def _set_resource_keeper_ai_settings_legacy(
         )
         linking_dag.load()
 
-        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
-        if not resource_vertex:
-            logging.warning(f"Resource vertex {resource_uid} not found in DAG")
+        if not _write_resource_data_edge(linking_dag, resource_uid, 'ai_settings', encrypted_content):
             return False
-
-        # Find and deactivate existing 'ai_settings' edge for proper versioning
-        for edge in resource_vertex.edges:
-            if edge and (edge.edge_type == EdgeType.DATA and
-                         edge.path == 'ai_settings' and
-                         edge.active):
-                edge.active = False
-                logging.debug(f"Deactivated existing 'ai_settings' edge (version {edge.version})")
-                break
-
-        resource_vertex.add_data(
-            content=encrypted_content,
-            path='ai_settings',
-            needs_encryption=False,
-            is_encrypted=True,
-            modified=True,
-        )
         linking_dag.save()
 
         logging.debug(f"Saved KeeperAI settings via legacy DAG-write for {resource_uid}")
@@ -714,7 +741,8 @@ def set_resource_jit_settings(
     resource_uid: str,
     settings: Dict[str, Any],
     config_uid: Optional[str] = None,
-    allow_empty: bool = False
+    allow_empty: bool = False,
+    graph: Optional[DAG] = None,
 ) -> bool:
     """
     Save JIT settings on a PAM resource.
@@ -724,6 +752,9 @@ def set_resource_jit_settings(
     behavior matches `set_resource_keeper_ai_settings` — see its docstring
     and `KEEPER_DAG_LB_FALLBACK`. Same shape, `jit_settings` instead of
     `ai_settings`.
+
+    `graph` has the same meaning as in `set_resource_keeper_ai_settings`: a
+    caller-owned DAG to write into, persisted by the caller.
     """
     # Empty-settings short-circuit retains the legacy semantics.
     if not isinstance(settings, dict):
@@ -739,6 +770,9 @@ def set_resource_jit_settings(
     record_key, resolved_config_uid = common
 
     encrypted_content = encrypt_aes(json.dumps(settings).encode(), record_key)
+
+    if graph is not None:
+        return _write_resource_data_edge(graph, resource_uid, 'jit_settings', encrypted_content)
 
     # Primary: Layer-B configure_resource (permission-checked).
     from ..pam.router_helper import router_configure_resource, get_router_url
@@ -800,26 +834,8 @@ def _set_resource_jit_settings_legacy(
         )
         linking_dag.load()
 
-        resource_vertex = linking_dag.get_vertex_by_uid(resource_uid)
-        if not resource_vertex:
-            logging.warning(f"Resource vertex {resource_uid} not found in DAG")
+        if not _write_resource_data_edge(linking_dag, resource_uid, 'jit_settings', encrypted_content):
             return False
-
-        for edge in resource_vertex.edges:
-            if edge and (edge.edge_type == EdgeType.DATA and
-                         edge.path == 'jit_settings' and
-                         edge.active):
-                edge.active = False
-                logging.debug(f"Deactivated existing 'jit_settings' edge (version {edge.version})")
-                break
-
-        resource_vertex.add_data(
-            content=encrypted_content,
-            path='jit_settings',
-            needs_encryption=False,
-            is_encrypted=True,
-            modified=True,
-        )
         linking_dag.save()
 
         logging.debug(f"Saved JIT settings via legacy DAG-write for {resource_uid}")

@@ -304,6 +304,19 @@ class TestComposeBuilder(unittest.TestCase):
         ports = self.doc["services"]["db-mariadb-1"]["ports"]
         self.assertEqual(ports[0]["published"], 33306)
 
+    def test_db_data_dirs_use_tmpfs(self):
+        """Ephemeral data dirs keep compose/vault passwords in sync across recreates."""
+        self.assertEqual(
+            self.doc["services"]["db-mysql-1"]["tmpfs"], ["/var/lib/mysql"])
+        self.assertEqual(
+            self.doc["services"]["db-mariadb-1"]["tmpfs"], ["/var/lib/mysql"])
+        # postgres:latest (PG18+) VOLUME is /var/lib/postgresql (not .../data).
+        self.assertEqual(
+            self.doc["services"]["db-postgres-1"]["tmpfs"],
+            ["/var/lib/postgresql"])
+        # MSSQL 2022 runs as non-root mssql — tmpfs on /var/opt/mssql breaks boot.
+        self.assertNotIn("tmpfs", self.doc["services"]["db-mssql"])
+
     def test_yq_roundtrips_all_special_chars(self):
         # Every special char (incl. ' $ \ " ` etc.) must survive YAML parsing
         # and docker-compose interpolation back to the original value.
@@ -364,6 +377,122 @@ class TestFileOutput(unittest.TestCase):
         before = os.stat(seccomp).st_mtime
         self._run()  # second run must not overwrite seccomp
         self.assertEqual(os.stat(seccomp).st_mtime, before)
+
+
+@unittest.skipIf(skip_tests, skip_reason)
+class TestPlaygroundBatchObjects(unittest.TestCase):
+    """Playground now builds Pam* objects for BatchPamImportEngine."""
+
+    def setUp(self):
+        from unittest.mock import MagicMock
+        from keepercommander import utils
+        self.params = MagicMock()
+        self.params.record_cache = {}
+        self.params.record_rotation_cache = {}
+        self.project = {
+            "options": {"project_name": "Batch Playground"},
+            "folders": {
+                "users_folder_uid": utils.generate_uid(),
+                "resources_folder_uid": utils.generate_uid(),
+            },
+            "pam_config": {"pam_config_uid": utils.generate_uid()},
+        }
+        self.session = pg.PlaygroundSession(self.params, self.project)
+
+    def test_build_resources_count_and_titles(self):
+        resources = self.session.build_resources()
+        self.assertEqual(len(resources), 11)
+        titles = {r.title for r in resources}
+        self.assertIn("MySQL Database", titles)
+        self.assertIn("Bing Remote Browser", titles)
+        self.assertIn("OpenLDAP Directory", titles)
+        self.assertNotIn("MongoDB Database", titles)
+
+    def test_assign_uids_and_resolve_admin(self):
+        from keepercommander.commands.pam_import.batch_pipeline import assign_uids
+        from keepercommander.commands.pam_import.base import (
+            get_admin_credential,
+            get_launch_credential,
+        )
+
+        resources = self.session.build_resources()
+        assign_uids(resources, only_new=False)
+        self.session.resources = resources
+        self.session._resolve_refs()
+        mysql = next(r for r in resources if r.title == "MySQL Database")
+        admin_uid = get_admin_credential(mysql, True)
+        self.assertTrue(admin_uid)
+        admin = next(u for u in mysql.users if u.title == "MySQL Admin User")
+        self.assertEqual(admin_uid, admin.uid)
+        self.assertEqual(get_launch_credential(mysql, True), admin.uid)
+        # Admin credential only — no rotation (no Rotate Now on MySQL Admin).
+        self.assertIsNone(admin.rotation_settings)
+        rot = next(u for u in mysql.users if u.title == "MySQL Rotation User")
+        self.assertEqual(rot.rotation_settings.resourceUid, mysql.uid)
+        mariadb = next(r for r in resources if r.title == "MariaDB Database")
+        mdb_admin = next(u for u in mariadb.users if u.title == "MariaDB Admin User")
+        self.assertIsNone(mdb_admin.rotation_settings)
+        mdb_rot = next(u for u in mariadb.users if u.title == "MariaDB Rotation User")
+        self.assertIsNotNone(mdb_rot.rotation_settings)
+        telnet = next(r for r in resources if r.title == "Telnet Machine")
+        self.assertIsNone(telnet.users[0].rotation_settings)
+        ssh = next(r for r in resources if r.title == "SSH Machine with Password Access")
+        self.assertIsNotNone(ssh.users[0].rotation_settings)
+        ldap = next(r for r in resources if r.title == "OpenLDAP Directory")
+        ldap_admin = next(u for u in ldap.users if u.title == "OpenLDAP Admin")
+        self.assertIsNone(ldap_admin.rotation_settings)
+        ldap_rot = next(u for u in ldap.users if u.title == "OpenLDAP User (fry)")
+        self.assertIsNotNone(ldap_rot.rotation_settings)
+        # Launch button requires connections=on in DAG options
+        opts = mysql.pam_settings.options
+        self.assertEqual(opts.connections.value, "on")
+        self.assertEqual(opts.tunneling.value, "on")
+
+    def test_openldap_batch_fields_match_sequential_create_record(self):
+        """Batch must emit f.directoryType= (not f.text.directoryType=) + full DNs.
+
+        Wrong field type left directoryType empty for KSM → OpenLDAP rotation
+        failed with gateway_kdnrm_dir_user_no_exist_by_dn.
+        """
+        from keepercommander.commands.pam_import.pam_record_build import (
+            build_record_add_kwargs,
+        )
+
+        resources = self.session.build_resources()
+        ldap = next(r for r in resources if r.title == "OpenLDAP Directory")
+        dir_fields = build_record_add_kwargs(ldap, "folder").get("fields") or []
+        self.assertIn("f.directoryType=openldap", dir_fields)
+        self.assertFalse(
+            any(f.startswith("f.text.directoryType=") for f in dir_fields),
+            dir_fields,
+        )
+        mysql = next(r for r in resources if r.title == "MySQL Database")
+        mysql_fields = build_record_add_kwargs(mysql, "folder").get("fields") or []
+        self.assertIn("f.databaseType=mysql", mysql_fields)
+        self.assertFalse(
+            any(f.startswith("f.text.databaseType=") for f in mysql_fields),
+            mysql_fields,
+        )
+        fry = next(u for u in ldap.users if u.title == "OpenLDAP User (fry)")
+        user_fields = build_record_add_kwargs(fry, "folder").get("fields") or []
+        self.assertIn(
+            "f.text.distinguishedName=cn=Philip J. Fry,ou=people,dc=planetexpress,dc=com",
+            user_fields,
+        )
+        admin = next(u for u in ldap.users if u.title == "OpenLDAP Admin")
+        admin_fields = build_record_add_kwargs(admin, "folder").get("fields") or []
+        self.assertIn(
+            "f.login=cn=admin,dc=planetexpress,dc=com",
+            admin_fields,
+        )
+
+    def test_simulate_returns_tiers(self):
+        plan = self.session.simulate()
+        self.assertIn("tiers", plan)
+        self.assertTrue(plan["tiers"])
+        resource_tier = next(t for t in plan["tiers"] if t["name"] == "resources")
+        self.assertEqual(resource_tier["count"], 11)
+        self.assertEqual(len(plan["step2_dispatch"]), 11)
 
 
 if __name__ == "__main__":

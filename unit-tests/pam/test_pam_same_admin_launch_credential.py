@@ -77,7 +77,8 @@ def test_set_launch_credentials_keeps_is_admin_on_stale_graph():
     assert len(rq.connectUsers.uids) == 1
     assert bytes(rq.adminUid) == bytes(rq.connectUsers.uids[0])   # admin + launch in ONE request
     content = _written_acl_content(user_vertex)
-    assert content == {'belongs_to': True, 'is_launch_credential': True, 'is_admin': True}
+    # Web Vault parity: admin/launch ACL carries no forced belongs_to.
+    assert content == {'is_launch_credential': True, 'is_admin': True}
 
 
 def test_set_launch_credentials_without_admin_leaves_admin_unset():
@@ -108,12 +109,65 @@ def test_set_launch_credentials_admin_only_sends_admin_with_empty_connect_users(
     user_vertex.belongs_to.assert_not_called()
 
 
-def test_extend_existing_resources_loop_uses_set_launch_credentials():
-    """The existing-resources loop must not use the legacy launch link (drops is_admin
-    when admin == launch == newly created user)."""
-    import inspect
-    from keepercommander.commands.pam_import import extend
-    src = inspect.getsource(extend.PAMProjectExtendCommand)
-    tail = src.split("for mach in existing_resources:", 1)[1].split("link machine -> pamDirectory", 1)[0]
-    assert "tdag.set_launch_credentials(mach.uid, launch_uid=launch_uid, admin_uid=(admin_uid or None))" in tail
-    assert "is_launch_credential=True" not in tail
+def _step2_mach(admin=None, launch=None, new_users=(), tag='new', rbi=False):
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from keepercommander.commands.pam_import.base import PamUserObject, PamRemoteBrowserObject
+    users = []
+    for uid in new_users:
+        u = MagicMock(spec=PamUserObject)
+        u.uid = uid
+        u._extend_tag = 'new'
+        u.rotation_settings = None
+        users.append(u)
+    conn = SimpleNamespace(userRecordUid=admin or '', launchRecordUid=launch or '',
+                           launch_credentials=None, userRecords=None)
+    mach = MagicMock(spec=PamRemoteBrowserObject if rbi else object)
+    mach.uid = 'RES' * 7 + 'R'
+    mach.users = users
+    mach._extend_tag = tag
+    mach.pam_settings = SimpleNamespace(connection=conn)
+    return mach
+
+
+def test_batch_step2_full_admin_only_reasserts_admin_without_launch():
+    """KC-1525: admin-only resource -> set_launch_credentials(launch=None, admin=admin)."""
+    from unittest.mock import MagicMock, patch
+    from keepercommander.commands.pam_import import batch_step2
+    mach = _step2_mach(admin=SHARED_USER_UID)
+    tdag = MagicMock()
+    tdag.resource_belongs_to_config.return_value = True
+    with patch.object(batch_step2, '_run_step2_machine'), \
+         patch.object(batch_step2, '_apply_machine_allowed_settings'):
+        batch_step2.run_step2_full(MagicMock(), tdag, mach, 'CFG', MagicMock(), '', '')
+    tdag.set_launch_credentials.assert_called_once_with(
+        mach.uid, launch_uid=None, admin_uid=SHARED_USER_UID)
+
+
+def test_batch_step2_extend_existing_never_sets_launch_or_admin():
+    """Extend does not update existing machines (updates are left to a separate update command): a NEW user named as
+    launch / admin credential of an EXISTING machine is not applied (no set_launch_credentials, no is_admin link).
+    Replaces the earlier KC-1525 behaviour that applied the launch credential (and so replaced the existing one)."""
+    from unittest.mock import MagicMock
+    from keepercommander.commands.pam_import import batch_step2
+    new_uid = 'N' * 22
+    mach = _step2_mach(admin=new_uid, launch=new_uid, new_users=[new_uid], tag='existing')
+    tdag = MagicMock()
+    tdag.resource_belongs_to_config.return_value = True
+    tdag.user_belongs_to_resource.return_value = False
+    batch_step2.run_step2_extend_existing(MagicMock(), tdag, mach, 'CFG', MagicMock())
+    tdag.set_launch_credentials.assert_not_called()
+    assert all('is_launch_credential' not in c.kwargs and c.kwargs.get('is_admin') is not True
+               for c in tdag.link_user_to_resource.call_args_list)
+
+
+def test_batch_step2_extend_existing_leaves_existing_launch_untouched():
+    """Launch/admin referencing pre-existing users must not be rewritten by extend."""
+    from unittest.mock import MagicMock
+    from keepercommander.commands.pam_import import batch_step2
+    mach = _step2_mach(admin=SHARED_USER_UID, launch=SHARED_USER_UID,
+                       new_users=['N' * 22], tag='existing')
+    tdag = MagicMock()
+    tdag.resource_belongs_to_config.return_value = True
+    batch_step2.run_step2_extend_existing(MagicMock(), tdag, mach, 'CFG', MagicMock())
+    tdag.set_launch_credentials.assert_not_called()

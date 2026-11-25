@@ -1224,7 +1224,7 @@ class RecordGetUidCommand(Command):
 
             # Extract allowedSettings from vertex content
             try:
-                content = record_vertex.content_as_dict
+                content = get_vertex_content(record_vertex)     # newest `meta` edge, not just the last-written one
                 ro['dagDebug']['vertex_content'] = content
                 if content and 'allowedSettings' in content:
                     allowed_settings = content['allowedSettings']

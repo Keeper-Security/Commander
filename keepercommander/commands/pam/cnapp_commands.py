@@ -65,6 +65,18 @@ QUEUE_STATUS_BY_ID = {v: k.upper() for k, v in QUEUE_STATUS_BY_NAME.items()}
 # in vault/cloudSecurityUtils.ts — keep the strings in sync.
 CNAPP_ENCRYPTION_KEY_LABEL = 'Encryption Key'
 
+# Typed field of the `cnappConfiguration` record type (Web Vault 18.8.0). Value (one element):
+# {cnapp_provider, encryption_key, encrypter_base_url, secret_key_gen_api_token, provider_data: {...}}.
+# The Web Vault reads `encryption_key` from it FIRST and falls back to the legacy secure-note fields.
+CNAPP_SETTINGS_FIELD = 'cnappSettings'
+
+
+def _cnapp_settings(record):  # type: (vault.TypedRecord) -> dict
+    """The `cnappSettings` value of a CNAPP configuration record, {} when absent or not an object."""
+    field = record.get_typed_field(CNAPP_SETTINGS_FIELD)
+    value = field.value[0] if field and field.value else None
+    return value if isinstance(value, dict) else {}
+
 
 def _decode_aes_key(raw):  # type: (str) -> bytes|None
     """Encrypter keys are typically `openssl rand -base64 32`. Try standard base64 first,
@@ -97,7 +109,17 @@ def _load_encrypter_key(params, config_record_uid):
         return None
     if not isinstance(record, vault.TypedRecord):
         return None
-    # Match vault/cloudSecurityUtils.ts: prefer `secret` then `note` labeled "Encryption Key",
+    # Match vault/cloudSecurityUtils.ts: the `cnappSettings` field of a `cnappConfiguration` record comes first.
+    settings_raw = _cnapp_settings(record).get('encryption_key')
+    if isinstance(settings_raw, str) and settings_raw.strip():
+        key = _decode_aes_key(settings_raw)
+        if key:
+            return key
+        logger.warning(
+            'CNAPP: cnappSettings.encryption_key on record %s is not a valid AES-256 key; trying the legacy fields.',
+            config_record_uid,
+        )
+    # Legacy secure note: prefer `secret` then `note` labeled "Encryption Key",
     # then the first unlabeled `note` field only when no labeled key field exists.
     labeled_raws = []
     secret_field = record.get_typed_field('secret', CNAPP_ENCRYPTION_KEY_LABEL)
