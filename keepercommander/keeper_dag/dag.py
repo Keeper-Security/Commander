@@ -1127,6 +1127,9 @@ class DAG:
             self._make_delta_graph()
 
         data_list = []
+        # The edges behind data_list, same order. An edge stays flagged as modified until the batch that carries it
+        # was accepted by the web service, so a failed batch (and every batch after it) is sent again by the next save().
+        edge_list = []
 
         def _add_data(vertex):
             self.debug(f"processing vertex {vertex.uid}, key {vertex.key}, type {vertex.vertex_type}", level=3)
@@ -1197,9 +1200,7 @@ class DAG:
                     path=edge.path)
 
                 data_list.append(dag_data)
-
-                # Flag that this edge is no longer modified.
-                edge.modified = False
+                edge_list.append(edge)
 
         # Add the root vertex first
         _add_data(self.get_root)
@@ -1234,12 +1235,16 @@ class DAG:
                 # Remove them from the data list
                 if self.save_batch_count > 0:
                     batch_list = data_list[:self.save_batch_count]
+                    batch_edges = edge_list[:self.save_batch_count]
                     data_list = data_list[self.save_batch_count:]
+                    edge_list = edge_list[self.save_batch_count:]
 
                 # Else take everything and clear the data list (else infinite loop)
                 else:
                     batch_list = data_list
+                    batch_edges = edge_list
                     data_list = []
+                    edge_list = []
 
                 # Little sanity check
                 if len(batch_list) == 0:
@@ -1264,6 +1269,10 @@ class DAG:
                 except Exception as err:
                     self.logger.error(f"could not add data to graph for batch {batch_num}: {err}")
                     raise err
+
+                # The batch was accepted: only now are its edges no longer modified.
+                for sent_edge in batch_edges:
+                    sent_edge.modified = False
 
                 batch_num += 1
 
