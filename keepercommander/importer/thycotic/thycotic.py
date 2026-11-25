@@ -2407,7 +2407,7 @@ class ThycoticAuth:
         return rs.status_code, message
 
     @classmethod
-    def requires_checkout(cls, rs):  # type: (Optional[requests.Response]) -> bool
+    def _is_checkout_required(cls, rs):  # type: (Optional[requests.Response]) -> bool
         """True when the server refused a read because the secret must be checked out."""
         if rs is None or rs.status_code != 400:
             return False
@@ -2417,70 +2417,78 @@ class ThycoticAuth:
     def read_secret(self, secret_id):  # type: (Any) -> ReadSecretResult
         """Read a secret with GET /v1/secrets/{id}.
 
-        The secret is first read without checkout. Only when the server answers
-        that the secret requires checkout is the read retried with autoCheckout
-        and autoCheckIn. Other errors are returned as they are.
+        The first read is sent without checkout. Only when the server answers
+        400 with API_SecretRequiresCheckout is it sent again with autoCheckout
+        and autoCheckIn.
         """
         endpoint = f'/v1/secrets/{secret_id}'
         try:
-            secret, error = self._read_entity(with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
-            if error == (400, SECRET_REQUIRES_CHECKOUT_ERROR):
-                secret, error = self._read_entity(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
+            secret, status, message, error_code = self._read_entity(
+                with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
+            if status == 400 and SECRET_REQUIRES_CHECKOUT_ERROR in (error_code, message):
+                secret, status, message, _ = self._read_entity(
+                    with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
         except Exception as e:
             logging.info('"%s" error: %s', endpoint, str(e))
             return ReadSecretResult.failed('N/A', str(e))
         if secret is not None:
             return ReadSecretResult.ok(secret)
-        status, message = error or ('N/A', 'Empty response')
         return ReadSecretResult.failed(status, message)
 
     def read_secret_field(self, secret_id, slug):  # type: (Any, str) -> requests.Response
         """Read one secret field with GET /v1/secrets/{id}/fields/{slug}.
 
-        The field is first read without checkout. Only when the server answers
-        that the secret requires checkout is the read retried with autoCheckout
+        The first read is sent without checkout. Only when the server answers
+        400 with API_SecretRequiresCheckout is it sent again with autoCheckout
         and autoCheckIn. Request errors propagate to the caller.
         """
         endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
-        response = None
-        for mode in (SecretAccessMode.PLAIN, SecretAccessMode.CHECKOUT):
-            if response is not None:
-                response.close()
-            target = with_secret_access_params(endpoint, mode)
-            logging.info('Reading "%s"', target)
-            response = self.thycotic_get(target)
-            if not self.requires_checkout(response):
-                break
-        return response
+        rs = self.thycotic_get(with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
+        if self._is_checkout_required(rs):
+            rs.close()
+            rs = self.thycotic_get(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
+        return rs
+
+    def api_url(self, endpoint):  # type: (str) -> str
+        return self.base_url + 'api' + endpoint
 
     def thycotic_entity(self, endpoint):  # type: (str) -> Optional[dict]
         return self._read_entity(endpoint)[0]
 
-    def _read_entity(self, endpoint):  # type: (str) -> Tuple[Optional[dict], Optional[Tuple[Any, str]]]
+    def _read_entity(self, endpoint):
+        # type: (str) -> Tuple[Optional[dict], Any, Optional[str], Optional[str]]
+        """GET an API endpoint and parse the JSON body.
+
+        Returns (entity, None, None, None) on success, or
+        (None, status, message, error_code) describing the failure.
+        status is 'N/A' when no HTTP response was received. error_code is the
+        BadRequestResponse errorCode field, or '' when the body has none.
+        """
         self.ensure_auth_token()
         headers = {
             'Accept': 'application/json',
             'Authorization': f'Bearer {self.access_token}'
         }
         try:
-            rs = self._get(self.base_url + 'api' + endpoint, headers=headers)
+            rs = self._get(self.api_url(endpoint), headers=headers)
         except Exception as e:
             logging.warning('"%s" error: %s', endpoint, str(e))
             time.sleep(10)
             try:
-                rs = self._get(self.base_url + 'api' + endpoint, headers=headers)
+                rs = self._get(self.api_url(endpoint), headers=headers)
             except Exception as e:
                 logging.warning('Another "%s" error: %s', endpoint, str(e))
                 time.sleep(10)
-                return None, ('N/A', str(e))
+                return None, 'N/A', str(e), ''
         if rs.status_code != 200:
             self._log_thycotic_response(endpoint, rs, f'returned {rs.status_code}')
-            return None, self.response_error(rs)
+            status, message = self.response_error(rs)
+            return None, status, message, self._json_message(rs, 'errorCode')
         try:
-            return rs.json(), None
+            return rs.json(), None, None, None
         except ValueError as e:
             self._log_thycotic_response(endpoint, rs, f'invalid JSON: {e}')
-            return None, (rs.status_code, 'Response is not valid JSON')
+            return None, rs.status_code, 'Response is not valid JSON', ''
 
     def thycotic_get(self, endpoint):    # type: (str) -> requests.Response
         self.ensure_auth_token()

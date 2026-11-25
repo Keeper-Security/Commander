@@ -136,6 +136,17 @@ class TestSecretAccessParams(unittest.TestCase):
         self.assertNotIn('noAutoCheckout', dict(params))
 
 
+class TestSecretAccessMode(unittest.TestCase):
+    def test_each_mode_sends_its_params(self):
+        self.assertEqual(with_secret_access_params('/v1/secrets/42', SecretAccessMode.PLAIN),
+                         f'/v1/secrets/42?{PLAIN_QUERY}')
+        self.assertEqual(with_secret_access_params('/v1/secrets/42', SecretAccessMode.CHECKOUT),
+                         f'/v1/secrets/42?{CHECKOUT_QUERY}')
+
+    def test_default_mode_is_plain(self):
+        self.assertEqual(with_secret_access_params('/v1/secrets/42'), f'/v1/secrets/42?{PLAIN_QUERY}')
+
+
 class TestAccessParams(unittest.TestCase):
     def test_other_query_params_are_kept(self):
         endpoint = with_secret_access_params('/v1/secrets/42?includeInactive=true', mode=SecretAccessMode.PLAIN)
@@ -169,6 +180,7 @@ class TestReadSecret(unittest.TestCase):
         self.assertIsNone(message)
         self.assertEqual(get.call_count, 1)
         self.assertTrue(get.call_args[0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
+        self.assertEqual(get.call_args[1]['headers']['Accept'], 'application/json')
 
     def test_checkout_required_retries_with_checkout(self):
         secret_body = _response(200, '{"id": 42}', {'id': 42})
@@ -225,6 +237,13 @@ class TestReadSecret(unittest.TestCase):
         self.assertIsNone(secret)
         self.assertEqual(status, 502)
         self.assertEqual(message, '<html>Bad Gateway</html>')
+
+    def test_invalid_json_on_200_is_returned_as_error(self):
+        garbled = _response(200, '<html>login</html>')
+        with mock.patch(REQUESTS_GET, return_value=garbled):
+            secret, status, message = _unpack(_auth().read_secret(42))
+        self.assertIsNone(secret)
+        self.assertEqual((status, message), (200, 'Response is not valid JSON'))
 
     def test_network_failure_returns_the_error(self):
         with mock.patch(REQUESTS_GET, side_effect=requests.exceptions.ConnectionError('refused')) as get:
@@ -329,6 +348,43 @@ class TestThycoticEntity(unittest.TestCase):
         sleep = mock.patch(SLEEP)
         sleep.start()
         self.addCleanup(sleep.stop)
+
+    def test_api_url_joins_base_url_and_endpoint(self):
+        self.assertEqual(_auth().api_url('/v1/secrets/42'),
+                         'https://ss.example.com/SecretServer/api/v1/secrets/42')
+
+    def test_read_entity_success_returns_entity_only(self):
+        ok = _response(200, '{"id": 42}', {'id': 42})
+        with mock.patch(REQUESTS_GET, return_value=ok) as get:
+            result = _auth()._read_entity('/v1/secrets/42')
+        self.assertEqual(result, ({'id': 42}, None, None, None))
+        self.assertEqual(get.call_args[1]['headers']['Accept'], 'application/json')
+
+    def test_read_entity_error_returns_status_message_and_error_code(self):
+        body = {'message': 'The requested secret requires checkout.', 'errorCode': CHECKOUT_ERROR}
+        denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
+        with mock.patch(REQUESTS_GET, return_value=denied):
+            result = _auth()._read_entity('/v1/secrets/42')
+        self.assertEqual(result, (None, 400, 'The requested secret requires checkout.', CHECKOUT_ERROR))
+
+    def test_read_entity_error_without_error_code(self):
+        denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
+        with mock.patch(REQUESTS_GET, return_value=denied):
+            result = _auth()._read_entity('/v1/secrets/42')
+        self.assertEqual(result, (None, 403, 'Access denied', ''))
+
+    def test_read_entity_invalid_json(self):
+        garbled = _response(200, '<html>login</html>')
+        with mock.patch(REQUESTS_GET, return_value=garbled):
+            result = _auth()._read_entity('/v1/secrets/42')
+        self.assertEqual(result, (None, 200, 'Response is not valid JSON', ''))
+
+    def test_read_entity_network_failure(self):
+        error = requests.exceptions.ConnectionError('refused')
+        with mock.patch(REQUESTS_GET, side_effect=error) as get:
+            result = _auth()._read_entity('/v1/secrets/42')
+        self.assertEqual(result, (None, 'N/A', 'refused', ''))
+        self.assertEqual(get.call_count, 2)
 
     def test_entity_never_adds_checkout_params(self):
         denied = _response(400, '{"message": "Bad request"}', {'message': 'Bad request'})
