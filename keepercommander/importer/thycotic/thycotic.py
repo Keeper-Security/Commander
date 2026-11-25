@@ -59,7 +59,6 @@ PARAM_AUTO_CHECKOUT = 'autoCheckout'
 PARAM_AUTO_CHECK_IN = 'autoCheckIn'
 PARAM_AUTO_COMMENT = 'autoComment'
 PARAM_NO_AUTO_CHECKOUT = 'noAutoCheckout'
-PARAM_FORCE_CHECK_IN = 'forceCheckIn'
 
 PARAM_VALUE_TRUE = 'true'
 PARAM_VALUE_FALSE = 'false'
@@ -73,10 +72,8 @@ SECRET_REQUIRES_CHECKOUT_ERROR = 'API_SecretRequiresCheckout'
 
 # Parameters that check a secret out or in. A read URL replaces any of these
 # already present so the chosen checkout mode is the only one sent.
-# forceCheckIn is never sent: it would end another user's checkout.
 SECRET_ACCESS_PARAM_NAMES = frozenset((
-    PARAM_AUTO_CHECKOUT, PARAM_AUTO_CHECK_IN, PARAM_AUTO_COMMENT,
-    PARAM_FORCE_CHECK_IN, PARAM_NO_AUTO_CHECKOUT,
+    PARAM_AUTO_CHECKOUT, PARAM_AUTO_CHECK_IN, PARAM_AUTO_COMMENT, PARAM_NO_AUTO_CHECKOUT,
 ))
 
 # Plain read: the server must not check the secret out.
@@ -2406,13 +2403,11 @@ class ThycoticAuth:
             message = (rs.text or '').strip().replace('\n', ' ')[:300] or rs.reason or ''
         return rs.status_code, message
 
-    @classmethod
-    def _is_checkout_required(cls, rs):  # type: (Optional[requests.Response]) -> bool
+    @staticmethod
+    def _is_checkout_required(status, error_code, message):
+        # type: (Any, Optional[str], Optional[str]) -> bool
         """True when the server refused a read because the secret must be checked out."""
-        if rs is None or rs.status_code != 400:
-            return False
-        return SECRET_REQUIRES_CHECKOUT_ERROR in (
-            cls._json_message(rs, 'errorCode'), cls._json_message(rs, 'message'))
+        return status == 400 and SECRET_REQUIRES_CHECKOUT_ERROR in (error_code, message)
 
     def read_secret(self, secret_id):  # type: (Any) -> ReadSecretResult
         """Read a secret with GET /v1/secrets/{id}.
@@ -2425,7 +2420,7 @@ class ThycoticAuth:
         try:
             secret, status, message, error_code = self._read_entity(
                 with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
-            if status == 400 and SECRET_REQUIRES_CHECKOUT_ERROR in (error_code, message):
+            if self._is_checkout_required(status, error_code, message):
                 secret, status, message, _ = self._read_entity(
                     with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
         except Exception as e:
@@ -2444,7 +2439,8 @@ class ThycoticAuth:
         """
         endpoint = f'/v1/secrets/{secret_id}/fields/{slug}'
         rs = self.thycotic_get(with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
-        if self._is_checkout_required(rs):
+        if self._is_checkout_required(rs.status_code, self._json_message(rs, 'errorCode'),
+                                      self._json_message(rs, 'message')):
             rs.close()
             rs = self.thycotic_get(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
         return rs
