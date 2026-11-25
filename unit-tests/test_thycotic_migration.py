@@ -6,10 +6,9 @@ from unittest import mock
 import requests
 from keepercommander.importer import commands
 from keepercommander.importer.thycotic.thycotic import (
-    READ_PARAMS_NO_CHECKOUT,
-    READ_PARAMS_WITH_AUTOCHECKOUT,
-    SECRET_ACCESS_COMMENT,
+    ReadSecretResult,
     SecretAccessMode,
+    _EntityResponse,
     ThycoticAttachment,
     ThycoticAuth,
     ThycoticImporter,
@@ -53,13 +52,6 @@ def _response(status_code, text='', json_value=None, reason=''):
 def _checkout_required():
     body = {'message': CHECKOUT_ERROR}
     return _response(400, '{"message": "API_SecretRequiresCheckout"}', body)
-
-
-def _unpack(result):
-    if result.success is not None:
-        assert result.error is None
-        return result.success.secret, None, None
-    return None, result.error.status, result.error.message
 
 
 def _auth():
@@ -119,35 +111,18 @@ class TestLookupDeduplication(unittest.TestCase):
 
 class TestSecretAccessParams(unittest.TestCase):
     def test_plain_read_does_not_check_out(self):
-        self.assertEqual(list(READ_PARAMS_NO_CHECKOUT), [
-            ('autoCheckout', 'false'),
-            ('autoComment', SECRET_ACCESS_COMMENT),
-            ('noAutoCheckout', 'true'),
-        ])
-
-    def test_checkout_read_checks_back_in(self):
-        params = list(READ_PARAMS_WITH_AUTOCHECKOUT)
-        self.assertEqual(params, [
-            ('autoCheckout', 'true'),
-            ('autoCheckIn', 'true'),
-            ('autoComment', SECRET_ACCESS_COMMENT),
-        ])
-        self.assertNotIn('forceCheckIn', dict(params))
-        self.assertNotIn('noAutoCheckout', dict(params))
-
-
-class TestSecretAccessMode(unittest.TestCase):
-    def test_each_mode_sends_its_params(self):
         self.assertEqual(with_secret_access_params('/v1/secrets/42', SecretAccessMode.PLAIN),
                          f'/v1/secrets/42?{PLAIN_QUERY}')
-        self.assertEqual(with_secret_access_params('/v1/secrets/42', SecretAccessMode.CHECKOUT),
-                         f'/v1/secrets/42?{CHECKOUT_QUERY}')
+
+    def test_checkout_read_checks_back_in(self):
+        endpoint = with_secret_access_params('/v1/secrets/42', SecretAccessMode.CHECKOUT)
+        self.assertEqual(endpoint, f'/v1/secrets/42?{CHECKOUT_QUERY}')
+        self.assertNotIn('forceCheckIn', endpoint)
+        self.assertNotIn('noAutoCheckout', endpoint)
 
     def test_default_mode_is_plain(self):
         self.assertEqual(with_secret_access_params('/v1/secrets/42'), f'/v1/secrets/42?{PLAIN_QUERY}')
 
-
-class TestAccessParams(unittest.TestCase):
     def test_other_query_params_are_kept(self):
         endpoint = with_secret_access_params('/v1/secrets/42?includeInactive=true', mode=SecretAccessMode.PLAIN)
         self.assertEqual(endpoint, f'/v1/secrets/42?includeInactive=true&{PLAIN_QUERY}')
@@ -174,10 +149,8 @@ class TestReadSecret(unittest.TestCase):
     def test_plain_read_does_not_check_out(self):
         secret_body = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, return_value=secret_body) as get:
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertEqual(secret, {'id': 42})
-        self.assertIsNone(status)
-        self.assertIsNone(message)
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.ok({'id': 42}))
         self.assertEqual(get.call_count, 1)
         self.assertTrue(get.call_args[0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
         self.assertEqual(get.call_args[1]['headers']['Accept'], 'application/json')
@@ -185,10 +158,8 @@ class TestReadSecret(unittest.TestCase):
     def test_checkout_required_retries_with_checkout(self):
         secret_body = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), secret_body]) as get:
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertEqual(secret, {'id': 42})
-        self.assertIsNone(status)
-        self.assertIsNone(message)
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.ok({'id': 42}))
         self.assertEqual(get.call_count, 2)
         self.assertTrue(get.call_args_list[0][0][0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
         self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
@@ -197,9 +168,8 @@ class TestReadSecret(unittest.TestCase):
         body = {'message': 'Comment is required.', 'errorCode': 'API_CommentRequired'}
         denied = _response(400, '{"message": "Comment is required."}', body)
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual((status, message), (400, 'Comment is required.'))
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed(400, 'Comment is required.'))
         self.assertEqual(get.call_count, 1)
         self.assertNotIn('autoCheckout=true', get.call_args[0][0])
 
@@ -208,63 +178,64 @@ class TestReadSecret(unittest.TestCase):
         denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
         ok = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, side_effect=[denied, ok]) as get:
-            secret, _, _ = _unpack(_auth().read_secret(42))
-        self.assertEqual(secret, {'id': 42})
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.ok({'id': 42}))
         self.assertEqual(get.call_count, 2)
 
     def test_failed_checkout_read_returns_the_retry_error(self):
         failed = _response(500, '{"message": "boom"}', {'message': 'boom'})
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), failed]) as get:
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual((status, message), (500, 'boom'))
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed(500, 'boom'))
         self.assertEqual(get.call_count, 2)
         self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v1/secrets/42?{CHECKOUT_QUERY}'))
 
     def test_other_error_is_not_retried_as_checkout(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, return_value=denied) as get:
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual((status, message), (403, 'Access denied'))
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed(403, 'Access denied'))
         self.assertEqual(get.call_count, 1)
         self.assertNotIn('autoCheckout=true', get.call_args[0][0])
 
     def test_non_json_secret_error_is_returned(self):
         html = _response(502, '<html>Bad Gateway</html>', reason='Bad Gateway')
         with mock.patch(REQUESTS_GET, return_value=html):
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual(status, 502)
-        self.assertEqual(message, '<html>Bad Gateway</html>')
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed(502, '<html>Bad Gateway</html>'))
 
     def test_invalid_json_on_200_is_returned_as_error(self):
         garbled = _response(200, '<html>login</html>')
         with mock.patch(REQUESTS_GET, return_value=garbled):
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual((status, message), (200, 'Response is not valid JSON'))
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed(200, 'Response is not valid JSON'))
 
     def test_network_failure_returns_the_error(self):
         with mock.patch(REQUESTS_GET, side_effect=requests.exceptions.ConnectionError('refused')) as get:
-            secret, status, message = _unpack(_auth().read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual(status, 'N/A')
-        self.assertEqual(message, 'refused')
+            result = _auth().read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed('N/A', 'refused'))
         self.assertEqual(get.call_count, 2)
 
     def test_error_reports_exception_from_token_refresh(self):
         auth = _auth()
         with mock.patch.object(auth, 'ensure_auth_token', side_effect=Exception('refresh failed')), \
                 mock.patch(REQUESTS_GET) as get:
-            secret, status, message = _unpack(auth.read_secret(42))
-        self.assertIsNone(secret)
-        self.assertEqual(status, 'N/A')
-        self.assertEqual(message, 'refresh failed')
+            result = auth.read_secret(42)
+        self.assertEqual(result, ReadSecretResult.failed('N/A', 'refresh failed'))
         get.assert_not_called()
 
 
 class TestReadSecretField(unittest.TestCase):
+    def test_ok_field_response_body_is_not_parsed(self):
+        # Regression: a 200 OK streamed field (attachment, SSH key) must be handed
+        # back unread; only a 400 body is inspected for the checkout error.
+        ok = _response(200, 'key')
+        with mock.patch(REQUESTS_GET, return_value=ok) as get:
+            rs = _auth().read_secret_field(42, 'private-key')
+        self.assertIs(rs, ok)
+        self.assertEqual(get.call_count, 1)
+        ok.json.assert_not_called()
+
     def test_plain_field_read_does_not_check_out(self):
         ok = _response(200, 'key')
         with mock.patch(REQUESTS_GET, return_value=ok) as get:
@@ -357,7 +328,7 @@ class TestThycoticEntity(unittest.TestCase):
         ok = _response(200, '{"id": 42}', {'id': 42})
         with mock.patch(REQUESTS_GET, return_value=ok) as get:
             result = _auth()._read_entity('/v1/secrets/42')
-        self.assertEqual(result, ({'id': 42}, None, None, None))
+        self.assertEqual(result, _EntityResponse(data={'id': 42}))
         self.assertEqual(get.call_args[1]['headers']['Accept'], 'application/json')
 
     def test_read_entity_error_returns_status_message_and_error_code(self):
@@ -365,25 +336,26 @@ class TestThycoticEntity(unittest.TestCase):
         denied = _response(400, '{"errorCode": "API_SecretRequiresCheckout"}', body)
         with mock.patch(REQUESTS_GET, return_value=denied):
             result = _auth()._read_entity('/v1/secrets/42')
-        self.assertEqual(result, (None, 400, 'The requested secret requires checkout.', CHECKOUT_ERROR))
+        self.assertEqual(result, _EntityResponse(
+            status=400, message='The requested secret requires checkout.', error_code=CHECKOUT_ERROR))
 
     def test_read_entity_error_without_error_code(self):
         denied = _response(403, '{"message": "Access denied"}', {'message': 'Access denied'})
         with mock.patch(REQUESTS_GET, return_value=denied):
             result = _auth()._read_entity('/v1/secrets/42')
-        self.assertEqual(result, (None, 403, 'Access denied', ''))
+        self.assertEqual(result, _EntityResponse(status=403, message='Access denied', error_code=''))
 
     def test_read_entity_invalid_json(self):
         garbled = _response(200, '<html>login</html>')
         with mock.patch(REQUESTS_GET, return_value=garbled):
             result = _auth()._read_entity('/v1/secrets/42')
-        self.assertEqual(result, (None, 200, 'Response is not valid JSON', ''))
+        self.assertEqual(result, _EntityResponse(status=200, message='Response is not valid JSON', error_code=''))
 
     def test_read_entity_network_failure(self):
         error = requests.exceptions.ConnectionError('refused')
         with mock.patch(REQUESTS_GET, side_effect=error) as get:
             result = _auth()._read_entity('/v1/secrets/42')
-        self.assertEqual(result, (None, 'N/A', 'refused', ''))
+        self.assertEqual(result, _EntityResponse(status='N/A', message='refused', error_code=''))
         self.assertEqual(get.call_count, 2)
 
     def test_entity_never_adds_checkout_params(self):
