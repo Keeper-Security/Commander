@@ -3,7 +3,7 @@ from unittest import TestCase
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-from keepercommander import crypto, utils
+from keepercommander import constants, crypto, utils
 
 
 class TestCrypto(TestCase):
@@ -139,19 +139,36 @@ class TestCrypto(TestCase):
     def test_derive_key_hash_v1(self):
         password = 'q2rXmNBFeLwAEX55hVVTfg'
         salt = utils.base64_url_decode('Ozv5_XSBgw-XSrDosp8Y1A')
-        iterations = 1000
-        expected_key = utils.base64_url_decode('nu911pKhOIeX_lToXa4uIUuMPg1pj_3ZGpGmd7OjvRs')
+        iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+        expected_key = utils.base64_url_decode('6fjwSw9iwfVDNyJLOdQrvDjcDY1RrG-lAlSy2ZVeqLU')
         key_hash = crypto.derive_keyhash_v1(password, salt, iterations)
         self.assertEqual(key_hash, expected_key)
 
     def test_derive_key_hash_v2(self):
         password = 'q2rXmNBFeLwAEX55hVVTfg'
         salt = utils.base64_url_decode('Ozv5_XSBgw-XSrDosp8Y1A')
-        iterations = 1000
-        expected_key = utils.base64_url_decode('rXE9OHv_gcvUHdWuBIkyLsRDXT1oddQCzf6PrIECl2g')
+        iterations = constants.PBKDF2_LEGACY_MIN_ITERATIONS
+        expected_key = utils.base64_url_decode('8YSP1LX8WKWL7nJGbk9puj1RnLymrNxChax5W2UndqQ')
         domain = '1oZZl0fKjU4'
         key_hash = crypto.derive_keyhash_v2(domain, password, salt, iterations)
         self.assertEqual(key_hash, expected_key)
+
+    def test_derive_key_v1_rejects_short_salt(self):
+        with self.assertRaises(ValueError):
+            crypto.derive_key_v1('password', bytes(15), constants.PBKDF2_LEGACY_MIN_ITERATIONS)
+
+    def test_derive_key_v1_rejects_low_iterations(self):
+        with self.assertRaises(ValueError):
+            crypto.derive_key_v1('password', bytes(16), constants.PBKDF2_LEGACY_MIN_ITERATIONS - 1)
+
+    def test_derive_keyhash_v2_rejects_short_salt(self):
+        with self.assertRaises(ValueError):
+            crypto.derive_keyhash_v2('data_key', 'password', bytes(15), constants.PBKDF2_LEGACY_MIN_ITERATIONS)
+
+    def test_derive_keyhash_v2_rejects_low_iterations(self):
+        with self.assertRaises(ValueError):
+            crypto.derive_keyhash_v2(
+                'data_key', 'password', bytes(16), constants.PBKDF2_LEGACY_MIN_ITERATIONS - 1)
 
     def test_password_score(self):
         self.assertEqual(utils.password_score('!@#$%^&*()'), 92)
