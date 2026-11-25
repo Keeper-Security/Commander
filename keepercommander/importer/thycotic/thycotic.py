@@ -876,7 +876,7 @@ class ThycoticMixin:
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search('/v1/secrets/lookup') or []
+            lookup = auth.thycotic_search(build_secrets_lookup_query()) or []
         except Exception as exc:
             logging.warning('secret lookup for permissions: %s', exc)
             return
@@ -2276,9 +2276,12 @@ class ThycoticAuth:
         queries = tuple(x for x in urlp.query.split(sep='&') if x)
         result = []
         skip = 0
+        take = 1000
+        page = 0
         while True:
+            page += 1
             q = list(queries)
-            q.append('take=1000')
+            q.append(f'take={take}')
             if skip > 0:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
@@ -2290,15 +2293,33 @@ class ThycoticAuth:
             if rs.status_code != 200:
                 raise Exception(self._error_message(rs))
             chunk_rs = rs.json()
+            if not isinstance(chunk_rs, dict):
+                logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page, endpoint)
+                break
             records = chunk_rs.get('records')
-            if isinstance(records, list):
-                result.extend(records)
-            else:
+            has_next = chunk_rs.get('hasNext') is True
+            next_skip = chunk_rs.get('nextSkip')
+            count = len(records) if isinstance(records, list) else None
+            logging.info(
+                'Secret Server page %d %s skip=%s take=%s records=%s total=%s hasNext=%s nextSkip=%s accumulated=%s',
+                page, endpoint, skip, take, count, chunk_rs.get('total'), has_next, next_skip, len(result) + (count or 0))
+            if not isinstance(records, list):
+                logging.warning('Secret Server page %d %s has no records list, stopping pagination', page, endpoint)
                 break
-            if chunk_rs.get('hasNext') is True:
-                skip = chunk_rs['nextSkip']
-            else:
+            result.extend(records)
+            if count != take:
+                logging.info(
+                    'Secret Server page %d %s short page records=%d take=%d hasNext=%s',
+                    page, endpoint, count, take, has_next)
+            if not has_next:
                 break
+            if type(next_skip) is not int or next_skip <= skip:
+                logging.warning(
+                    'Secret Server page %d %s hasNext but nextSkip=%s does not advance from skip=%s, stopping pagination',
+                    page, endpoint, next_skip, skip)
+                break
+            skip = next_skip
+        logging.info('Secret Server %s pagination finished, %d record(s) in %d page(s)', endpoint, len(result), page)
         return result
 
     @staticmethod
