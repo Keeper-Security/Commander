@@ -109,6 +109,25 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
             hide_input=True,
         )
 
+        print(f"\n{bcolors.BOLD}CHAT COMMAND IDs:{bcolors.ENDC}")
+        print("  Slash command IDs configured for the Zoom Chat app")
+        chat_command_request_record_id = self._prompt_command_id(
+            '/keeper-request-record',
+            ZoomConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID,
+        )
+        chat_command_request_folder_id = self._prompt_command_id(
+            '/keeper-request-folder',
+            ZoomConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID,
+        )
+        chat_command_external_share_id = self._prompt_command_id(
+            '/keeper-one-time-share',
+            ZoomConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID,
+        )
+        chat_command_create_secret_id = self._prompt_command_id(
+            '/keeper-create-secret',
+            ZoomConstants.DEFAULT_COMMAND_CREATE_SECRET_ID,
+        )
+
         print(f"\n{bcolors.BOLD}ZOOM_APPROVALS_CHANNEL_JID:{bcolors.ENDC}")
         print("  Channel JID from Zoom Team Chat channel settings")
         approvals_channel_jid = self._prompt_with_validation(
@@ -125,6 +144,9 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
             'Enter an absolute HTTPS URL with a public hostname (for example, https://xyz.ngrok.app/zoom/webhook)',
         )
 
+        pedm_enabled, pedm_interval = self._collect_pedm_config()
+        device_approval_enabled, device_approval_interval = self._collect_device_approval_config()
+
         print(f"\n{bcolors.OKGREEN}{bcolors.BOLD}✓ Zoom Chat Configuration Complete!{bcolors.ENDC}")
         return ZoomConfig(
             client_id=client_id,
@@ -133,6 +155,14 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
             secret_token=secret_token,
             approvals_channel_jid=approvals_channel_jid,
             public_endpoint_url=public_endpoint_url,
+            chat_command_request_record_id=chat_command_request_record_id,
+            chat_command_request_folder_id=chat_command_request_folder_id,
+            chat_command_external_share_id=chat_command_external_share_id,
+            chat_command_create_secret_id=chat_command_create_secret_id,
+            pedm_enabled=pedm_enabled,
+            pedm_polling_interval=pedm_interval,
+            device_approval_enabled=device_approval_enabled,
+            device_approval_polling_interval=device_approval_interval,
         )
 
     def build_record_custom_fields(self, config: ZoomConfig):
@@ -159,11 +189,67 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
                 config.public_endpoint_url,
                 ZoomConstants.FIELD_PUBLIC_ENDPOINT_URL,
             ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_request_record_id,
+                ZoomConstants.FIELD_COMMAND_REQUEST_RECORD_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_request_folder_id,
+                ZoomConstants.FIELD_COMMAND_REQUEST_FOLDER_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_external_share_id,
+                ZoomConstants.FIELD_COMMAND_EXTERNAL_SHARE_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                config.chat_command_create_secret_id,
+                ZoomConstants.FIELD_COMMAND_CREATE_SECRET_ID,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                'true' if config.pedm_enabled else 'false',
+                ZoomConstants.FIELD_PEDM_ENABLED,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                str(config.pedm_polling_interval),
+                ZoomConstants.FIELD_PEDM_POLLING_INTERVAL,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                'true' if config.device_approval_enabled else 'false',
+                ZoomConstants.FIELD_DEVICE_APPROVAL_ENABLED,
+            ),
+            vault.TypedField.new_field(
+                'text',
+                str(config.device_approval_polling_interval),
+                ZoomConstants.FIELD_DEVICE_APPROVAL_POLLING_INTERVAL,
+            ),
         ]
 
     def print_integration_specific_resources(self, config: ZoomConfig):
         print(f"    • Zoom Client ID: {bcolors.OKBLUE}{config.client_id}{bcolors.ENDC}")
         print(f"    • Bot JID: {bcolors.OKBLUE}{config.bot_jid}{bcolors.ENDC}")
+        print(
+            f"    • /keeper-request-record ID: "
+            f"{bcolors.OKBLUE}{config.chat_command_request_record_id}{bcolors.ENDC}"
+        )
+        print(
+            f"    • /keeper-request-folder ID: "
+            f"{bcolors.OKBLUE}{config.chat_command_request_folder_id}{bcolors.ENDC}"
+        )
+        print(
+            f"    • /keeper-one-time-share ID: "
+            f"{bcolors.OKBLUE}{config.chat_command_external_share_id}{bcolors.ENDC}"
+        )
+        print(
+            f"    • /keeper-create-secret ID: "
+            f"{bcolors.OKBLUE}{config.chat_command_create_secret_id}{bcolors.ENDC}"
+        )
         print(
             f"    • Approvals Channel JID: "
             f"{bcolors.OKBLUE}{config.approvals_channel_jid}{bcolors.ENDC}"
@@ -174,10 +260,23 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
         )
 
     def print_integration_commands(self):
-        print(
-            "\nConfigure the Zoom Chat slash command(s) in the Zoom App Marketplace "
-            "to match the deployed Zoom app."
-        )
+        print(f"\n{bcolors.BOLD}Zoom Chat Commands Available:{bcolors.ENDC}")
+        print(f"  {bcolors.OKGREEN}• /keeper-request-record{bcolors.ENDC} - Request access to a record")
+        print(f"  {bcolors.OKGREEN}• /keeper-request-folder{bcolors.ENDC} - Request access to a folder")
+        print(f"  {bcolors.OKGREEN}• /keeper-one-time-share{bcolors.ENDC} - Request a one-time share link")
+        print(f"  {bcolors.OKGREEN}• /keeper-create-secret{bcolors.ENDC} - Request creation of a secret")
+
+    def _prompt_command_id(self, command_name: str, default: str) -> str:
+        while True:
+            value = input(
+                f"{bcolors.OKBLUE}{command_name} command ID "
+                f"[Press Enter for {default}]:{bcolors.ENDC} "
+            ).strip() or default
+            if value.isdigit() and int(value) >= 1:
+                return value
+            print(
+                f"{bcolors.FAIL}Error: Slash command ID must be a positive integer{bcolors.ENDC}"
+            )
 
 
 __all__ = ['ZoomAppSetupCommand', 'is_valid_public_endpoint_url']

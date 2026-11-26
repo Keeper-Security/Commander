@@ -78,12 +78,15 @@ class TestZoomAppSetupCommand(unittest.TestCase):
         self.assertFalse(is_valid_public_endpoint_url('https://user:password@example.com'))
         self.assertFalse(is_valid_public_endpoint_url('https://example.com/path#fragment'))
 
-    def test_collects_required_zoom_values_and_retries_empty_values(self):
+    def test_collects_zoom_values_commands_and_optional_features(self):
         responses = [
             '', 'client-id',
             'bot@example.com',
+            '11', '12', '13', '14',
             'approvals@example.com',
             'https://abc123.ngrok.app/zoom/webhook',
+            'y', '60',
+            'y', '90',
         ]
         with mock.patch('builtins.input', side_effect=responses) as input_prompt, \
                 mock.patch(
@@ -91,11 +94,35 @@ class TestZoomAppSetupCommand(unittest.TestCase):
                     side_effect=['client-secret', 'secret-token'],
                 ) as secret_prompt:
             config = self.command.collect_integration_config(None)
-        self.assertEqual(config, self._config())
+        expected = ZoomConfig(
+            client_id='client-id',
+            client_secret='client-secret',
+            bot_jid='bot@example.com',
+            secret_token='secret-token',
+            approvals_channel_jid='approvals@example.com',
+            public_endpoint_url='https://abc123.ngrok.app/zoom/webhook',
+            chat_command_request_record_id='11',
+            chat_command_request_folder_id='12',
+            chat_command_external_share_id='13',
+            chat_command_create_secret_id='14',
+            pedm_enabled=True,
+            pedm_polling_interval=60,
+            device_approval_enabled=True,
+            device_approval_polling_interval=90,
+        )
+        self.assertEqual(config, expected)
         self.assertEqual(input_prompt.call_count, len(responses))
+        prompts = [call.args[0] for call in input_prompt.call_args_list]
+        self.assertTrue(any('/keeper-one-time-share' in prompt for prompt in prompts))
+        self.assertTrue(any('/keeper-create-secret' in prompt for prompt in prompts))
+        self.assertFalse(any('/keeper-external-share' in prompt for prompt in prompts))
         self.assertEqual(secret_prompt.call_count, 2)
         self.assertIn('Client Secret:', secret_prompt.call_args_list[0].args[0])
         self.assertIn('Secret Token:', secret_prompt.call_args_list[1].args[0])
+
+    def test_command_id_must_be_positive_integer(self):
+        with mock.patch('builtins.input', side_effect=['0', '3']):
+            self.assertEqual(self.command._prompt_command_id('/keeper-command', '1'), '3')
 
     def test_builds_vault_record_fields_with_secrets_protected(self):
         fields = {
@@ -114,6 +141,26 @@ class TestZoomAppSetupCommand(unittest.TestCase):
             fields[ZoomConstants.FIELD_PUBLIC_ENDPOINT_URL],
             'https://abc123.ngrok.app/zoom/webhook',
         )
+        self.assertEqual(
+            fields[ZoomConstants.FIELD_COMMAND_REQUEST_RECORD_ID],
+            ZoomConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID,
+        )
+        self.assertEqual(
+            fields[ZoomConstants.FIELD_COMMAND_REQUEST_FOLDER_ID],
+            ZoomConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID,
+        )
+        self.assertEqual(
+            fields[ZoomConstants.FIELD_COMMAND_EXTERNAL_SHARE_ID],
+            ZoomConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID,
+        )
+        self.assertEqual(
+            fields[ZoomConstants.FIELD_COMMAND_CREATE_SECRET_ID],
+            ZoomConstants.DEFAULT_COMMAND_CREATE_SECRET_ID,
+        )
+        self.assertEqual(fields[ZoomConstants.FIELD_PEDM_ENABLED], 'false')
+        self.assertEqual(fields[ZoomConstants.FIELD_PEDM_POLLING_INTERVAL], '120')
+        self.assertEqual(fields[ZoomConstants.FIELD_DEVICE_APPROVAL_ENABLED], 'false')
+        self.assertEqual(fields[ZoomConstants.FIELD_DEVICE_APPROVAL_POLLING_INTERVAL], '120')
 
     def test_prints_client_id_without_printing_secrets(self):
         with mock.patch('builtins.print') as print_mock:
