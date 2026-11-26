@@ -63,7 +63,7 @@ PARAM_NO_AUTO_CHECKOUT = 'noAutoCheckout'
 # Audit comment sent with every secret and secret-field read.
 # Kept outside SecretAccessMode: an Enum class body would treat a plain
 # assignment as another member, and member values are fixed at definition.
-DEFAULT_SECRET_ACCESS_COMENT = 'Checking out for Keeper Import'
+DEFAULT_SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 
 # Delinea error code returned (HTTP 400) when a secret must be checked out
 # before it can be read.
@@ -81,14 +81,14 @@ class SecretAccessMode(Enum):
     # autoComment's value is filled from the comment passed to params().
     PLAIN = (
         (PARAM_AUTO_CHECKOUT, 'false'),
-        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMENT),
+        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMMENT),
         (PARAM_NO_AUTO_CHECKOUT, 'true'),
     )
     # Checkout read: the secret is checked out and checked back in after the response.
     CHECKOUT = (
         (PARAM_AUTO_CHECKOUT, 'true'),
         (PARAM_AUTO_CHECKIN, 'true'),
-        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMENT),
+        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMMENT),
     )
 
     def params(self, comment=None):  # type: (Optional[str]) -> Tuple[Tuple[str, str], ...]
@@ -103,7 +103,7 @@ def normalize_checkout_comment(comment):  # type: (Optional[str]) -> str
     """Return the stripped comment. A blank or missing comment gives the default."""
     if isinstance(comment, str) and comment.strip():
         return comment.strip()
-    return DEFAULT_SECRET_ACCESS_COMENT
+    return DEFAULT_SECRET_ACCESS_COMMENT
 
 
 @dataclass(frozen=True)
@@ -1764,6 +1764,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 self._preview_thycotic_teams(auth)
             else:
                 self._migrate_thycotic_teams(auth, params)
+
         totp_codes = {}
         csv_file = 'secrets-export.csv'
         if not os.path.isfile('secrets-export.csv'):

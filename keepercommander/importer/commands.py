@@ -161,8 +161,9 @@ import_parser.add_argument('-kp', '--keepass-password', dest='kdbx_password', ac
                            help='Password for the import file. Setting "none" will execute an import with no password.')
 import_parser.add_argument('-kkf', '--keepass-key-file', dest='kdbx_key_file', action='store',
                            help='Keepass key file for the import file. Setting "none" will execute an import with no key file.')
-import_parser.add_argument('--checkout-comment', dest='checkout_comment', action='store', default='Checking out for Keeper Import',
-                           help='Thycotic/Delinea only: comment to add for secret with auto comment policy')
+import_parser.add_argument('--checkout-comment', dest='checkout_comment', action='store',
+                           help='Thycotic/Delinea only: audit comment sent when reading or checking out secrets '
+                                '(default: "Checking out for Keeper Import")')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
