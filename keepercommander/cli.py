@@ -284,6 +284,19 @@ def _validate_bare_file_value(tokens, index):
             f'or a bare --file to write ./{DEFAULT_LOG_FILE}')
 
 
+def parse_startup_command(parser, tokens):
+    """Parse ``tokens`` only to find the startup command and its positional arguments.
+
+    ``--file`` tokens are dropped first. They are not main-parser options, and
+    before Python 3.12 an unknown option between the command and its arguments
+    makes argparse return no ``options`` (``shell --file=a.log import`` gives
+    ``options=[]``). Without them the result is the same on every version.
+    """
+    tokens = [t for t in tokens if t != '--file' and not t.startswith('--file=')]
+    opts, _ = parser.parse_known_args(tokens)
+    return opts
+
+
 def extract_shell_log_file_arg(tokens, command, options=()):
     """Take ``--file`` from a shell startup command line.
 

@@ -233,7 +233,7 @@ def main(from_package=False):
     #   2. take the startup --file out of the tokens;
     #   3. parse again, so --file is not left in flags or in opts.options, where it
     #      would be passed on to the shell or the command.
-    startup_opts, _ = parser.parse_known_args(sys.argv[1:])
+    startup_opts = cli.parse_startup_command(parser, sys.argv[1:])
     try:
         log_file, argv = cli.extract_shell_log_file_arg(
             sys.argv[1:], startup_opts.command, startup_opts.options)

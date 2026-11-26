@@ -13,7 +13,7 @@ from keepercommander.params import KeeperParams
 
 
 def _resolved(argv):
-    startup_opts, _ = parser.parse_known_args(argv)
+    startup_opts = cli.parse_startup_command(parser, argv)
     log_file, remaining = cli.extract_shell_log_file_arg(argv, startup_opts.command, startup_opts.options)
     opts, _ = parser.parse_known_args(remaining)
     opts.log_file = log_file
@@ -153,7 +153,7 @@ class TestLogFileOption(TestCase):
         self.assertEqual(remaining, ['import', '--file', 'data.json'])
 
     def _split(self, argv):
-        startup_opts, _ = parser.parse_known_args(argv)
+        startup_opts = cli.parse_startup_command(parser, argv)
         return cli.extract_shell_log_file_arg(argv, startup_opts.command, startup_opts.options)
 
     def test_subcommand_file_option_is_left_for_the_subcommand(self):
