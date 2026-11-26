@@ -3886,6 +3886,20 @@ def ensure_gateway_management_allowed(params):
     return True
 
 
+def ensure_gateway_application_access(params, gateway, command_name):
+    # type: (KeeperParams, pam_pb2.PAMController, str) -> None
+    """Raise CommandError unless the current user has access to the Gateway's
+    KSM Application (present in the user's vault, directly or via share).
+    Mirrors the web vault, which hides Gateways whose application the user
+    cannot access, so such Gateways must not be modifiable from Commander."""
+    app_uid = utils.base64_url_encode(gateway.applicationUid) if gateway.applicationUid else ''
+    if not app_uid or not KSMCommand.get_app_record(params, app_uid):
+        raise CommandError(
+            command_name,
+            f'{bcolors.FAIL}Access denied: you do not have access to the KSM Application '
+            f'of Gateway "{gateway.controllerName}".{bcolors.ENDC}')
+
+
 class PAMGatewayActionRotateCommand(Command):
     parser = argparse.ArgumentParser(
         prog='pam action rotate',
@@ -4569,6 +4583,9 @@ class PAMSetMaxInstancesCommand(Command):
         return PAMSetMaxInstancesCommand.parser
 
     def execute(self, params, **kwargs):
+        if not ensure_gateway_management_allowed(params):
+            return
+
         gateway_name = kwargs.get('gateway')
         max_instances = kwargs.get('max_instances')
 
@@ -4582,6 +4599,8 @@ class PAMSetMaxInstancesCommand(Command):
 
         if not gateway:
             raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_name}" not found{bcolors.ENDC}')
+
+        ensure_gateway_application_access(params, gateway, 'pam gateway set-max-instances')
 
         try:
             gateway_helper.set_gateway_max_instances(params, gateway.controllerUid, max_instances)
@@ -4677,6 +4696,9 @@ class PAMEditGatewayCommand(Command):
         return PAMEditGatewayCommand.parser
 
     def execute(self, params: KeeperParams, **kwargs):
+        if not ensure_gateway_management_allowed(params):
+            return
+
         gateway_uid = kwargs.get('gateway')
         new_name = kwargs.get('gateway_name')
         node_id_arg = kwargs.get('node_id')
@@ -4692,6 +4714,8 @@ class PAMEditGatewayCommand(Command):
 
         if not gateway:
             raise CommandError('', f'{bcolors.FAIL}Gateway "{gateway_uid}" not found{bcolors.ENDC}')
+
+        ensure_gateway_application_access(params, gateway, 'pam gateway edit')
 
         if not node_id_arg and not new_name:
             raise CommandError('pam gateway edit', 'Nothing to do. At least one of --name or --node-id is required to edit the gateway')
