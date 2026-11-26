@@ -140,17 +140,15 @@ class TestSecretAccessParams(unittest.TestCase):
         self.assertEqual(endpoint, f'/v1/secrets/42?{PLAIN_QUERY}')
 
     def test_checkout_comment_replaces_the_default_on_both_modes(self):
-        self.addCleanup(SecretAccessMode.set_view_comment, None)
-        SecretAccessMode.set_view_comment('  Approved migration  ')
-        plain = with_secret_access_params('/v1/secrets/42', SecretAccessMode.PLAIN)
-        checkout = with_secret_access_params('/v1/secrets/42', SecretAccessMode.CHECKOUT)
+        comment = '  Approved migration  '
+        plain = with_secret_access_params('/v1/secrets/42', SecretAccessMode.PLAIN, comment)
+        checkout = with_secret_access_params('/v1/secrets/42', SecretAccessMode.CHECKOUT, comment)
         self.assertIn('autoComment=Approved%20migration', plain)
         self.assertIn('autoComment=Approved%20migration', checkout)
         self.assertNotIn('Checking', plain)
         self.assertTrue(plain.endswith('&noAutoCheckout=true'))
-        SecretAccessMode.set_view_comment('   ')
-        restored = with_secret_access_params('/v1/secrets/42', SecretAccessMode.PLAIN)
-        self.assertEqual(restored, f'/v1/secrets/42?{PLAIN_QUERY}')
+        blank = with_secret_access_params('/v1/secrets/42', SecretAccessMode.PLAIN, '   ')
+        self.assertEqual(blank, f'/v1/secrets/42?{PLAIN_QUERY}')
 
 
 class TestReadSecret(unittest.TestCase):

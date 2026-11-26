@@ -157,12 +157,12 @@ import_parser.add_argument(
     'name', type=str,
     help='file name (json, csv , keepass, 1password), account name (lastpass), or URL (ManageEngine, Thycotic). '
 )
-import_parser.add_argument('--checkout-comment', dest='checkout_comment', action='store', default='Checking out for Keeper Import',
-                           help='Thycotic/Delinea only: comment to add for secret with auto comment policy')
 import_parser.add_argument('-kp', '--keepass-password', dest='kdbx_password', action='store',
                            help='Password for the import file. Setting "none" will execute an import with no password.')
 import_parser.add_argument('-kkf', '--keepass-key-file', dest='kdbx_key_file', action='store',
                            help='Keepass key file for the import file. Setting "none" will execute an import with no key file.')
+import_parser.add_argument('--checkout-comment', dest='checkout_comment', action='store', default='Checking out for Keeper Import',
+                           help='Thycotic/Delinea only: comment to add for secret with auto comment policy')
 import_parser.error = raise_parse_exception
 import_parser.exit = suppress_exit
 
