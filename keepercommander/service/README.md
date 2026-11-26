@@ -31,6 +31,14 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 - IP deny list management
 - Request validation and policy enforcement
 
+### Service Mode command grants: upgrade note
+
+Interactive shell/session controls are not supported Service Mode API commands.
+The `clear`/`c`, `history`/`h`, `quit`/`q`, and `server` commands are rejected
+by Service Mode provisioning and blocked at runtime, including when they appear
+in an existing API key's command list. Remove these entries from command lists
+before re-running service provisioning or Docker/Terraform setup.
+
 ### Configuration
 
 Create and configure the service with interactive prompts:

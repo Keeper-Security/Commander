@@ -71,9 +71,19 @@ aliases['c'] = 'clear'
 aliases['h'] = 'history'
 aliases['q'] = 'quit'
 
-# These commands are handled by the interactive shell rather than by a vault
-# operation. They must not be exposed as grantable Service Mode commands.
-SHELL_ONLY_COMMANDS = frozenset({'clear', 'history', 'quit'})
+# These commands operate on the interactive Commander session rather than on
+# vault data, so they must not be grantable through Service Mode.
+SHELL_ONLY_COMMANDS = frozenset({'clear', 'history', 'quit', 'server'})
+
+
+def get_shell_only_command_names():
+    """Return shell/session commands and their registered aliases."""
+    command_names = {command.lower() for command in SHELL_ONLY_COMMANDS}
+    for alias, command in aliases.items():
+        target = command[0] if isinstance(command, (tuple, list)) else command
+        if isinstance(target, str) and target.lower() in command_names:
+            command_names.add(alias.lower())
+    return command_names
 
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
@@ -114,8 +124,6 @@ def display_command_help(show_enterprise=False, show_shell=False, show_legacy=Fa
     # Group commands by category and build display info
     categorized_commands = {}
     for cmd, description in all_commands.items():
-        if not show_shell and cmd in SHELL_ONLY_COMMANDS:
-            continue
         category = get_command_category(cmd)
         if category not in categorized_commands:
             categorized_commands[category] = []
@@ -382,6 +390,15 @@ def do_command(params, command_line):
         logging.error('Invalid command: control characters are not allowed in command input.')
         return
 
+    if getattr(params, 'service_mode', False):
+        try:
+            command_tokens = shlex.split(command_line)
+        except ValueError:
+            command_tokens = []
+        if command_tokens and command_tokens[0].lower() in get_shell_only_command_names():
+            logging.error('Interactive shell/session commands are not available in Service Mode')
+            return
+
     def is_msp(params_local):
         if params_local.enterprise:
             if 'licenses' in params_local.enterprise:
@@ -392,10 +409,7 @@ def do_command(params, command_line):
         return False
 
     if command_line.lower() == 'h' or command_line.lower() == 'history':
-        if getattr(params, 'service_mode', False):
-            logging.error('Command history is not available in Service Mode')
-        else:
-            display.formatted_history(stack)
+        display.formatted_history(stack)
         return
 
     if command_line.lower().startswith('server'):

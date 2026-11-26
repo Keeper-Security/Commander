@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import io
 import sys
 from types import SimpleNamespace
 from unittest import TestCase, mock
@@ -59,14 +60,29 @@ class TestCommandLineInterface(TestCase):
             cli.stack[:] = [sentinel]
             params = SimpleNamespace(service_mode=True)
 
-            with mock.patch('keepercommander.cli.display.formatted_history') as mock_history:
-                do_command(params, 'history')
+            with mock.patch('keepercommander.cli.display.formatted_history') as mock_history, \
+                    mock.patch('keepercommander.cli.server_command') as mock_server_command, \
+                    mock.patch('builtins.print'):
+                for command in ('history', 'h', 'clear', 'c', 'quit', 'q', 'server'):
+                    with self.subTest(command=command):
+                        do_command(params, command)
                 mock_history.assert_not_called()
+                mock_server_command.assert_not_called()
 
-            do_command(params, 'clear')
             self.assertEqual(cli.stack, [sentinel])
         finally:
             cli.stack[:] = original_stack
+
+    def test_in_shell_help_still_lists_shell_commands(self):
+        # In-shell help uses show_shell=False; this flag controls help hints,
+        # not whether working shell commands are displayed.
+        with mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            cli.display_command_help(show_shell=False)
+
+        help_text = output.getvalue()
+        for command in ('clear (c)', 'history (h)', 'quit (q)', 'server'):
+            with self.subTest(command=command):
+                self.assertIn(command, help_text)
 
     def test_line_continuation(self):
         """Test that line continuation with backslash works correctly."""

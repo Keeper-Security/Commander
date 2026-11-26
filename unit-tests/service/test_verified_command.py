@@ -19,13 +19,13 @@ def _tokens(command: str):
 class TestServiceModeCommandPolicy(TestCase):
     """Service Mode bans must use the same tokenize path as CommandExecutor."""
 
-    def test_interactive_history_commands_are_blocked(self):
+    def test_interactive_shell_and_session_commands_are_blocked(self):
         check = Verifycommand.validate_service_mode_restrictions
-        for command in ('history', 'h'):
+        for command in ('clear', 'c', 'history', 'h', 'quit', 'q', 'server'):
             with self.subTest(command=command):
                 error = check(_tokens(command))
                 self.assertIsNotNone(error)
-                self.assertIn('Interactive shell commands', error)
+                self.assertIn('Interactive shell/session commands', error)
 
     def test_pam_tunnel_blocked_except_edit(self):
         for cmd in (

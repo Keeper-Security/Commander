@@ -34,9 +34,8 @@ class Verifycommand:
     _LEGACY_COMMAND_MSG = (
         'Legacy commands are not permitted through Service Mode'
     )
-    _SHELL_ONLY_COMMANDS = frozenset({'history', 'h'})
     _SHELL_ONLY_COMMAND_MSG = (
-        'Interactive shell commands are not permitted through Service Mode'
+        'Interactive shell/session commands are not permitted through Service Mode'
     )
 
     # GroupCommand.execute_args (commands/base.py) strips a leading '-- ' at each
@@ -262,10 +261,13 @@ class Verifycommand:
 
     @staticmethod
     def validate_service_mode_shell_only_command(command_tokens, request_temp_dir=None):
-        """Block interactive shell history commands in Service Mode."""
+        """Block interactive shell/session commands in Service Mode."""
         if not command_tokens:
             return None
-        if command_tokens[0].lower() not in Verifycommand._SHELL_ONLY_COMMANDS:
+        # Source the command names and aliases from the CLI definition so
+        # provisioning and runtime enforcement cannot drift apart.
+        from ... import cli
+        if command_tokens[0].lower() not in cli.get_shell_only_command_names():
             return None
         return Verifycommand._SHELL_ONLY_COMMAND_MSG
 
