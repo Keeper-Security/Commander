@@ -71,6 +71,20 @@ aliases['c'] = 'clear'
 aliases['h'] = 'history'
 aliases['q'] = 'quit'
 
+# These commands operate on the interactive Commander session rather than on
+# vault data, so they must not be grantable through Service Mode.
+SHELL_ONLY_COMMANDS = frozenset({'clear', 'history', 'quit', 'server'})
+
+
+def get_shell_only_command_names():
+    """Return shell/session commands and their registered aliases."""
+    command_names = {command.lower() for command in SHELL_ONLY_COMMANDS}
+    for alias, command in aliases.items():
+        target = command[0] if isinstance(command, (tuple, list)) else command
+        if isinstance(target, str) and target.lower() in command_names:
+            command_names.add(alias.lower())
+    return command_names
+
 logging.getLogger('asyncio').setLevel(logging.WARNING)
 
 
@@ -376,6 +390,15 @@ def do_command(params, command_line):
         logging.error('Invalid command: control characters are not allowed in command input.')
         return
 
+    if getattr(params, 'service_mode', False):
+        try:
+            command_tokens = shlex.split(command_line)
+        except ValueError:
+            command_tokens = []
+        if command_tokens and command_tokens[0].lower() in get_shell_only_command_names():
+            logging.error('Interactive shell/session commands are not available in Service Mode')
+            return
+
     def is_msp(params_local):
         if params_local.enterprise:
             if 'licenses' in params_local.enterprise:
@@ -465,7 +488,12 @@ def do_command(params, command_line):
             return
 
     # Track commands history
-    if len(stack) == 0 or stack[0] != command_line:
+    # Service Mode serves multiple API keys in one process. Never place its raw
+    # command lines (which may contain credentials) in the interactive shell's
+    # process-global history buffer.
+    if (
+            not getattr(params, 'service_mode', False)
+            and (len(stack) == 0 or stack[0] != command_line)):
         stack.insert(0, command_line)
 
     if command_line.lower() == 'c' or command_line.lower() == 'cls' or command_line.lower() == 'clear':
