@@ -1085,7 +1085,7 @@ class TestSecretServerPagination(TestCase):
     def test_full_page_with_has_next_false_stops(self):
         full_page = self._page([{'id': i} for i in range(1, 1001)], False, 1000, 1000)
         with mock.patch.object(thycotic.requests, 'get', return_value=full_page) as get:
-            with self.assertLogs(level='INFO') as logs:
+            with self.assertLogs(level='DEBUG') as logs:
                 result = self._auth().thycotic_search('/v1/secrets')
         self.assertEqual(len(result), 1000)
         get.assert_called_once()
@@ -1112,10 +1112,12 @@ class TestSecretShareHelpers(TestCase):
         self.assertFalse(record.folders)
         self.assertIs(record.shares, shares)
 
-    def test_membership_lookup_includes_restricted_secrets(self):
+    def test_membership_lookup_uses_secrets_lookup_query(self):
         auth = _secret_auth([])
         list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
-        self.assertIn(thycotic.build_secrets_lookup_query(), auth.calls)
+        expected_query = thycotic.build_secrets_lookup_query()
+        self.assertIn(expected_query, auth.calls)
+        self.assertTrue(any('includeRestricted=true' in call for call in auth.calls))
 
     def test_unnamed_secret_does_not_load_groups(self):
         secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritPermissions': False}

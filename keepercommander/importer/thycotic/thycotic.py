@@ -2164,6 +2164,7 @@ class ThycoticAuth:
     max_throttle_retries = 3
     throttle_backoff_seconds = 5
     max_throttle_wait_seconds = 300
+    page_size = 1000
 
     def __init__(self, base_url):    # type: (str) -> None
         if not base_url.endswith('/'):
@@ -2276,12 +2277,11 @@ class ThycoticAuth:
         queries = tuple(x for x in urlp.query.split(sep='&') if x)
         result = []
         skip = 0
-        take = 1000
         page = 0
         while True:
             page += 1
-            q = list(queries)
-            q.append(f'take={take}')
+            q = [x for x in queries if not x.startswith('take=')]
+            q.append(f'take={self.page_size}')
             if skip > 0:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
@@ -2292,28 +2292,29 @@ class ThycoticAuth:
                 rs = self._get(url, headers=headers)
             if rs.status_code != 200:
                 raise Exception(self._error_message(rs))
-            chunk_rs = rs.json()
-            if not isinstance(chunk_rs, dict):
+            payload = rs.json()
+            if not isinstance(payload, dict):
                 logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page, endpoint)
                 break
-            records = chunk_rs.get('records')
-            has_next = chunk_rs.get('hasNext') is True
-            next_skip = chunk_rs.get('nextSkip')
-            count = len(records) if isinstance(records, list) else None
+            records = payload.get('records')
+            is_records_list = isinstance(records, list)
+            has_next = payload.get('hasNext') is True
+            next_skip = payload.get('nextSkip')
+            record_count = len(records) if is_records_list else None
             logging.debug(
                 'Secret Server page %d %s skip=%s take=%s records=%s total=%s hasNext=%s nextSkip=%s accumulated=%s',
-                page, endpoint, skip, take, count, chunk_rs.get('total'), has_next, next_skip, len(result) + (count or 0))
-            if not isinstance(records, list):
+                page, endpoint, skip, self.page_size, record_count, payload.get('total'), has_next, next_skip, len(result) + (record_count or 0))
+            if not is_records_list:
                 logging.warning('Secret Server page %d %s has no records list, stopping pagination', page, endpoint)
                 break
             result.extend(records)
-            if count < take:
+            if record_count < self.page_size:
                 logging.debug(
                     'Secret Server page %d %s short page records=%d take=%d hasNext=%s',
-                    page, endpoint, count, take, has_next)
+                    page, endpoint, record_count, self.page_size, has_next)
             if not has_next:
                 break
-            if type(next_skip) is not int or next_skip <= skip:
+            if isinstance(next_skip, bool) or not isinstance(next_skip, int) or next_skip <= skip:
                 logging.warning(
                     'Secret Server page %d %s hasNext but nextSkip=%s does not advance from skip=%s, stopping pagination',
                     page, endpoint, next_skip, skip)
