@@ -1338,9 +1338,8 @@ class TestUnnestedHelpers(TestCase):
         auth = mock.Mock()
         with mock.patch.object(
                 thycotic.ThycoticMixin, 'permission_rows_for_secret', side_effect=RuntimeError('down')):
-            secret, rows, error = thycotic.ThycoticMixin._load_secret_permissions(
+            rows, error = thycotic.ThycoticMixin._load_secret_permissions(
                 auth, {}, thycotic.FolderPermissionCache(), None, {'id': 1, 'name': 'x'})
-        self.assertIsNone(secret)
         self.assertEqual(rows, [])
         self.assertIsInstance(error, RuntimeError)
 

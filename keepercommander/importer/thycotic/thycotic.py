@@ -757,14 +757,14 @@ class ThycoticMixin:
 
     @staticmethod
     def _load_secret_permissions(auth, folders, folder_cache, secret_permissions, secret):
-        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], dict) -> Tuple[Optional[dict], list, Optional[Exception]]
-        """Worker task: (secret, rows, None) on success, (None, [], error) on failure. Never raises."""
+        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], dict) -> Tuple[list, Optional[Exception]]
+        """Worker task: (rows, None) on success, ([], error) on failure. Never raises."""
         try:
             rows = ThycoticMixin.permission_rows_for_secret(
                 auth, folders, secret, folder_cache, secret_permissions)
-            return secret, rows, None
+            return rows, None
         except Exception as exc:
-            return None, [], exc
+            return [], exc
 
     @staticmethod
     def secret_share_workers(value):
@@ -894,7 +894,7 @@ class ThycoticMixin:
         logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(valid_secrets), workers)
 
         fetch = functools.partial(ThycoticMixin._load_secret_permissions, auth, folders, folder_cache, secret_permissions)
-        for secret, (loaded, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, valid_secrets, workers):
+        for secret, (perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, valid_secrets, workers):
             secret_id = secret.get('id')
             if error is not None:
                 logging.warning('Secret %s permissions skipped: %s', secret_id, error)
