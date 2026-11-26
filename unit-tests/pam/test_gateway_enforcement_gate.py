@@ -24,11 +24,16 @@ import io
 import unittest
 from unittest.mock import MagicMock, patch
 
+from keepercommander import utils
 from keepercommander.commands.discoveryrotation import (
     PAMCreateGatewayCommand,
+    PAMEditGatewayCommand,
     PAMGatewayRemoveCommand,
+    PAMSetMaxInstancesCommand,
 )
 from keepercommander.commands import discoveryrotation_v1
+from keepercommander.error import CommandError
+from keepercommander.proto import pam_pb2
 
 
 def _params_with_enforcement(mode):
@@ -317,6 +322,126 @@ class TestMixedRolePermissions(unittest.TestCase):
         self.assertFalse(mock_get_all_gateways.called)
         self.assertFalse(mock_remove_gateway.called)
         self.assertIn('gateway management', stdout.getvalue().lower())
+
+
+def _gateway():
+    return pam_pb2.PAMController(
+        controllerUid=b'\x01' * 16, controllerName='pocgateway',
+        applicationUid=b'\x02' * 16, nodeId=5)
+
+
+_GATEWAY_UID = utils.base64_url_encode(b'\x01' * 16)
+_APP_UID = utils.base64_url_encode(b'\x02' * 16)
+
+
+class TestPAMEditGatewayCommandEnforcement(unittest.TestCase):
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.edit_gateway')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    def test_denied_when_enforcement_absent(self, mock_get_all_gateways, mock_edit_gateway):
+        params = _params_with_enforcement('denied_absent')
+        with patch('sys.stdout', new_callable=io.StringIO) as stdout:
+            PAMEditGatewayCommand().execute(params, gateway=_GATEWAY_UID, gateway_name='changedbyuser')
+
+        self.assertFalse(mock_get_all_gateways.called)
+        self.assertFalse(mock_edit_gateway.called)
+        self.assertIn('gateway management', stdout.getvalue().lower())
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.edit_gateway')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    def test_denied_when_enforcement_explicit_false(self, mock_get_all_gateways, mock_edit_gateway):
+        params = _params_with_enforcement('denied_explicit_false')
+        with patch('sys.stdout', new_callable=io.StringIO) as stdout:
+            PAMEditGatewayCommand().execute(params, gateway=_GATEWAY_UID, gateway_name='changedbyuser')
+
+        self.assertFalse(mock_get_all_gateways.called)
+        self.assertFalse(mock_edit_gateway.called)
+        self.assertIn('gateway management', stdout.getvalue().lower())
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.edit_gateway')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_app_record')
+    def test_denied_without_application_access(
+            self, mock_get_app_record, mock_get_all_gateways, mock_edit_gateway):
+        params = _params_with_enforcement('allowed')
+        mock_get_all_gateways.return_value = [_gateway()]
+        mock_get_app_record.return_value = None
+
+        with self.assertRaises(CommandError) as ctx:
+            PAMEditGatewayCommand().execute(params, gateway=_GATEWAY_UID, gateway_name='changedbyuser')
+
+        mock_get_app_record.assert_called_once_with(params, _APP_UID)
+        self.assertFalse(mock_edit_gateway.called)
+        self.assertIn('access denied', str(ctx.exception).lower())
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.edit_gateway')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_app_record')
+    def test_allowed_with_enforcement_and_application_access(
+            self, mock_get_app_record, mock_get_all_gateways, mock_edit_gateway):
+        params = _params_with_enforcement('allowed')
+        gateway = _gateway()
+        mock_get_all_gateways.return_value = [gateway]
+        mock_get_app_record.return_value = {'record_uid': _APP_UID}
+
+        PAMEditGatewayCommand().execute(params, gateway=_GATEWAY_UID, gateway_name='changedbyuser')
+
+        mock_edit_gateway.assert_called_once_with(params, gateway.controllerUid, 'changedbyuser', 5)
+
+
+class TestPAMSetMaxInstancesCommandEnforcement(unittest.TestCase):
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.set_gateway_max_instances')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    def test_denied_when_enforcement_absent(self, mock_get_all_gateways, mock_set_max_instances):
+        params = _params_with_enforcement('denied_absent')
+        with patch('sys.stdout', new_callable=io.StringIO) as stdout:
+            PAMSetMaxInstancesCommand().execute(params, gateway=_GATEWAY_UID, max_instances=5)
+
+        self.assertFalse(mock_get_all_gateways.called)
+        self.assertFalse(mock_set_max_instances.called)
+        self.assertIn('gateway management', stdout.getvalue().lower())
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.set_gateway_max_instances')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    def test_denied_when_enforcement_explicit_false(self, mock_get_all_gateways, mock_set_max_instances):
+        params = _params_with_enforcement('denied_explicit_false')
+        with patch('sys.stdout', new_callable=io.StringIO) as stdout:
+            PAMSetMaxInstancesCommand().execute(params, gateway=_GATEWAY_UID, max_instances=5)
+
+        self.assertFalse(mock_get_all_gateways.called)
+        self.assertFalse(mock_set_max_instances.called)
+        self.assertIn('gateway management', stdout.getvalue().lower())
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.set_gateway_max_instances')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_app_record')
+    def test_denied_without_application_access(
+            self, mock_get_app_record, mock_get_all_gateways, mock_set_max_instances):
+        params = _params_with_enforcement('allowed')
+        mock_get_all_gateways.return_value = [_gateway()]
+        mock_get_app_record.return_value = None
+
+        with self.assertRaises(CommandError) as ctx:
+            PAMSetMaxInstancesCommand().execute(params, gateway=_GATEWAY_UID, max_instances=5)
+
+        mock_get_app_record.assert_called_once_with(params, _APP_UID)
+        self.assertFalse(mock_set_max_instances.called)
+        self.assertIn('access denied', str(ctx.exception).lower())
+
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.set_gateway_max_instances')
+    @patch('keepercommander.commands.discoveryrotation.gateway_helper.get_all_gateways')
+    @patch('keepercommander.commands.discoveryrotation.KSMCommand.get_app_record')
+    def test_allowed_with_enforcement_and_application_access(
+            self, mock_get_app_record, mock_get_all_gateways, mock_set_max_instances):
+        params = _params_with_enforcement('allowed')
+        gateway = _gateway()
+        mock_get_all_gateways.return_value = [gateway]
+        mock_get_app_record.return_value = {'record_uid': _APP_UID}
+
+        PAMSetMaxInstancesCommand().execute(params, gateway=_GATEWAY_UID, max_instances=5)
+
+        mock_set_max_instances.assert_called_once_with(params, gateway.controllerUid, 5)
 
 
 if __name__ == '__main__':
