@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase, mock
 
-from keepercommander import cli
+from keepercommander import cli, file_logging
 from keepercommander.__main__ import main, parser
 from keepercommander.params import KeeperParams
 
@@ -399,7 +399,7 @@ class TestLogFileHandler(TestCase):
 
     def test_unwritable_parent_of_a_missing_directory_creates_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch('keepercommander.cli.os.access', return_value=False):
+            with mock.patch('keepercommander.file_logging.os.access', return_value=False):
                 with self.assertLogs(level='ERROR') as captured:
                     self.assertIsNone(cli.debug_manager.attach_log_file(
                         os.path.join(tmp, 'missing', 'custom.log')))
@@ -416,14 +416,14 @@ class TestLogFileHandler(TestCase):
 
     def test_unwritable_directory_logs_an_error_and_returns_none(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch('keepercommander.cli.os.access', return_value=False):
+            with mock.patch('keepercommander.file_logging.os.access', return_value=False):
                 with self.assertLogs(level='ERROR') as captured:
                     self.assertIsNone(cli.debug_manager.attach_log_file(os.path.join(tmp, 'custom.log')))
             self.assertIn('No permission', captured.output[0])
             self.assertEqual(os.listdir(tmp), [])
 
     def test_session_start_line_has_the_local_offset_without_the_zone_name(self):
-        line = cli._session_start_line()
+        line = file_logging._session_start_line()
         self.assertRegex(
             line,
             r'^=+ NEW SESSION STARTED AT : '
@@ -440,7 +440,7 @@ class TestLogFileHandler(TestCase):
             with open(original, 'w', encoding='utf-8', newline='\n') as handle:
                 handle.write('previous contents')
             with mock.patch(
-                'keepercommander.cli._session_start_line',
+                'keepercommander.file_logging._session_start_line',
                 return_value='==================== NEW SESSION STARTED AT : 2026-11-25T01:40:00+05:30 ====================',
             ):
                 cli.debug_manager.attach_log_file(original)

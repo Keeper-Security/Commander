@@ -185,7 +185,7 @@ class PamConnectTiming:
         if not do_log:
             return
         # Always emit at DEBUG so the timing lines stay off the console unless
-        # debug mode is on. ``debug --file`` (cli.py::DebugManager.attach_log_file)
+        # debug mode is on. ``debug --file`` (file_logging.py::DebugManager.attach_log_file)
         # lowers the root logger to DEBUG, so these lines reach the log file too.
         _LOG.log(
             logging.DEBUG,
