@@ -34,6 +34,9 @@ class Verifycommand:
     _LEGACY_COMMAND_MSG = (
         'Legacy commands are not permitted through Service Mode'
     )
+    _SHELL_ONLY_COMMAND_MSG = (
+        'Interactive shell/session commands are not permitted through Service Mode'
+    )
 
     # GroupCommand.execute_args (commands/base.py) strips a leading '-- ' at each
     # nested group boundary, desyncing position-based checks below (e.g. pam tunnel).
@@ -113,6 +116,7 @@ class Verifycommand:
             Verifycommand.validate_service_mode_env_var_expansion_command,
             Verifycommand.validate_service_mode_automator_file_access_command,
             Verifycommand.validate_service_mode_legacy_command,
+            Verifycommand.validate_service_mode_shell_only_command,
             Verifycommand.validate_nsf_convert_command,
             Verifycommand.validate_service_mode_pam_tunnel_command,
             Verifycommand.validate_service_mode_download_attachment_command,
@@ -251,6 +255,18 @@ class Verifycommand:
         if command_tokens[0].lower() not in Verifycommand._LEGACY_COMMANDS:
             return None
         return Verifycommand._LEGACY_COMMAND_MSG
+
+    @staticmethod
+    def validate_service_mode_shell_only_command(command_tokens, request_temp_dir=None):
+        """Block interactive shell/session commands in Service Mode."""
+        if not command_tokens:
+            return None
+        # Source the command names and aliases from the CLI definition so
+        # provisioning and runtime enforcement cannot drift apart.
+        from ... import cli
+        if command_tokens[0].lower() not in cli.get_shell_only_command_names():
+            return None
+        return Verifycommand._SHELL_ONLY_COMMAND_MSG
 
     @staticmethod
     def validate_service_mode_pam_tunnel_command(command_tokens, request_temp_dir=None):

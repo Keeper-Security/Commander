@@ -307,6 +307,13 @@ class ServiceConfig:
             raise ValidationError("Command list cannot be empty")
         help_output = self.cli_handler.get_help_output(params)
         valid_commands, command_info = self.command_validator.parse_help_output(help_output)
+        # Keep interactive shell/session controls visible in normal CLI help,
+        # but never offer them as Service Mode API grants.
+        from ... import cli
+        shell_only_commands = cli.get_shell_only_command_names()
+        valid_commands.difference_update(shell_only_commands)
+        for shell_command in shell_only_commands:
+            command_info.pop(shell_command, None)
         validated_commands, invalid_commands = self.command_validator.validate_command_list(commands, valid_commands)
         
         if invalid_commands:
