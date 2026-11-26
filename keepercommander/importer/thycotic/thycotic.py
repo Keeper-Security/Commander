@@ -2275,12 +2275,14 @@ class ThycoticAuth:
 
         urlp = urlparse(self.base_url + 'api' + endpoint)
         queries = tuple(x for x in urlp.query.split(sep='&') if x)
+        base_query = [x for x in queries if not x.startswith('take=') and not x.startswith('skip=')]
         result = []
         skip = 0
         page = 0
+        status = 'finished'
         while True:
             page += 1
-            q = [x for x in queries if not x.startswith('take=')]
+            q = list(base_query)
             q.append(f'take={self.page_size}')
             if skip > 0:
                 q.append(f'skip={skip}')
@@ -2292,9 +2294,15 @@ class ThycoticAuth:
                 rs = self._get(url, headers=headers)
             if rs.status_code != 200:
                 raise Exception(self._error_message(rs))
-            payload = rs.json()
+            try:
+                payload = rs.json()
+            except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                logging.warning('Secret Server page %d %s JSON decode error: %s, stopping pagination', page, endpoint, str(e))
+                status = 'truncated'
+                break
             if not isinstance(payload, dict):
                 logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page, endpoint)
+                status = 'truncated'
                 break
             records = payload.get('records')
             is_records_list = isinstance(records, list)
@@ -2306,6 +2314,7 @@ class ThycoticAuth:
                 page, endpoint, skip, self.page_size, record_count, payload.get('total'), has_next, next_skip, len(result) + (record_count or 0))
             if not is_records_list:
                 logging.warning('Secret Server page %d %s has no records list, stopping pagination', page, endpoint)
+                status = 'truncated'
                 break
             result.extend(records)
             if record_count < self.page_size:
@@ -2318,9 +2327,10 @@ class ThycoticAuth:
                 logging.warning(
                     'Secret Server page %d %s hasNext but nextSkip=%s does not advance from skip=%s, stopping pagination',
                     page, endpoint, next_skip, skip)
+                status = 'truncated'
                 break
             skip = next_skip
-        logging.info('Secret Server %s pagination finished, %d record(s) in %d page(s)', endpoint, len(result), page)
+        logging.info('Secret Server %s pagination %s, %d record(s) in %d page(s)', endpoint, status, len(result), page)
         return result
 
     @staticmethod
