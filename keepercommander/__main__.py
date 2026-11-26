@@ -137,6 +137,8 @@ def show_brief_help():
     print('')
     print('Examples:')
     print('  keeper shell                         # Start interactive shell')
+    print('  keeper shell --file                  # Log the shell and its commands to ./keeper.log')
+    print('  keeper shell --file=PATH             # Log the shell and its commands to PATH')
     print('  keeper --server EU login             # Login to EU region')
     print('  keeper login -h                      # Show login command help')
     print('  keeper search "github" --format=json # Search and output JSON')
@@ -144,6 +146,14 @@ def show_brief_help():
     print('User Guide: https://docs.keeper.io/en/keeperpam/commander-cli')
     print('')
     sys.exit(0)
+
+
+HELP_FLAGS = ('-h', '--help')
+
+
+def _wants_help(args):
+    """True when args hold -h or --help."""
+    return any(arg in HELP_FLAGS for arg in args)
 
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False, allow_abbrev=False)
@@ -216,14 +226,31 @@ def main(from_package=False):
             return
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
-    opts, flags = parser.parse_known_args(sys.argv[1:])
-    
+    # --file is a shell startup option. A bare flag does not take the next token.
+    # It is not a main-parser option, so the parser leaves it unparsed. Whether it
+    # belongs to startup depends on the command, so:
+    #   1. parse once only to find the command;
+    #   2. take the startup --file out of the tokens;
+    #   3. parse again, so --file is not left in flags or in opts.options, where it
+    #      would be passed on to the shell or the command.
+    startup_opts, _ = parser.parse_known_args(sys.argv[1:])
+    try:
+        log_file, argv = cli.extract_shell_log_file_arg(
+            sys.argv[1:], startup_opts.command, startup_opts.options)
+    except cli.LogFileOptionError as e:
+        logging.error('Error: %s', e)
+        sys.exit(1)
+    opts, flags = parser.parse_known_args(argv)
+    # Not a parser option: set from the --file taken out above.
+    opts.log_file = log_file
+
     # Store the original command arguments for proper reconstruction
     if opts.command:
         # Find where the command starts in the original args and take everything after it
         try:
-            cmd_index = sys.argv[1:].index(opts.command)
-            original_args_after_command = sys.argv[1:][cmd_index+1:]
+            # Use argv, which no longer holds the --file tokens.
+            cmd_index = argv.index(opts.command)
+            original_args_after_command = argv[cmd_index+1:]
             
             # Filter out arguments that were consumed by the main parser
             filtered_args = []
@@ -269,6 +296,20 @@ def main(from_package=False):
     if opts.silent:
         logging.disable(logging.CRITICAL)
 
+    log_file_path = None
+    # keeper.py with no command becomes the shell further down. Open the log now
+    # so that startup is included. A help or version request does not open one.
+    # The same help checks as below: help after the command keeps shell from
+    # starting, and help with no command shows the brief help and exits.
+    # --version returns before the shell starts.
+    wants_help = _wants_help(original_args_after_command if opts.command else flags)
+    shell_will_start = (
+        not wants_help and not opts.version
+        and (opts.command in cli.SHELL_START_COMMANDS or (from_package and not opts.command))
+    )
+    if shell_will_start and opts.log_file and not opts.silent:
+        log_file_path = cli.debug_manager.attach_log_file(opts.log_file)
+
     params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 
     if opts.batch_mode:
@@ -279,6 +320,9 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
+
+    if log_file_path:
+        logging.info('Logging to file: %s', log_file_path)
 
     # Log SSL certificate selection in debug mode (after logging is configured)
     if opts.debug:
@@ -316,17 +360,10 @@ def main(from_package=False):
         print(f'Keeper Commander, version {__version__}')
         return
 
-    # Handle help flags and commands
-    has_help_flag = flags and len(flags) > 0 and flags[0] in ('-h', '--help')
-
-    if has_help_flag:
-        if not opts.command:
-            # 'keeper -h' with no command → show brief help
-            show_brief_help()
-        else:
-            # 'keeper <command> -h' → pass -h to the command (keep it in original_args)
-            # The -h is already in original_args_after_command, so just continue
-            pass
+    # 'keeper -h' with no command → show brief help and exit.
+    # 'keeper <command> -h' keeps -h in original_args_after_command for the command.
+    if not opts.command and _wants_help(flags):
+        show_brief_help()
 
     # Handle 'keeper help' and 'keeper help <command>'
     if opts.command == 'help':
@@ -364,9 +401,9 @@ def main(from_package=False):
         cli.runcommands(params)
     else:
         # Check if -h/--help is in the arguments for a command
-        command_wants_help = any(arg in ('-h', '--help') for arg in original_args_after_command)
+        command_wants_help = _wants_help(original_args_after_command)
 
-        if opts.command in {'shell', '-'} and not command_wants_help:
+        if opts.command in cli.SHELL_START_COMMANDS and not command_wants_help:
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True
