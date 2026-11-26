@@ -2274,15 +2274,15 @@ class ThycoticAuth:
         }
 
         urlp = urlparse(self.base_url + 'api' + endpoint)
-        queries = tuple(x for x in urlp.query.split(sep='&') if x)
-        base_query = [x for x in queries if not x.startswith('take=') and not x.startswith('skip=')]
+        base_params = tuple(x for x in urlp.query.split(sep='&') if x)
+        page_params = [x for x in base_params if not x.partition('=')[0].lower() in ('take', 'skip')]
         result = []
         skip = 0
-        page = 0
+        page_num = 0
         status = 'finished'
         while True:
-            page += 1
-            q = list(base_query)
+            page_num += 1
+            q = list(page_params)
             q.append(f'take={self.page_size}')
             if skip > 0:
                 q.append(f'skip={skip}')
@@ -2296,12 +2296,12 @@ class ThycoticAuth:
                 raise Exception(self._error_message(rs))
             try:
                 payload = rs.json()
-            except (json.JSONDecodeError, UnicodeDecodeError) as e:
-                logging.warning('Secret Server page %d %s JSON decode error: %s, stopping pagination', page, endpoint, str(e))
+            except (ValueError, UnicodeDecodeError) as e:
+                logging.warning('Secret Server page %d %s JSON decode error: %s, stopping pagination', page_num, endpoint, str(e))
                 status = 'truncated'
                 break
             if not isinstance(payload, dict):
-                logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page, endpoint)
+                logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page_num, endpoint)
                 status = 'truncated'
                 break
             records = payload.get('records')
@@ -2311,26 +2311,26 @@ class ThycoticAuth:
             record_count = len(records) if is_records_list else None
             logging.debug(
                 'Secret Server page %d %s skip=%s take=%s records=%s total=%s hasNext=%s nextSkip=%s accumulated=%s',
-                page, endpoint, skip, self.page_size, record_count, payload.get('total'), has_next, next_skip, len(result) + (record_count or 0))
+                page_num, endpoint, skip, self.page_size, record_count, payload.get('total'), has_next, next_skip, len(result) + (record_count or 0))
             if not is_records_list:
-                logging.warning('Secret Server page %d %s has no records list, stopping pagination', page, endpoint)
+                logging.warning('Secret Server page %d %s has no records list, stopping pagination', page_num, endpoint)
                 status = 'truncated'
                 break
             result.extend(records)
             if record_count < self.page_size:
                 logging.debug(
                     'Secret Server page %d %s short page records=%d take=%d hasNext=%s',
-                    page, endpoint, record_count, self.page_size, has_next)
+                    page_num, endpoint, record_count, self.page_size, has_next)
             if not has_next:
                 break
             if isinstance(next_skip, bool) or not isinstance(next_skip, int) or next_skip <= skip:
                 logging.warning(
                     'Secret Server page %d %s hasNext but nextSkip=%s does not advance from skip=%s, stopping pagination',
-                    page, endpoint, next_skip, skip)
+                    page_num, endpoint, next_skip, skip)
                 status = 'truncated'
                 break
             skip = next_skip
-        logging.info('Secret Server %s pagination %s, %d record(s) in %d page(s)', endpoint, status, len(result), page)
+        logging.info('Secret Server %s pagination %s, %d record(s) in %d page(s)', endpoint, status, len(result), page_num)
         return result
 
     @staticmethod
