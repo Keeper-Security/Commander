@@ -1022,6 +1022,77 @@ class TestSecretServerRateLimit(TestCase):
         sleep.assert_not_called()
 
 
+class TestSecretServerPagination(TestCase):
+    def _auth(self):
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        auth.access_token = 'token'
+        auth.expires_in = 3600
+        auth.last_login = 10 ** 12
+        return auth
+
+    def _page(self, records, has_next, next_skip, total):
+        return _response(200, {
+            'records': records,
+            'hasNext': has_next,
+            'nextSkip': next_skip,
+            'total': total,
+        })
+
+    def test_last_page_with_one_record_is_kept(self):
+        pages = [
+            self._page([{'id': 1}, {'id': 2}], True, 2, 3),
+            self._page([{'id': 3}], False, 4, 3),
+        ]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=pages) as get:
+            with self.assertLogs(level='DEBUG') as logs:
+                result = self._auth().thycotic_search('/v1/secrets/lookup')
+        self.assertEqual([row['id'] for row in result], [1, 2, 3])
+        self.assertEqual(get.call_count, 2)
+        self.assertIn('skip=2', get.call_args_list[1].args[0])
+        text = '\n'.join(logs.output)
+        self.assertIn('records=1', text)
+        self.assertIn('short page records=1 take=1000 hasNext=False', text)
+        self.assertIn('pagination finished, 3 record(s) in 2 page(s)', text)
+
+    def test_one_record_page_with_has_next_continues(self):
+        pages = [
+            self._page([{'id': 1}], True, 1, 2),
+            self._page([{'id': 2}], False, 2, 2),
+        ]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=pages) as get:
+            with self.assertLogs(level='DEBUG') as logs:
+                result = self._auth().thycotic_search('/v1/secrets/lookup')
+        self.assertEqual([row['id'] for row in result], [1, 2])
+        self.assertEqual(get.call_count, 2)
+        self.assertIn('short page records=1 take=1000 hasNext=True', '\n'.join(logs.output))
+
+    def test_has_next_without_advancing_skip_stops(self):
+        stuck = self._page([{'id': 1}], True, 0, 5)
+        with mock.patch.object(thycotic.requests, 'get', return_value=stuck) as get:
+            with self.assertLogs(level='WARNING') as logs:
+                result = self._auth().thycotic_search('/v1/users')
+        self.assertEqual(result, [{'id': 1}])
+        get.assert_called_once()
+        self.assertIn('does not advance from skip=0', '\n'.join(logs.output))
+
+    def test_missing_records_list_stops(self):
+        with mock.patch.object(thycotic.requests, 'get', return_value=_response(200, {'hasNext': True, 'nextSkip': 1000})):
+            with self.assertLogs(level='WARNING') as logs:
+                result = self._auth().thycotic_search('/v1/users')
+        self.assertEqual(result, [])
+        self.assertIn('has no records list', '\n'.join(logs.output))
+
+    def test_full_page_with_has_next_false_stops(self):
+        full_page = self._page([{'id': i} for i in range(1, 1001)], False, 1000, 1000)
+        with mock.patch.object(thycotic.requests, 'get', return_value=full_page) as get:
+            with self.assertLogs(level='DEBUG') as logs:
+                result = self._auth().thycotic_search('/v1/secrets')
+        self.assertEqual(len(result), 1000)
+        get.assert_called_once()
+        log_text = '\n'.join(logs.output)
+        self.assertNotIn('short page', log_text)
+
+
 class TestSecretShareHelpers(TestCase):
     def test_folder_path_accepts_int_or_str_ids(self):
         folders = {10: {'folderPath': '\\Apps'}, '11': {'folderPath': '\\Ops'}}
@@ -1040,6 +1111,13 @@ class TestSecretShareHelpers(TestCase):
         self.assertEqual(record.title, 'prod-db')
         self.assertFalse(record.folders)
         self.assertIs(record.shares, shares)
+
+    def test_membership_lookup_uses_secrets_lookup_query(self):
+        auth = _secret_auth([])
+        list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        expected_query = thycotic.build_secrets_lookup_query()
+        self.assertIn(expected_query, auth.calls)
+        self.assertTrue(any('includeRestricted=true' in call for call in auth.calls))
 
     def test_unnamed_secret_does_not_load_groups(self):
         secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritPermissions': False}

@@ -876,7 +876,7 @@ class ThycoticMixin:
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search('/v1/secrets/lookup') or []
+            lookup = auth.thycotic_search(build_secrets_lookup_query()) or []
         except Exception as exc:
             logging.warning('secret lookup for permissions: %s', exc)
             return
@@ -2164,6 +2164,7 @@ class ThycoticAuth:
     max_throttle_retries = 3
     throttle_backoff_seconds = 5
     max_throttle_wait_seconds = 300
+    page_size = 1000
 
     def __init__(self, base_url):    # type: (str) -> None
         if not base_url.endswith('/'):
@@ -2273,12 +2274,16 @@ class ThycoticAuth:
         }
 
         urlp = urlparse(self.base_url + 'api' + endpoint)
-        queries = tuple(x for x in urlp.query.split(sep='&') if x)
+        base_params = tuple(x for x in urlp.query.split(sep='&') if x)
+        page_params = [x for x in base_params if not x.partition('=')[0].lower() in ('take', 'skip')]
         result = []
         skip = 0
+        page_num = 0
+        status = 'finished'
         while True:
-            q = list(queries)
-            q.append('take=1000')
+            page_num += 1
+            q = list(page_params)
+            q.append(f'take={self.page_size}')
             if skip > 0:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
@@ -2289,16 +2294,43 @@ class ThycoticAuth:
                 rs = self._get(url, headers=headers)
             if rs.status_code != 200:
                 raise Exception(self._error_message(rs))
-            chunk_rs = rs.json()
-            records = chunk_rs.get('records')
-            if isinstance(records, list):
-                result.extend(records)
-            else:
+            try:
+                payload = rs.json()
+            except (ValueError, UnicodeDecodeError) as e:
+                logging.warning('Secret Server page %d %s JSON decode error: %s, stopping pagination', page_num, endpoint, str(e))
+                status = 'truncated'
                 break
-            if chunk_rs.get('hasNext') is True:
-                skip = chunk_rs['nextSkip']
-            else:
+            if not isinstance(payload, dict):
+                logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page_num, endpoint)
+                status = 'truncated'
                 break
+            records = payload.get('records')
+            is_records_list = isinstance(records, list)
+            has_next = payload.get('hasNext') is True
+            next_skip = payload.get('nextSkip')
+            record_count = len(records) if is_records_list else None
+            logging.debug(
+                'Secret Server page %d %s skip=%s take=%s records=%s total=%s hasNext=%s nextSkip=%s accumulated=%s',
+                page_num, endpoint, skip, self.page_size, record_count, payload.get('total'), has_next, next_skip, len(result) + (record_count or 0))
+            if not is_records_list:
+                logging.warning('Secret Server page %d %s has no records list, stopping pagination', page_num, endpoint)
+                status = 'truncated'
+                break
+            result.extend(records)
+            if record_count < self.page_size:
+                logging.debug(
+                    'Secret Server page %d %s short page records=%d take=%d hasNext=%s',
+                    page_num, endpoint, record_count, self.page_size, has_next)
+            if not has_next:
+                break
+            if isinstance(next_skip, bool) or not isinstance(next_skip, int) or next_skip <= skip:
+                logging.warning(
+                    'Secret Server page %d %s hasNext but nextSkip=%s does not advance from skip=%s, stopping pagination',
+                    page_num, endpoint, next_skip, skip)
+                status = 'truncated'
+                break
+            skip = next_skip
+        logging.info('Secret Server %s pagination %s, %d record(s) in %d page(s)', endpoint, status, len(result), page_num)
         return result
 
     @staticmethod
