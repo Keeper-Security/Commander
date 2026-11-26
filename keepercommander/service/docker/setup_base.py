@@ -23,21 +23,172 @@ import os
 import sys
 import tempfile
 import uuid
-from typing import Dict, Any
+from typing import Any, Dict, Optional, Tuple
 
 from ...commands.ksm import KSMCommand
 from ... import api, vault, utils, crypto, attachment, record_management, loginv3
 from ...display import bcolors
 from ...error import CommandError, KeeperApiError
 
-from .models import SetupResult, SetupStep, DockerSetupConstants
+from .models import DockerLoginMode, DockerSetupConstants, SetupResult, SetupStep
 from .printer import DockerSetupPrinter
-from ..config.config_validation import ConfigValidator, ValidationError
+from .federated_setup import (
+    FederatedSetupOptions,
+    create_federated_config,
+    remove_managed_login_artifacts,
+    read_jwt_claims,
+    upload_federated_artifacts,
+)
 from ..config.record_handler import RecordHandler
 
 
 class DockerSetupBase:
     """Base class for Docker setup with reusable core logic"""
+
+    @staticmethod
+    def add_login_flow_arguments(parser) -> None:
+        """Add the common login-flow arguments to a Docker setup parser."""
+        parser.add_argument(
+            '--login-flow',
+            choices=[mode.value for mode in DockerLoginMode],
+            help=(
+                'Service Mode login: ksm (Commander config.json) or oidc (federated OIDC); '
+                'if omitted, prompt interactively'
+            ),
+        )
+        parser.add_argument(
+            '--oidc-token-file',
+            dest='oidc_token_file',
+            help='Path to an OIDC JWT file (required for --login-flow oidc)',
+        )
+        parser.add_argument(
+            '--oidc-issuer',
+            dest='oidc_issuer',
+            help='Expected OIDC issuer (defaults to the JWT iss claim)',
+        )
+        parser.add_argument(
+            '--oidc-subject',
+            dest='oidc_subject',
+            help='Expected OIDC subject (defaults to the JWT sub claim)',
+        )
+        parser.add_argument(
+            '--oidc-jwks-uri',
+            dest='oidc_jwks_uri',
+            help='Optional issuer JWKS URI (blank uses OIDC discovery)',
+        )
+
+    @staticmethod
+    def _select_login_mode(login_flow: Optional[str], command_name: str) -> DockerLoginMode:
+        if login_flow:
+            try:
+                return DockerLoginMode(login_flow)
+            except ValueError:
+                raise CommandError(command_name, f'Unsupported login flow: {login_flow}')
+
+        DockerSetupPrinter.print_header('Config Setup')
+        print(f'{bcolors.BOLD}1. Commander config.json{bcolors.ENDC}')
+        print(
+            '  Downloads config.json from the Keeper record and uses it to log in to Service Mode.'
+        )
+        print(f'\n{bcolors.BOLD}2. Federated OIDC{bcolors.ENDC}')
+        print(
+            '  Uses a provider JWT and federated config to create the Keeper session.'
+        )
+        while True:
+            prompt = (
+                f'{bcolors.OKBLUE}Select Service Mode login? '
+                f'[Press Enter for 1] (1/2):{bcolors.ENDC} '
+            )
+            choice = input(prompt).strip().lower()
+            if not choice or choice == '1':
+                return DockerLoginMode.KSM
+            if choice == '2':
+                return DockerLoginMode.OIDC
+            print('Please enter 1 or 2.')
+
+    @staticmethod
+    def collect_login_options(
+        login_flow: Optional[str] = None,
+        oidc_token_file: Optional[str] = None,
+        oidc_issuer: Optional[str] = None,
+        oidc_subject: Optional[str] = None,
+        oidc_jwks_uri: Optional[str] = None,
+        command_name: str = 'docker-setup',
+        default_oidc_token_file: Optional[str] = None,
+    ) -> Tuple[DockerLoginMode, Optional[FederatedSetupOptions]]:
+        """Resolve login mode and validate OIDC input before provisioning resources."""
+        login_mode = DockerSetupBase._select_login_mode(login_flow, command_name)
+        if login_mode is DockerLoginMode.KSM:
+            if any((oidc_token_file, oidc_issuer, oidc_subject, oidc_jwks_uri)):
+                raise CommandError(
+                    command_name,
+                    'OIDC-specific options require --login-flow oidc',
+                )
+            return login_mode, None
+
+        print(f'\n{bcolors.BOLD}OIDC JWT{bcolors.ENDC}')
+        print('  Provide a provider-issued JWT; Keeper uses it to validate federated login.')
+        token_input = oidc_token_file
+        if not token_input:
+            default_token = default_oidc_token_file or os.path.join(
+                str(utils.get_default_path()), DockerSetupConstants.OIDC_TOKEN_FILENAME
+            )
+            default_token = os.path.abspath(os.path.expanduser(default_token))
+            prompt = (
+                f'{bcolors.OKBLUE}JWT file path? [Press Enter for {default_token}]:'
+                f'{bcolors.ENDC} '
+            )
+            token_input = input(prompt).strip() or default_token
+        token_path = os.path.abspath(os.path.expanduser(token_input))
+        claims = read_jwt_claims(token_path, command_name)
+
+        issuer_default = claims.get('iss')
+        subject_default = claims.get('sub')
+        oidc_issuer = (oidc_issuer or '').strip()
+        oidc_subject = (oidc_subject or '').strip()
+        if not oidc_issuer and not issuer_default:
+            print(f'\n{bcolors.BOLD}OIDC Issuer{bcolors.ENDC}')
+            print('  The JWT issuer URL.')
+            oidc_issuer = input(f'{bcolors.OKBLUE}Issuer?{bcolors.ENDC} ').strip()
+        issuer = oidc_issuer or issuer_default or ''
+        if not oidc_subject and not subject_default:
+            print(f'\n{bcolors.BOLD}OIDC Subject{bcolors.ENDC}')
+            print('  The identity represented by the JWT.')
+            oidc_subject = input(f'{bcolors.OKBLUE}Subject?{bcolors.ENDC} ').strip()
+        subject = oidc_subject or subject_default or ''
+        if not issuer:
+            raise CommandError(command_name, 'OIDC issuer is required')
+        if not subject:
+            raise CommandError(command_name, 'OIDC subject is required')
+        if issuer_default and issuer != issuer_default:
+            raise CommandError(
+                command_name,
+                'The configured OIDC issuer must exactly match the JWT iss claim',
+            )
+        if subject_default and subject != subject_default:
+            raise CommandError(
+                command_name,
+                'The configured OIDC subject must exactly match the JWT sub claim',
+            )
+
+        if oidc_jwks_uri is None:
+            print(f'\n{bcolors.BOLD}OIDC JWKS URI (optional){bcolors.ENDC}')
+            print(
+                '  Optional signing-key URL; Keeper registers it when supplied.'
+            )
+            oidc_jwks_uri = input(
+                f'{bcolors.OKBLUE}JWKS URI? [Press Enter for issuer discovery]:'
+                f'{bcolors.ENDC} '
+            ).strip()
+        else:
+            oidc_jwks_uri = oidc_jwks_uri.strip()
+
+        return login_mode, FederatedSetupOptions(
+            token_path=token_path,
+            issuer=issuer,
+            subject=subject,
+            jwks_uri=oidc_jwks_uri or None,
+        )
 
     @staticmethod
     def _is_owned_record(params, record_uid: str) -> bool:
@@ -120,16 +271,50 @@ class DockerSetupBase:
             )
 
     def run_setup_steps(self, params, folder_name: str, app_name: str, record_name: str,
-                       config_path: str, timeout: str, skip_device_setup: bool = False) -> SetupResult:
+                       config_path: str, timeout: str, skip_device_setup: bool = False,
+                       login_mode: DockerLoginMode = DockerLoginMode.KSM,
+                       federated_options: Optional[FederatedSetupOptions] = None,
+                       command_name: str = 'docker-setup') -> SetupResult:
         """
         Core setup steps that can be reused by integration commands.
         Returns a SetupResult object containing all the created resources.
         """
+        if login_mode is DockerLoginMode.OIDC and not RecordHandler.has_file_storage(params):
+            raise CommandError(
+                command_name,
+                'Federated OIDC setup requires Keeper file storage to upload federated-config.json '
+                'and the OIDC JWT as record attachments.',
+            )
+        if login_mode is DockerLoginMode.OIDC and not federated_options:
+            raise CommandError(command_name, 'OIDC login options were not supplied')
+        if login_mode is DockerLoginMode.OIDC:
+            try:
+                token_is_commander_config = os.path.samefile(
+                    federated_options.token_path, config_path
+                )
+            except OSError:
+                token_is_commander_config = (
+                    os.path.realpath(federated_options.token_path)
+                    == os.path.realpath(config_path)
+                )
+            if token_is_commander_config:
+                raise CommandError(
+                    command_name,
+                    'The OIDC JWT file must be separate from your local Commander config.json',
+                )
+
         # Total number of steps
         total_steps = len(SetupStep)
         
-        # Step 1: Device setup
-        if not skip_device_setup:
+        # OIDC containers authenticate with a federated client and do not use
+        # the local Commander device token or persistent-login settings.
+        if login_mode is DockerLoginMode.OIDC:
+            DockerSetupPrinter.print_step(
+                SetupStep.DEVICE_SETUP.value,
+                total_steps,
+                'Skipping device setup (not used by federated login)...',
+            )
+        elif not skip_device_setup:
             DockerSetupPrinter.print_step(SetupStep.DEVICE_SETUP.value, total_steps, "Checking device settings...")
             self._setup_device(params, timeout)
         else:
@@ -143,21 +328,57 @@ class DockerSetupBase:
         DockerSetupPrinter.print_step(SetupStep.CREATE_RECORD.value, total_steps, f"Creating record '{record_name}'...")
         record_uid = self._create_config_record(params, record_name, folder_uid)
 
-        # Step 4: Store config file (attachment or custom field)
-        DockerSetupPrinter.print_step(SetupStep.UPLOAD_CONFIG.value, total_steps, "Storing config.json...")
-        self._upload_config_file(params, record_uid, config_path)
-
-        # Step 5: Create KSM app
+        # Step 4: Create KSM app
         DockerSetupPrinter.print_step(SetupStep.CREATE_KSM_APP.value, total_steps, f"Creating Secrets Manager app '{app_name}'...")
         app_uid = self._create_ksm_app(params, app_name)
 
-        # Step 6: Share folder with app
+        # Step 5: Share folder with app
         DockerSetupPrinter.print_step(SetupStep.SHARE_FOLDER.value, total_steps, "Sharing folder with app...")
         self._share_folder_with_app(params, app_uid, folder_uid)
 
-        # Step 7: Create client device
+        # Step 6: Create KSM client device used to bootstrap record access.
         DockerSetupPrinter.print_step(SetupStep.CREATE_CLIENT.value, total_steps, "Creating client device and generating config...")
         b64_config = self._create_client_device(params, app_uid, app_name)
+
+        # Step 7: Store only the selected runtime login artifacts.
+        if login_mode is DockerLoginMode.OIDC:
+            DockerSetupPrinter.print_step(
+                SetupStep.STORE_LOGIN_ARTIFACTS.value,
+                total_steps,
+                'Registering federated login and uploading OIDC artifacts...',
+            )
+            federated_config_path = create_federated_config(
+                params,
+                app_uid,
+                federated_options,
+                command_name,
+                output_dir=os.path.dirname(config_path),
+            )
+            try:
+                upload_federated_artifacts(
+                    params,
+                    record_uid,
+                    federated_config_path,
+                    federated_options.token_path,
+                    command_name,
+                )
+            except Exception:
+                try:
+                    os.unlink(federated_config_path)
+                except OSError as cleanup_error:
+                    logging.warning(
+                        'Could not remove generated federated config at %s after upload failure: %s',
+                        federated_config_path,
+                        cleanup_error,
+                    )
+                raise
+            cleanup_paths = [federated_config_path, federated_options.token_path]
+        else:
+            DockerSetupPrinter.print_step(
+                SetupStep.STORE_LOGIN_ARTIFACTS.value, total_steps, 'Storing config.json...'
+            )
+            self._upload_config_file(params, record_uid, config_path)
+            cleanup_paths = []
 
         return SetupResult(
             folder_uid=folder_uid,
@@ -165,7 +386,9 @@ class DockerSetupBase:
             app_uid=app_uid,
             app_name=app_name,
             record_uid=record_uid,
-            b64_config=b64_config
+            b64_config=b64_config,
+            login_mode=login_mode,
+            cleanup_paths=cleanup_paths,
         )
 
     # ========================
@@ -331,7 +554,7 @@ class DockerSetupBase:
         record = vault.KeeperRecord.load(params, record_uid)
         if not isinstance(record, vault.TypedRecord):
             raise CommandError('docker-setup', 'Invalid record type for attachments')
-        self._delete_existing_config_attachments(record, params)
+        remove_managed_login_artifacts(record, params)
 
         upload_task = attachment.FileUploadTask(config_path)
         upload_task.name = 'config.json'
@@ -353,9 +576,9 @@ class DockerSetupBase:
         if not isinstance(record, vault.TypedRecord):
             raise CommandError('docker-setup', 'Invalid record type')
 
+        remove_managed_login_artifacts(record, params)
         if record.custom is None:
             record.custom = []
-        record.custom = [f for f in record.custom if f.label != 'config_json']
         record.custom.append(vault.TypedField.new_field('secret', config_content, 'config_json'))
 
         record_management.update_record(params, record)
@@ -364,27 +587,6 @@ class DockerSetupBase:
 
         DockerSetupPrinter.print_success("Config stored as custom field (no file storage plan)")
 
-    def _delete_existing_config_attachments(self, record, params) -> None:
-        """Delete any existing config.json attachments to prevent duplicates"""
-        # Modern records use TypedRecord with fileRef system
-        from ...record_facades import FileRefRecordFacade
-        facade = FileRefRecordFacade()
-        facade.record = record
-        
-        file_uids_to_remove = []
-        for file_uid in facade.file_ref:
-            if file_uid in params.record_cache:
-                file_record = vault.KeeperRecord.load(params, file_uid)
-                if isinstance(file_record, vault.FileRecord):
-                    if file_record.name.lower() == 'config.json' or file_record.title.lower() == 'config.json':
-                        file_uids_to_remove.append(file_uid)
-        
-        if file_uids_to_remove:
-            for file_uid in file_uids_to_remove:
-                facade.file_ref.remove(file_uid)
-            DockerSetupPrinter.print_success(f"Removed {len(file_uids_to_remove)} existing config.json attachment(s)")
-
-    
     def _clean_config_json(self, config_path: str) -> str:
         """Clean config.json by keeping only essential authentication keys"""
         try:
@@ -587,6 +789,8 @@ class DockerSetupBase:
 
     def _get_ngrok_config(self) -> Dict[str, Any]:
         """Get ngrok configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}Ngrok Tunneling (optional):{bcolors.ENDC}")
         print(f"  Generate a public URL for your service using ngrok")
         use_ngrok = input(f"{bcolors.OKBLUE}Enable ngrok? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
@@ -624,6 +828,8 @@ class DockerSetupBase:
 
     def _get_cloudflare_config(self) -> Dict[str, Any]:
         """Get Cloudflare configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}Cloudflare Tunneling (optional):{bcolors.ENDC}")
         print(f"  Generate a public URL for your service using Cloudflare")
         use_cloudflare = input(f"{bcolors.OKBLUE}Enable Cloudflare? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
@@ -654,6 +860,8 @@ class DockerSetupBase:
 
     def _get_tailscale_config(self) -> Dict[str, Any]:
         """Get Tailscale Funnel configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}Tailscale Funnel (optional):{bcolors.ENDC}")
         print(f"  Generate a public URL for your service using Tailscale Funnel")
         use_tailscale = input(f"{bcolors.OKBLUE}Enable Tailscale? [Press Enter for No] (y/n):{bcolors.ENDC} ").strip().lower() == 'y'
@@ -710,6 +918,8 @@ class DockerSetupBase:
 
     def _get_ip_allowed_config(self) -> Dict[str, str]:
         """Get allowed IP configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}IP Allowed List:{bcolors.ENDC}")
         print(f"  Comma-separated IPs or CIDR ranges (e.g., 192.168.1.0/24,10.0.0.1)")
 
@@ -731,6 +941,8 @@ class DockerSetupBase:
 
     def _get_ip_denied_config(self) -> Dict[str, str]:
         """Get denied IP configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}IP Denied List:{bcolors.ENDC}")
         print(f"  Comma-separated IPs or CIDR ranges to block")
 
@@ -752,6 +964,8 @@ class DockerSetupBase:
 
     def _get_rate_limit_config(self) -> Dict[str, str]:
         """Get rate limiting configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}Rate Limiting:{bcolors.ENDC}")
         print(f"  Format: <number>/<period> (e.g., 10/minute, 100/hour, 1000/day)")
 
@@ -773,6 +987,8 @@ class DockerSetupBase:
 
     def _get_encryption_config(self) -> Dict[str, Any]:
         """Get encryption configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}Response Encryption:{bcolors.ENDC}")
         print(f"  Enable AES-256 encryption for API responses")
         enable_encryption = input(
@@ -795,6 +1011,8 @@ class DockerSetupBase:
 
     def _get_token_expiration_config(self) -> Dict[str, str]:
         """Get token expiration configuration"""
+        from ..config.config_validation import ConfigValidator, ValidationError
+
         print(f"\n{bcolors.BOLD}API Token Expiration:{bcolors.ENDC}")
         print(f"  Format: Xm (minutes), Xh (hours), Xd (days) - e.g., 30m, 24h, 7d")
 

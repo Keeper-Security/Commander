@@ -181,6 +181,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             '--skip-device-setup', dest='skip_device_setup', action='store_true',
             help='Skip device registration and setup if already configured'
         )
+        self.add_login_flow_arguments(parser)
         if self.get_approvals_profile() is not None:
             parser.add_argument(
                 '--sync-down', dest='sync_down', action='store_true',
@@ -231,11 +232,30 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             self._execute_sync_down(params, record_uid, sync_vault=sync_vault)
             return
 
-        self._require_file_based_config(params, f'{name.lower()}-app-setup')
+        command_name = self.get_command_name()
+        self._require_file_based_config(params, command_name)
+        config_path = self._require_commander_config_file(
+            command_name,
+            kwargs.get('config_path'),
+            params,
+        )
+        login_mode, federated_options = self.collect_login_options(
+            login_flow=kwargs.get('login_flow'),
+            oidc_token_file=kwargs.get('oidc_token_file'),
+            oidc_issuer=kwargs.get('oidc_issuer'),
+            oidc_subject=kwargs.get('oidc_subject'),
+            oidc_jwks_uri=kwargs.get('oidc_jwks_uri'),
+            command_name=command_name,
+            default_oidc_token_file=os.path.join(
+                os.path.dirname(config_path), DockerSetupConstants.OIDC_TOKEN_FILENAME
+            ),
+        )
 
         # Phase 1 -- Docker service mode setup
         print(f"\n{bcolors.BOLD}Phase 1: Running Docker Service Mode Setup{bcolors.ENDC}")
-        setup_result, service_config, config_path = self._run_base_docker_setup(params, kwargs)
+        setup_result, service_config, config_path = self._run_base_docker_setup(
+            params, kwargs, login_mode, federated_options, config_path=config_path
+        )
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
 
         # Phase 2 -- Integration-specific setup
@@ -250,14 +270,10 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
 
     # -- Phase 1 (docker service mode) --------------------------------
 
-    def _run_base_docker_setup(self, params, kwargs: Dict[str, Any]) -> Tuple[SetupResult, ServiceConfig, str]:
+    def _run_base_docker_setup(self, params, kwargs: Dict[str, Any],
+                               login_mode, federated_options,
+                               config_path: str) -> Tuple[SetupResult, ServiceConfig, str]:
         docker_cmd = ServiceDockerSetupCommand()
-
-        config_path = self._require_commander_config_file(
-            self.get_command_name(),
-            kwargs.get('config_path'),
-            params,
-        )
 
         DockerSetupPrinter.print_header("Docker Setup")
 
@@ -268,7 +284,10 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             record_name=kwargs.get('config_record_name', DockerSetupConstants.DEFAULT_RECORD_NAME),
             config_path=config_path,
             timeout=kwargs.get('timeout', DockerSetupConstants.DEFAULT_TIMEOUT),
-            skip_device_setup=kwargs.get('skip_device_setup', False)
+            skip_device_setup=kwargs.get('skip_device_setup', False),
+            login_mode=login_mode,
+            federated_options=federated_options,
+            command_name=self.get_command_name(),
         )
 
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
@@ -516,7 +535,12 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
         print(f"  {bcolors.BOLD}Phase 2 - {display_name} App:{bcolors.ENDC}")
         self._print_integration_resources(record_uid, config)
 
-        DockerSetupPrinter.print_common_deployment_steps(str(service_config.port), config_path)
+        DockerSetupPrinter.print_common_deployment_steps(
+            str(service_config.port),
+            config_path,
+            login_mode=setup_result.login_mode,
+            cleanup_paths=setup_result.cleanup_paths,
+        )
 
         container = self.get_docker_container_name()
         print(f"  {bcolors.OKGREEN}docker logs {container}{bcolors.ENDC} - View {display_name} App logs")

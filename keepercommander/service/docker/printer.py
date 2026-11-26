@@ -16,7 +16,7 @@ Output formatting utilities for Docker setup commands.
 import shlex
 
 from ...display import bcolors
-from .models import SetupResult
+from .models import DockerLoginMode, SetupResult
 
 
 class DockerSetupPrinter:
@@ -58,22 +58,40 @@ class DockerSetupPrinter:
         print(f"{indent}• Shared Folder: {bcolors.OKBLUE}{setup_result.folder_name}{bcolors.ENDC}")
         print(f"{indent}• KSM App: {bcolors.OKBLUE}{setup_result.app_name}{bcolors.ENDC} (with edit permissions)")
         print(f"{indent}• Config Record: {bcolors.OKBLUE}{setup_result.record_uid}{bcolors.ENDC}")
-        print(f"{indent}• KSM Base64 Config: {bcolors.OKGREEN}✓ Generated{bcolors.ENDC}")
+        print(
+            f"{indent}• KSM Bootstrap Config: {bcolors.OKGREEN}✓ Generated{bcolors.ENDC} "
+            f"(used to fetch the Docker record)"
+        )
     
     @staticmethod
     def print_common_deployment_steps(port: str, config_path: str = None,
-                                      container_name: str = 'keeper-service') -> None:
+                                      container_name: str = 'keeper-service',
+                                      login_mode: DockerLoginMode = DockerLoginMode.KSM,
+                                      cleanup_paths=None) -> None:
         """Print common deployment steps (header + steps 1-5)"""
         DockerSetupPrinter.print_header("Next Steps to Deploy")
         
         print(f"\n{bcolors.BOLD}Step 1: Quit from this session{bcolors.ENDC}")
         print(f"  {bcolors.OKGREEN}quit{bcolors.ENDC}")
         
-        from ... import utils
-        config_file = config_path if config_path else str(utils.get_default_path() / 'config.json')
-        print(f"\n{bcolors.BOLD}Step 2: Delete the local config.json file{bcolors.ENDC}")
-        print(f"  {bcolors.OKGREEN}rm {shlex.quote(config_file)}{bcolors.ENDC}")
-        print(f"  Why? Prevents device token conflicts - Docker will download its own config.")
+        if login_mode == DockerLoginMode.OIDC:
+            paths = cleanup_paths or []
+            print(f"\n{bcolors.BOLD}Step 2: Remove the local federated login files{bcolors.ENDC}")
+            if paths:
+                quoted_paths = ' '.join(shlex.quote(path) for path in paths)
+                print(f"  {bcolors.OKGREEN}rm {quoted_paths}{bcolors.ENDC}")
+            else:
+                print("  Remove the local federated-config.json and JWT files after confirming their upload.")
+            print(
+                "  Keep your local config.json for normal Commander login; the OIDC container "
+                "uses the uploaded federated files instead."
+            )
+        else:
+            from ... import utils
+            config_file = config_path if config_path else str(utils.get_default_path() / 'config.json')
+            print(f"\n{bcolors.BOLD}Step 2: Delete the local config.json file{bcolors.ENDC}")
+            print(f"  {bcolors.OKGREEN}rm {shlex.quote(config_file)}{bcolors.ENDC}")
+            print(f"  Why? Prevents device token conflicts - Docker will download its own config.")
         
         print(f"\n{bcolors.BOLD}Step 3: Review docker-compose.yml{bcolors.ENDC}")
         print(f"  {bcolors.OKGREEN}cat docker-compose.yml{bcolors.ENDC}")
