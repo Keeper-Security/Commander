@@ -61,7 +61,9 @@ PARAM_AUTO_COMMENT = 'autoComment'
 PARAM_NO_AUTO_CHECKOUT = 'noAutoCheckout'
 
 # Audit comment sent with every secret and secret-field read.
-SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
+# Kept outside SecretAccessMode: an Enum class body would treat a plain
+# assignment as another member, and member values are fixed at definition.
+DEFAULT_SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 
 # Delinea error code returned (HTTP 400) when a secret must be checked out
 # before it can be read.
@@ -76,21 +78,32 @@ SECRET_ACCESS_PARAM_NAMES = frozenset((
 class SecretAccessMode(Enum):
     """How a secret or secret field is read, with the query parameters each mode sends."""
     # Plain read: the server must not check the secret out.
+    # autoComment's value is filled from the comment passed to params().
     PLAIN = (
         (PARAM_AUTO_CHECKOUT, 'false'),
-        (PARAM_AUTO_COMMENT, SECRET_ACCESS_COMMENT),
+        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMMENT),
         (PARAM_NO_AUTO_CHECKOUT, 'true'),
     )
     # Checkout read: the secret is checked out and checked back in after the response.
     CHECKOUT = (
         (PARAM_AUTO_CHECKOUT, 'true'),
         (PARAM_AUTO_CHECKIN, 'true'),
-        (PARAM_AUTO_COMMENT, SECRET_ACCESS_COMMENT),
+        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMMENT),
     )
 
-    @property
-    def params(self):  # type: () -> Tuple[Tuple[str, str], ...]
-        return self.value
+    def params(self, comment=None):  # type: (Optional[str]) -> Tuple[Tuple[str, str], ...]
+        comment = normalize_checkout_comment(comment)
+        return tuple(
+            (key, comment if key == PARAM_AUTO_COMMENT else value)
+            for key, value in self.value
+        )
+
+
+def normalize_checkout_comment(comment):  # type: (Optional[str]) -> str
+    """Return the stripped comment. A blank or missing comment gives the default."""
+    if isinstance(comment, str) and comment.strip():
+        return comment.strip()
+    return DEFAULT_SECRET_ACCESS_COMMENT
 
 
 @dataclass(frozen=True)
@@ -134,8 +147,8 @@ def _replace_query(endpoint, params):
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
 
-def with_secret_access_params(endpoint, mode=SecretAccessMode.PLAIN):
-    # type: (str, SecretAccessMode) -> str
+def with_secret_access_params(endpoint, mode=SecretAccessMode.PLAIN, comment=None):
+    # type: (str, SecretAccessMode, Optional[str]) -> str
     """Add checkout and comment parameters to a secret read URL.
 
     Existing query parameters are kept. Any existing checkout or comment
@@ -143,7 +156,7 @@ def with_secret_access_params(endpoint, mode=SecretAccessMode.PLAIN):
     """
     query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
     params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
-    params.extend(mode.params)
+    params.extend(mode.params(comment))
     return _replace_query(endpoint, params)
 
 
@@ -1733,7 +1746,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         if not password:
             raise Exception('Import canceled')
 
-        auth = ThycoticAuth(host)
+        auth = ThycoticAuth(host, checkout_comment=kwargs.get('checkout_comment'))
         auth.proxy = params.rest_context.proxies if params else None
         auth.authenticate(username, password, ThycoticImporter.request_totp)
 
@@ -2225,10 +2238,11 @@ class ThycoticAuth:
     max_throttle_wait_seconds = 300
     page_size = 1000
 
-    def __init__(self, base_url):    # type: (str) -> None
+    def __init__(self, base_url, checkout_comment=None):    # type: (str, Optional[str]) -> None
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
+        self.checkout_comment = normalize_checkout_comment(checkout_comment)
         self.access_token = ''
         self.expires_in = 0
         self.refresh_token = ''
@@ -2439,9 +2453,8 @@ class ThycoticAuth:
         """True when the server refused a read because the secret must be checked out."""
         return status == 400 and SECRET_REQUIRES_CHECKOUT_ERROR in (error_code, message)
 
-    @staticmethod
-    def _read_with_checkout_retry(endpoint, fetch, needs_checkout, discard=None):
-        # type: (str, Callable[[str], Any], Callable[[Any], bool], Optional[Callable[[Any], None]]) -> Any
+    def _read_with_checkout_retry(self, endpoint, fetch, needs_checkout, discard=None):
+        # type: (ThycoticAuth, str, Callable[[str], Any], Callable[[Any], bool], Optional[Callable[[Any], None]]) -> Any
         """Shared plain-then-checkout read policy.
 
         Calls fetch with the plain-read URL. Only when needs_checkout says the
@@ -2449,11 +2462,11 @@ class ThycoticAuth:
         again with autoCheckout and autoCheckIn. discard, if given, releases the
         first response before the retry.
         """
-        result = fetch(with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
+        result = fetch(with_secret_access_params(endpoint, SecretAccessMode.PLAIN, self.checkout_comment))
         if needs_checkout(result):
             if discard is not None:
                 discard(result)
-            result = fetch(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
+            result = fetch(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT, self.checkout_comment))
         return result
 
     def read_secret(self, secret_id):  # type: (Union[int, str]) -> ReadSecretResult
