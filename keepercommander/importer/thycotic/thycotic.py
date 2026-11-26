@@ -756,24 +756,15 @@ class ThycoticMixin:
         return rows if isinstance(rows, list) else []
 
     @staticmethod
-    def _fetch_secret_permissions(auth, folders, secret, folder_cache, secret_permissions=None):
-        # type: (ThycoticAuth, Dict, dict, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
-        """Permission rows for one secret from /v2/secrets summary."""
-        if not isinstance(secret, dict) or secret.get('id') is None:
-            return None, []
-        return secret, ThycoticMixin.permission_rows_for_secret(
-            auth, folders, secret, folder_cache, secret_permissions)
-
-    @staticmethod
-    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, secret):
+    def _load_secret_permissions(auth, folders, folder_cache, secret_permissions, secret):
         # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], dict) -> Tuple[Optional[dict], list, Optional[Exception]]
         """Worker task: (secret, rows, None) on success, (None, [], error) on failure. Never raises."""
         try:
-            loaded, rows = ThycoticMixin._fetch_secret_permissions(
+            rows = ThycoticMixin.permission_rows_for_secret(
                 auth, folders, secret, folder_cache, secret_permissions)
-            return loaded, rows, None
+            return rows
         except Exception as exc:
-            return None, [], exc
+            return  [], exc
 
     @staticmethod
     def secret_share_workers(value):
@@ -884,27 +875,27 @@ class ThycoticMixin:
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search(build_secrets_search_query()) or []
+            secrets = auth.thycotic_search(build_secrets_search_query()) or []
         except Exception as exc:
             logging.warning('secret search for permissions: %s', exc)
             return
-        if not isinstance(lookup, list):
-            lookup = []
+        if not isinstance(secrets, list):
+            secrets = []
         folders = folders or {}
-        entries = [row for row in lookup if isinstance(row, dict) and row.get('id') is not None]
+        valid_secrets = [row for row in secrets if isinstance(row, dict) and isinstance(row.get('id'), int)]
         written = 0
         seen = 0
         unmapped = 0
         failed = 0
         custom_role_secrets = 0
         folder_cache = FolderPermissionCache()
-        secret_permissions = ThycoticMixin.all_secret_permission_rows(auth) if entries else None
-        workers = min(ThycoticMixin.secret_share_workers(workers), max(len(entries), 1))
-        logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(entries), workers)
+        secret_permissions = ThycoticMixin.all_secret_permission_rows(auth) if valid_secrets else None
+        workers = min(ThycoticMixin.secret_share_workers(workers), max(len(valid_secrets), 1))
+        logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(valid_secrets), workers)
 
-        fetch = functools.partial(ThycoticMixin._fetch_secret_entry, auth, folders, folder_cache, secret_permissions)
-        for row, (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
-            secret_id = row.get('id')
+        fetch = functools.partial(ThycoticMixin._load_secret_permissions, auth, folders, folder_cache, secret_permissions)
+        for secret, (perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, valid_secrets, workers):
+            secret_id = secret.get('id')
             if error is not None:
                 logging.warning('Secret %s permissions skipped: %s', secret_id, error)
                 failed += 1
@@ -1455,9 +1446,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             failed += len(active_users)
             active_users = []
 
-        requests = []
+        all_requests = []
         for user in queued_users:
-            requests.append({
+            all_requests.append({
                 'command': 'team_queue_user',
                 'team_uid': team_uid,
                 'enterprise_user_id': user.get('enterprise_user_id'),
@@ -1465,14 +1456,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         for user in active_users:
             request = EnterpriseTeamCommand._create_add_user_request(params, team_uid, team_key, user, '')
             if request:
-                requests.append(request)
+                all_requests.append(request)
             else:
                 failed += 1
 
         added = 0
         queued = 0
-        for offset in range(0, len(requests), _TEAM_BATCH_SIZE):
-            chunk = requests[offset:offset + _TEAM_BATCH_SIZE]
+        for offset in range(0, len(all_requests), _TEAM_BATCH_SIZE):
+            chunk = all_requests[offset:offset + _TEAM_BATCH_SIZE]
             try:
                 responses = api.execute_batch(params, chunk) or []
             except Exception as e:
