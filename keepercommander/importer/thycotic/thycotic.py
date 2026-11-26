@@ -61,7 +61,10 @@ PARAM_AUTO_COMMENT = 'autoComment'
 PARAM_NO_AUTO_CHECKOUT = 'noAutoCheckout'
 
 # Audit comment sent with every secret and secret-field read.
+# Kept outside SecretAccessMode: an Enum class body would treat a plain
+# assignment as another member, and member values are fixed at definition.
 SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
+_secret_access_comment = SECRET_ACCESS_COMMENT
 
 # Delinea error code returned (HTTP 400) when a secret must be checked out
 # before it can be read.
@@ -76,21 +79,34 @@ SECRET_ACCESS_PARAM_NAMES = frozenset((
 class SecretAccessMode(Enum):
     """How a secret or secret field is read, with the query parameters each mode sends."""
     # Plain read: the server must not check the secret out.
+    # autoComment's value is filled from the current checkout comment in params.
     PLAIN = (
         (PARAM_AUTO_CHECKOUT, 'false'),
-        (PARAM_AUTO_COMMENT, SECRET_ACCESS_COMMENT),
+        (PARAM_AUTO_COMMENT, ''),
         (PARAM_NO_AUTO_CHECKOUT, 'true'),
     )
     # Checkout read: the secret is checked out and checked back in after the response.
     CHECKOUT = (
         (PARAM_AUTO_CHECKOUT, 'true'),
         (PARAM_AUTO_CHECKIN, 'true'),
-        (PARAM_AUTO_COMMENT, SECRET_ACCESS_COMMENT),
+        (PARAM_AUTO_COMMENT, ''),
     )
 
     @property
     def params(self):  # type: () -> Tuple[Tuple[str, str], ...]
-        return self.value
+        return tuple(
+            (key, _secret_access_comment if key == PARAM_AUTO_COMMENT else value)
+            for key, value in self.value
+        )
+
+    @classmethod
+    def set_view_comment(cls, comment):  # type: (Optional[str]) -> None
+        """Use comment on later secret reads. A blank comment restores the default."""
+        global _secret_access_comment
+        if isinstance(comment, str) and comment.strip():
+            _secret_access_comment = comment.strip()
+        else:
+            _secret_access_comment = SECRET_ACCESS_COMMENT
 
 
 @dataclass(frozen=True)
@@ -1751,7 +1767,8 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
                 self._preview_thycotic_teams(auth)
             else:
                 self._migrate_thycotic_teams(auth, params)
-
+        checkout_comment = kwargs.get('checkout_comment')
+        SecretAccessMode.set_view_comment(checkout_comment)
         totp_codes = {}
         csv_file = 'secrets-export.csv'
         if not os.path.isfile('secrets-export.csv'):
