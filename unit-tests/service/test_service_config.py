@@ -152,6 +152,14 @@ class TestServiceConfig(unittest.TestCase):
         with self.assertRaises(ValidationError):
             self.service_config.validate_command_list("invalid_command", params)
 
+    def test_validate_command_list_rejects_shell_and_session_commands(self):
+        """Interactive shell/session controls must not be grantable to Service Mode keys."""
+        params = KeeperParams()
+        for command in ('clear', 'c', 'history', 'h', 'quit', 'q', 'server'):
+            with self.subTest(command=command):
+                with self.assertRaises(ValidationError):
+                    self.service_config.validate_command_list(command, params)
+
     @unittest.skip
     @patch.object(ServiceConfig, 'record_handler')
     def test_update_or_add_record(self, mock_record_handler):
