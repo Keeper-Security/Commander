@@ -910,6 +910,7 @@ def _import(params, file_format, filename, **kwargs):
     add_users = kwargs.get('add_users') is True
     add_teams = kwargs.get('add_teams') is True
     kdbx_password = kwargs.get('kdbx_password')
+    checkout_comment = kwargs.get('checkout_comment')
     kdbx_key_file = kwargs.get('kdbx_key_file')
 
     import_into_raw = kwargs.get('import_into') or ''
@@ -948,7 +949,7 @@ def _import(params, file_format, filename, **kwargs):
                               dry_run=dry_run, target_node=target_node, use_nsf=use_nsf, record_type=record_type,
                               skip_team=skip_team, skip_role=skip_role, skip_user=skip_user,
                               kdbx_password=kdbx_password, kdbx_key_file=kdbx_key_file,
-                              add_users=add_users, add_teams=add_teams):
+                              add_users=add_users, add_teams=add_teams, checkout_comment=checkout_comment):
         if isinstance(x, ImportEmptyFolder) and not include_empty_folders:
             continue
         if isinstance(x, (ImportRecord, ImportEmptyFolder)):
