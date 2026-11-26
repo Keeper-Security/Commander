@@ -59,7 +59,18 @@ def _auth():
     auth.access_token = 'token'
     auth.expires_in = 3600
     auth.last_login = 2 ** 40
+    # Existing reads stay on the 11.0-11.2 path. Version tests clear this.
+    auth._v2_secrets = False
     return auth
+
+
+def _version(text, status_code=200):
+    body = {'success': True, 'model': {'version': text}}
+    return _response(status_code, '{}', body)
+
+
+def _is_version_url(url):
+    return url.split('?', 1)[0].endswith('/api/v1/version')
 
 
 class TestRestrictedLookup(unittest.TestCase):
@@ -138,6 +149,91 @@ class TestSecretAccessParams(unittest.TestCase):
             mode=SecretAccessMode.PLAIN,
         )
         self.assertEqual(endpoint, f'/v1/secrets/42?{PLAIN_QUERY}')
+
+
+class TestSecretServerVersion(unittest.TestCase):
+    def setUp(self):
+        sleep = mock.patch(SLEEP)
+        sleep.start()
+        self.addCleanup(sleep.stop)
+
+    def _version_unknown(self):
+        auth = _auth()
+        auth._v2_secrets = None
+        return auth
+
+    def test_version_parsing(self):
+        parse = ThycoticAuth.parse_secret_server_version
+        self.assertEqual(parse('11.3.000001'), (11, 3, 1))
+        self.assertEqual(parse('12.0.0'), (12, 0, 0))
+        self.assertEqual(parse('v11.2'), (11, 2))
+        self.assertIsNone(parse(''))
+        self.assertIsNone(parse(None))
+        self.assertIsNone(parse('unknown'))
+
+    def _read_with_version(self, version_response):
+        secret_body = _response(200, '{"id": 42}', {'id': 42})
+        auth = self._version_unknown()
+
+        def get(url, **kwargs):
+            if _is_version_url(url):
+                if isinstance(version_response, Exception):
+                    raise version_response
+                return version_response
+            return secret_body
+
+        with mock.patch(REQUESTS_GET, side_effect=get) as requests_get:
+            self.assertEqual(auth.read_secret(42), ReadSecretResult.ok({'id': 42}))
+            self.assertEqual(auth.read_secret(43), ReadSecretResult.ok({'id': 42}))
+        urls = [call[0][0] for call in requests_get.call_args_list]
+        version_calls = sum(_is_version_url(url) for url in urls)
+        secret_urls = [url for url in urls if '/secrets/4' in url]
+        return auth, version_calls, secret_urls
+
+    def test_v2_secret_read_is_used_from_11_3(self):
+        for text in ('11.3.000001', '11.4.0', '12.0.000000'):
+            with self.subTest(version=text):
+                auth, version_calls, secret_urls = self._read_with_version(_version(text))
+                self.assertTrue(auth._v2_secrets)
+                self.assertEqual(version_calls, 1)
+                self.assertTrue(secret_urls[0].endswith(f'/api/v2/secrets/42?{PLAIN_QUERY}'))
+                self.assertTrue(secret_urls[1].endswith(f'/api/v2/secrets/43?{PLAIN_QUERY}'))
+
+    def test_v1_secret_read_is_used_before_11_3(self):
+        for text in ('11.0.000000', '11.2.000002', '10.9.0'):
+            with self.subTest(version=text):
+                auth, version_calls, secret_urls = self._read_with_version(_version(text))
+                self.assertFalse(auth._v2_secrets)
+                self.assertEqual(version_calls, 1)
+                self.assertTrue(secret_urls[0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
+                self.assertTrue(secret_urls[1].endswith(f'/api/v1/secrets/43?{PLAIN_QUERY}'))
+
+    def test_unreadable_version_defaults_to_v2_and_is_remembered(self):
+        for response in (_version('unknown'), _response(404, 'Not Found'), _response(200, 'not json')):
+            with self.subTest(status=response.status_code, text=response.text):
+                with self.assertLogs(level='INFO'):
+                    auth, version_calls, secret_urls = self._read_with_version(response)
+                self.assertTrue(auth._v2_secrets)
+                self.assertEqual(version_calls, 1)
+                self.assertTrue(secret_urls[0].split('?', 1)[0].endswith('/api/v2/secrets/42'))
+
+    def test_version_failure_is_not_remembered(self):
+        for failure in (requests.exceptions.ConnectionError('blip'), _response(503, 'busy')):
+            with self.subTest(failure=failure):
+                with self.assertLogs(level='INFO'):
+                    auth, version_calls, secret_urls = self._read_with_version(failure)
+                self.assertIsNone(auth._v2_secrets)
+                self.assertEqual(version_calls, 2)
+                self.assertTrue(secret_urls[0].split('?', 1)[0].endswith('/api/v2/secrets/42'))
+
+    def test_checkout_retry_uses_the_same_versioned_url(self):
+        auth = self._version_unknown()
+        auth._v2_secrets = True
+        with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), _response(200, '{"id": 42}', {'id': 42})]) as get:
+            result = auth.read_secret(42)
+        self.assertEqual(result, ReadSecretResult.ok({'id': 42}))
+        self.assertTrue(get.call_args_list[0][0][0].endswith(f'/api/v2/secrets/42?{PLAIN_QUERY}'))
+        self.assertTrue(get.call_args_list[1][0][0].endswith(f'/api/v2/secrets/42?{CHECKOUT_QUERY}'))
 
 
 class TestReadSecret(unittest.TestCase):
