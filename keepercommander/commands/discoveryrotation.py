@@ -4127,10 +4127,9 @@ class PAMGatewayActionRotateCommand(Command):
             if not isinstance(pam_config, vault.TypedRecord):
                 print(f'{bcolors.FAIL}PAM Configuration [{ri_rotation_setting_uid}] is not available.{bcolors.ENDC}')
                 return
-            facade = PamConfigurationRecordFacade()
-            facade.record = pam_config
-
-            config_uid = facade.controller_uid
+            # Keep the PAM Configuration UID. controller_uid identifies its
+            # gateway and is not valid for configuration lookups or rotation.
+            config_uid = ri_rotation_setting_uid
 
         # Match web vault RotateButton (PasswordRotation.tsx:144-149): respect
         # the per-config rotation switch in allowedSettings on the PAM config DAG.

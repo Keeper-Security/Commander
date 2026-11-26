@@ -3199,18 +3199,20 @@ class PAMConnectionEditCommand(Command):
         # config parameter is optional and maybe (auto)resolved from PAM record
         config_name = kwargs.get('config', None)
         cfg_rec = RecordMixin.resolve_single_record(params, config_name)
-        if not cfg_rec and record.version == 6:
+        if (not cfg_rec and record.version == 6
+                and record.record_type in ('pamNetworkConfiguration', 'pamAwsConfiguration',
+                                           'pamAzureConfiguration')):
             cfg_rec = record  # trying to edit PAM Config itself
         config_uid = cfg_rec.record_uid if cfg_rec else None
 
         record_uid = record.record_uid
         record_type = record.record_type
         if record_type not in ("pamMachine pamDatabase pamDirectory pamNetworkConfiguration pamAwsConfiguration "
-                               "pamRemoteBrowser pamAzureConfiguration").split():
+                               "pamRemoteBrowser pamAzureConfiguration pamCloudResource").split():
             raise CommandError('', f"{bcolors.FAIL}This record's type is not supported for connections. "
                                    f"Connections are only supported on pamMachine, pamDatabase, pamDirectory, "
-                                   f"pamRemoteBrowser, pamNetworkConfiguration pamAwsConfiguration, and "
-                                   f"pamAzureConfiguration records{bcolors.ENDC}")
+                                   f"pamRemoteBrowser, pamNetworkConfiguration, pamAwsConfiguration, "
+                                   f"pamAzureConfiguration, and pamCloudResource records{bcolors.ENDC}")
 
         # Effective protocol (existing, or the one being set by this same call via
         # --connections=on --protocol) — shared by --scrollback, --ignore-server-cert,
