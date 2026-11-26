@@ -1,9 +1,11 @@
 """
-Unit tests for PAM Connection Edit `--scrollback` flag.
+Unit tests for the PAM Connection Edit `--scrollback` flag and cloud-resource support.
 
 Covers argument parsing and the up-front validation that runs before any DAG /
 record mutation: allowed record types (pamDatabase, pamMachine, pamDirectory),
-allowed protocols per type, and value parsing (int / empty string / invalid).
+allowed protocols per type, and value parsing (integer, empty string, or invalid).
+Also covers connecting `pamCloudResource` records to an explicitly specified or
+already-linked PAM Configuration.
 """
 
 import unittest
@@ -39,6 +41,7 @@ try:
     from keepercommander.commands.tunnel_and_connections import PAMConnectionEditCommand
     from keepercommander.error import CommandError
     from keepercommander import vault
+    MODULE = 'keepercommander.commands.tunnel_and_connections'
 except ImportError as e:
     skip_tests = True
     skip_reason = f"Cannot import tunnel_and_connections: {e}"
@@ -405,6 +408,69 @@ class TestPamConnectionEditScrollbackEarlyReturn(unittest.TestCase):
         except Exception:
             pass  # downstream TunnelDAG instantiation will fail; not under test here
         mock_get_config_uid.assert_called_once()
+
+
+@unittest.skipIf(skip_tests, skip_reason)
+class TestPamConnectionEditCloudResource(unittest.TestCase):
+
+    def _run_cloud_connection_edit(self, explicit_configuration):
+        record = mock.MagicMock(spec=vault.TypedRecord)
+        record.record_uid = 'cloud-resource-uid'
+        record.record_type = 'pamCloudResource'
+        record.version = 6
+        record.title = 'Cloud Resource'
+        record.fields = []
+        record.custom = []
+        record.get_record_type.return_value = 'pamCloudResource'
+
+        def get_typed_field(field_type):
+            return next((field for field in record.fields + record.custom
+                         if field.type == field_type), None)
+
+        record.get_typed_field.side_effect = get_typed_field
+
+        configuration = mock.MagicMock(spec=vault.TypedRecord)
+        configuration.record_uid = 'configuration-uid'
+        dag = mock.MagicMock()
+        dag.linking_dag.has_graph = True
+        dag.check_tunneling_enabled_config.return_value = True
+        dag.is_tunneling_config_set_up.return_value = True
+        dag.check_if_resource_allowed.return_value = False
+
+        resolved_records = [record, configuration if explicit_configuration else None, None]
+        params = mock.MagicMock()
+        with mock.patch(f'{MODULE}.sync_down_preserving_nsf_keys'), \
+                mock.patch(f'{MODULE}.RecordMixin.resolve_single_record',
+                           side_effect=resolved_records), \
+                mock.patch(f'{MODULE}.get_keeper_tokens', return_value=(b'token', b'tkey', b'key')), \
+                mock.patch(f'{MODULE}.get_config_uid',
+                           return_value=None if explicit_configuration else configuration.record_uid), \
+                mock.patch(f'{MODULE}.TunnelDAG', return_value=dag), \
+                mock.patch(f'{MODULE}.update_pam_record', return_value=False), \
+                mock.patch(f'{MODULE}.reload_pam_record_if_nsf_updated', return_value=record):
+            kwargs = {
+                'record': record.record_uid,
+                'connections': 'on',
+                'protocol': 'http',
+                'silent': True,
+            }
+            if explicit_configuration:
+                kwargs['config'] = configuration.record_uid
+            PAMConnectionEditCommand().execute(params, **kwargs)
+
+        settings = get_typed_field('pamSettings')
+        self.assertIsNotNone(settings)
+        self.assertEqual(settings.value[0]['connection']['protocol'], 'http')
+        dag.set_resource_allowed.assert_called_once()
+        return record, dag
+
+    def test_cloud_resource_can_be_connected_to_explicit_configuration(self):
+        record, dag = self._run_cloud_connection_edit(explicit_configuration=True)
+        dag.link_resource_to_config.assert_called_once_with(record.record_uid)
+
+    def test_cloud_resource_uses_linked_configuration_when_not_specified(self):
+        _, dag = self._run_cloud_connection_edit(explicit_configuration=False)
+        dag.link_resource_to_config.assert_not_called()
 
 
 if __name__ == '__main__':

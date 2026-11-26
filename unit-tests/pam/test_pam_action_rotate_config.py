@@ -55,7 +55,7 @@ class TestRecordRotateConfiguration(unittest.TestCase):
         cmd.record_rotate(params, USER_UID)
 
     def test_uses_rotation_settings_configuration_over_graph_lookup(self, mock_load, mock_ri, _tokens,
-                                                                     mock_get_config_uid, mock_dag, _allowed, mock_controller,
+                                                                     mock_get_config_uid, mock_dag, mock_allowed, mock_controller,
                                                                      mock_connected, mock_send, _print):
         # The graph lookup would return another configuration the user is also linked to.
         self.run_rotate(mock_load, mock_ri, mock_get_config_uid, mock_dag, mock_controller, mock_connected,
@@ -68,6 +68,10 @@ class TestRecordRotateConfiguration(unittest.TestCase):
         inputs = mock_send.call_args.kwargs['gateway_action'].inputs
         self.assertEqual(inputs.configurationUid, ROTATION_CONFIG_UID)
         self.assertEqual(inputs.resourceRef, RESOURCE_UID)
+        mock_allowed.assert_called_once_with(mock_load.call_args.args[0], ROTATION_CONFIG_UID)
+        mock_controller.assert_called_once_with(
+            mock_load.call_args.args[0], utils.base64_url_decode(ROTATION_CONFIG_UID)
+        )
 
     def test_falls_back_to_graph_lookup_without_rotation_configuration(self, mock_load, mock_ri, _tokens,
                                                                        mock_get_config_uid, mock_dag, _allowed, mock_controller,
