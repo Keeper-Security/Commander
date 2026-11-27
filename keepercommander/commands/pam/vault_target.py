@@ -698,6 +698,7 @@ def grant_pam_folder_permissions(params, folder_uid, permissions, command='pam')
 
     from ..nested_share_folder.helpers import classify_share_recipient
     from ...nested_share_folder.folder_api import grant_folder_access_v3
+    from ...nested_share_folder.permissions import ROLE_NAME_MAP
 
     for perm in permissions:
         if not any(map(lambda x: x is not None, perm.values())):
@@ -711,9 +712,12 @@ def grant_pam_folder_permissions(params, folder_uid, permissions, command='pam')
             continue
 
         kind, identifier = classified
+        role = (perm.get('role') or '').strip().lower()
         manage_users = bool(perm.get('manage_users'))
         manage_records = bool(perm.get('manage_records'))
-        if manage_users and manage_records:
+        if role in ROLE_NAME_MAP:
+            pass
+        elif manage_users and manage_records:
             role = 'full-manager'
         elif manage_records:
             role = 'content-manager'

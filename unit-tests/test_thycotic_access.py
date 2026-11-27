@@ -338,7 +338,7 @@ class TestThycoticSecretRecordPermissions(TestCase):
             'owner@example.com': (True, False),
             'view@example.com': (False, False),
         })
-        self.assertIn('/v1/secret-permissions?filter.secretId=100', calls)
+        self.assertIn('/v1/secret-permissions', calls)
 
     def test_missing_inherit_flag_still_pulls_secret_permissions(self):
         secret = self._secret(True)

@@ -296,6 +296,21 @@ Accepted roles: requestor, viewer, share-manager, content-manager,
 content-share-manager, full-manager.
 Sample: sample_data/import_nsf_permissions.txt
 Use --users --nsf to update NSF permissions only (no record import).
+
+Thycotic (Delinea Secret Server) NSF ACL:
+import --format=thycotic --nsf user@https://<host>/ --add-users --add-teams
+import --format=thycotic --nsf user@https://<host>/ --add-users --add-teams --secret-ids <id1>,<id2>
+import --format=thycotic --nsf user@https://<host>/ --add-users --add-teams --old-domain delinea.com --new-domain keeper.com
+
+• Folder role from the Delinea folder permission: Owner → full-manager, Edit/Add Secret → content-manager, View → viewer.
+• Record role from the Delinea secret permission: Owner → full-manager, Edit → content-manager, View/List → viewer.
+  Inheriting secrets use the folder's secret role; non-inheriting secrets use their own secret permissions.
+• Direct record shares only where the record role differs from the user's folder role, the user is not on
+  the folder, or the secret has no folder.
+• Team-based folder ACL supported when teams exist in Keeper (--add-teams).
+• Use --old-domain/--new-domain to rewrite permission email domains.
+• Use --users --nsf to update NSF permissions only (no record import).
+• Use --dry-run to preview without writing to Keeper.
 '''
 
 
@@ -788,8 +803,8 @@ class DownloadRecordTypeCommand(EnterpriseCommand):
 class LoadRecordTypeCommand(EnterpriseCommand):
     def get_parser(self):
         return load_record_type_parser
-        
-    
+
+
 
     def execute(self, params, **kwargs):
         file_name = kwargs.get('name') or 'record_types.json'

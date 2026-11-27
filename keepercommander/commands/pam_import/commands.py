@@ -14,6 +14,7 @@ from .export import PAMProjectExportCommand
 from .extend import PAMProjectExtendCommand
 from .kcm_import import PAMProjectKCMImportCommand, PAMProjectKCMCleanupCommand
 from .cyberark_import import CyberArkPAMImportCommand, CyberArkPAMCleanupCommand
+from .delinea_import import DelineaPAMImportCommand
 from ..base import GroupCommand
 
 class PAMProjectCommand(GroupCommand):
@@ -26,3 +27,4 @@ class PAMProjectCommand(GroupCommand):
         self.register_command("kcm-cleanup", PAMProjectKCMCleanupCommand(), "Remove a KCM-imported project", "K")
         self.register_command("cyberark-import", CyberArkPAMImportCommand(), "Import CyberArk accounts as PAM records", "ci")
         self.register_command("cyberark-cleanup", CyberArkPAMCleanupCommand(), "Remove a CyberArk-imported project", "cc")
+        self.register_command("delinea-import", DelineaPAMImportCommand(), "Import Delinea Secret Server secrets as PAM records", "di")
