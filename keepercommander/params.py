@@ -53,7 +53,8 @@ class RestApiContext:
         self._resolved_verify = None
         self.fail_on_throttle = False
         self.client_ec_private_key = None  # EC private key for QRC ECDH exchange
-    
+        self.offline = False  # True: refuse every request to the Keeper server
+
     def reset_qrc_key(self):
         """Reset QRC key ID to re-determine on next access (called on server change or logout)"""
         self.__qrc_key_id = -1
@@ -282,6 +283,7 @@ class KeeperParams:
         self.salt = None
         self.iterations = 0
         self.biometric = None
+        self.offline = False  # Session loaded from the local offline vault: read-only, no network
         self.service_mode = False  # Flag to indicate if running in service mode
         self.thread_local = threading.local()
         self._pedm_plugin = None    # type:
@@ -373,6 +375,8 @@ class KeeperParams:
             self.tube_registry = None
         self.forbid_rsa = False
         self.biometric = None
+        self.offline = False
+        self.rest_context.offline = False
         self._pedm_plugin = None
 
     def __get_rest_context(self):   # type: () -> RestApiContext

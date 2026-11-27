@@ -269,6 +269,26 @@ Biometric authentication has been completely removed for user 'user@example.com'
 Default authentication will be used for future logins.
 ```
 
+### Offline Login (`login --offline`)
+
+If biometric login is set up and its Touch ID passkey is stored in this Mac's Keychain,
+no extra setup is needed:
+
+```bash
+login --offline you@example.com     # or: keeper login --offline you@example.com
+```
+
+Each online sync also writes an encrypted copy of the vault next to the Commander config
+(`offline_vault_<hash>.json`, mode 0600). Its key is derived from the passkey's private
+key in the Keychain, so it can only be opened with that passkey. `login --offline`
+requires Touch ID, loads the passkey from the Keychain, decrypts the copy and opens a
+**read-only** session; commands that need Keeper fail until you `logout` and log in online.
+`biometric unregister` deletes the copy.
+
+macOS only: Windows Hello and USB security-key passkeys keep their private key in hardware,
+so they cannot unlock the vault offline. The copy holds decrypted key material; the OS
+user account is the trust boundary. Changes made elsewhere appear after the next online sync.
+
 ### Update Name Command
 
 Update the friendly name of an existing biometric credential:

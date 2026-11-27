@@ -422,6 +422,9 @@ DEFAULT_TIMEOUT = (15, 300)
 
 def execute_rest(context, endpoint, payload, timeout=None):
     # type: (RestApiContext, str, proto.ApiRequestPayload, ...) -> Optional[Union[bytes, dict]]
+    if getattr(context, 'offline', False):
+        raise KeeperApiError('offline', 'Offline mode: this command needs a connection to Keeper. '
+                                        'Log in online to use it.')
     if not context.transmission_key:
         context.transmission_key = os.urandom(32)
 

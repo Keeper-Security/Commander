@@ -308,6 +308,9 @@ login_parser.add_argument('--config-file', dest='config_file', action='store_tru
 login_parser.add_argument('--skip-scan', dest='skip_scan', action='store_true',
                           help='Skip login-time BreachWatch/security scans and device registration; '
                                'vault/enterprise sync still runs.')
+login_parser.add_argument('--offline', dest='offline', action='store_true',
+                          help='Unlock the vault copy saved by the last online login with Touch ID, without contacting '
+                               'Keeper, using the biometric passkey stored in the macOS Keychain (macOS only).')
 login_parser.add_argument('email', nargs='?', type=str, help='account email')
 login_parser.error = raise_parse_exception
 login_parser.exit = suppress_exit
@@ -509,6 +512,11 @@ class SyncDownCommand(Command):
         if force:
             from ..loginv3 import LoginV3Flow
             LoginV3Flow.populateAccountSummary(params)
+        try:
+            from ..biometric import offline
+            offline.refresh_snapshot(params)
+        except ImportError as e:     # optional biometric dependencies are not installed
+            logging.debug('Offline vault snapshot unavailable: %s', e)
 
         accepted = False
         if len(params.pending_share_requests) > 0:
@@ -1763,6 +1771,44 @@ class LoginCommand(Command):
     def is_authorised(self):
         return False
 
+    @staticmethod
+    def _offline_login(params, kwargs):
+        """`login --offline`: Touch ID / Windows Hello unlock of the local vault. No network access."""
+        try:
+            from ..biometric import offline
+        except ImportError as e:
+            raise CommandError('login', 'Offline login needs the biometric dependencies: {0}'.format(e))
+
+        if params.session_token and not params.offline:
+            raise CommandError('login', 'Already logged in online. Run "logout" before "login --offline".')
+
+        user = kwargs.get('email') or params.user
+        if not user and isinstance(params.config, dict):
+            user = params.config.get('user')
+        if not user:
+            try:
+                user = input(f'{Fore.GREEN}Email: {Fore.RESET}').strip()
+            except KeyboardInterrupt:
+                logging.info('Canceled')
+                return
+        if not user:
+            return
+
+        try:
+            offline.load_offline_session(params, user)
+        except offline.OfflineError as e:
+            raise CommandError('login', str(e))
+        except KeyboardInterrupt:
+            logging.info('Canceled')
+            return
+
+        saved_at = getattr(params, '_offline_saved_at', None)
+        saved = datetime.datetime.fromtimestamp(saved_at).strftime('%Y-%m-%d %H:%M') if saved_at else 'unknown'
+        logging.warning(f'{Fore.YELLOW}Offline mode{Fore.RESET}: vault loaded from the local copy last synced {saved}. '
+                        f'Read-only; commands that need Keeper will fail. Use "logout" and "login" to go online.')
+        if kwargs.get('show_help', True) and not params.batch_mode:
+            post_login_summary(record_count=getattr(params, '_sync_record_count', 0), breachwatch_count=0)
+
     def execute(self, params, **kwargs):
         from ..constants import KEEPER_SERVERS, get_abbrev_by_host, resolve_server, invalid_server_message
 
@@ -1784,6 +1830,9 @@ class LoginCommand(Command):
                 if params.is_enterprise_admin:
                     api.query_enterprise(params, True)
             return
+
+        if kwargs.get('offline'):
+            return self._offline_login(params, kwargs)
 
         # Handle --server option to change data center (or point at a
         # custom/self-hosted Keeper server address).

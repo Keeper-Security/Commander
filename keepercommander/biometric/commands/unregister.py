@@ -49,6 +49,12 @@ class BiometricUnregisterCommand(BiometricCommand):
             params.biometric = False
             cleanup_success = self._cleanup_local_credentials(params.user, rp_id)
             delete_success = self._delete_biometric_flag(params.user)  
+            try:
+                from .. import offline
+                offline.delete_snapshot(params)     # the offline vault depends on biometric login
+            except Exception as e:
+                import logging
+                logging.debug("Offline vault cleanup: %s", e)
 
             verification_success = not self._check_biometric_flag(params.user)
             

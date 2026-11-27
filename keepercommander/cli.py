@@ -578,7 +578,7 @@ def do_command(params, command_line):
 
                 params.event_queue.clear()
                 result = command.execute_args(params, args, command=orig_cmd)
-                if params.session_token:
+                if params.session_token and not params.offline:
                     if params.event_queue:
                         try:
                             rq = {
