@@ -499,6 +499,7 @@ class DelineaPAMImportCommand(Command):
     parser = argparse.ArgumentParser(
         prog=COMMAND,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Import Delinea PAM (Secret Server) resources and users into Keeper.',
         epilog='''
 Examples:
   # Write the password changer crosswalk template, edit it, then validate it
