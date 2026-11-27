@@ -184,11 +184,9 @@ class PamConnectTiming:
         self._last = now
         if not do_log:
             return
-        # Always emit at DEBUG. Commander's ``debug --file`` handler installs an
-        # explicit ``record.levelno != INFO`` filter (cli.py::setup_file_logging)
-        # to keep user-facing INFO prints out of the debug log — which ate our
-        # timing lines when PAM_CONNECT_TIMING=1 previously bumped them to INFO.
-        # DEBUG passes that filter and surfaces cleanly whenever debug mode is on.
+        # Always emit at DEBUG so the timing lines stay off the console unless
+        # debug mode is on. ``debug --file`` (cli.py::DebugManager.attach_log_file)
+        # lowers the root logger to DEBUG, so these lines reach the log file too.
         _LOG.log(
             logging.DEBUG,
             '%s | %-44s | +%.1f ms (step) | %.1f ms (total)',

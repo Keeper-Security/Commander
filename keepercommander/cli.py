@@ -1,10 +1,10 @@
-#  _  __  
+#  _  __
 # | |/ /___ ___ _ __  ___ _ _ ®
 # | ' </ -_) -_) '_ \/ -_) '_|
 # |_|\_\___\___| .__/\___|_|
-#              |_|            
+#              |_|
 #
-# Keeper Commander 
+# Keeper Commander
 # Copyright 2021 Keeper Security Inc.
 # Contact: ops@keepersecurity.com
 #
@@ -478,7 +478,8 @@ def do_command(params, command_line):
             print("\nToggle debug mode")
             print("\noptional arguments:")
             print("  -h, --help            show this help message and exit")
-            print("  --file=PATH           write DEBUG logs to PATH (does not enable terminal DEBUG)")
+            print("  --file=PATH           write all logs, including DEBUG, and the commands run to PATH")
+            print("                        (relative or absolute; terminal DEBUG is not enabled)")
             return
         elif command_line.lower().startswith('q ') or command_line.lower().startswith('quit '):
             print("usage: quit|q [-h]")
@@ -655,147 +656,251 @@ def force_quit():
 
 prompt_session = None
 
+DEFAULT_LOG_FILE = 'keeper.log'
+COMMAND_LOGGER_NAME = 'keepercommander.command'
+_COMMAND_WORD_RE = re.compile(r'''(?:[^\s"']|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$))+''')
+_OPTION_NAME_RE = re.compile(r'^--?[A-Za-z][\w-]*')
+
+def redact_command_for_log(command_line):
+    """Return only the command name and option flags, stripping all values."""
+    words = _COMMAND_WORD_RE.findall(command_line or '')
+    if not words:
+        return ''
+    cmd = words[0].lstrip('@')
+    if not cmd:
+        return ''
+    kept = [cmd]
+    for word in words[1:]:
+        if word == '--':
+            break
+        match = _OPTION_NAME_RE.match(word)
+        if match:
+            kept.append(match.group(0))
+    return ' '.join(kept)
+
+
+def _file_missing_trailing_newline(file_path):
+    """Return True if ``file_path`` exists, is non-empty, and lacks a trailing newline."""
+    try:
+        with open(file_path, 'rb') as f:
+            f.seek(-1, os.SEEK_END)
+            return f.read(1) not in (b'\n', b'\r')
+    except OSError:
+        return False
+
+
+def _sanitize_log_file_path(file_path):
+    if not file_path or not isinstance(file_path, str):
+        raise ValueError("File path must be a non-empty string")
+    sanitized = ''.join(ch for ch in file_path if ord(ch) >= 32 and ch != '\x7f')
+    if not sanitized.strip():
+        raise ValueError("File path contains only invalid characters")
+    return sanitized
+
+
 class DebugManager:
     """Debug manager for console and file logging."""
-    
+
     def __init__(self):
         self.logger = logging.getLogger()
-    
+        self.command_logger = logging.getLogger(COMMAND_LOGGER_NAME)
+        self.command_logger.propagate = False
+        self.command_logger.setLevel(logging.INFO)
+        self._log_file_handler = None
+        self._debug_file_enabled = False
+
+    def _console_handlers(self):
+        return [
+            h for h in self.logger.handlers
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        ]
+
+    def _active_log_file_handler(self):
+        h = self._log_file_handler
+        return h if h is not None and h in self.logger.handlers else None
+
     def has_file_logging(self):
-        """Check if file logging is active."""
-        return any(getattr(h, '_debug_file', False) for h in self.logger.handlers)
-    
+        """Check if any log file handler is active."""
+        return self._active_log_file_handler() is not None
+
+    def has_debug_file_logging(self):
+        """Check if ``debug --file`` logging is active."""
+        return self._active_log_file_handler() is not None and self._debug_file_enabled
+
+    def log_command(self, command_line):
+        """Write the redacted command line to the log file only."""
+        if self._active_log_file_handler() is None:
+            return
+        redacted = redact_command_for_log((command_line or '').strip())
+        if redacted:
+            self.command_logger.info('%s', redacted)
+
     def is_console_debug_on(self, batch_mode):
         """Check if console debug is enabled."""
-        for h in self.logger.handlers:
-            if isinstance(h, logging.StreamHandler) and not getattr(h, '_debug_file', False):
-                return h.level == logging.DEBUG
-        return self.logger.level == logging.DEBUG and not self.has_file_logging()
-    
+        handlers = self._console_handlers()
+        if handlers:
+            return any((h.level or self.logger.level) == logging.DEBUG for h in handlers)
+        return self.logger.level == logging.DEBUG and not self.has_debug_file_logging()
+
     def set_console_debug(self, enabled, batch_mode):
         """Set console debug level."""
         level = logging.DEBUG if enabled else (logging.WARNING if batch_mode else logging.INFO)
-        for h in self.logger.handlers:
-            if isinstance(h, logging.StreamHandler) and not getattr(h, '_debug_file', False):
-                h.setLevel(level)
-    
-    def setup_file_logging(self, file_path):
-        """Setup debug file logging."""
+        for h in self._console_handlers():
+            h.setLevel(level)
+
+    def attach_log_file(self, file_path, debug=False):
+        """Attach a log file handler to root and command loggers.
+
+        Existing ``keeper.log`` files rotate to a timestamped sibling; custom
+        names are appended to. When ``debug=True``, DEBUG records are written
+        without enabling console DEBUG. Returns the log file path or ``None``.
+        """
+        file_handler = None
         try:
-            validated_path = self._validate_log_file_path(file_path)
-            
-            log_dir = os.path.dirname(validated_path)
-            os.makedirs(log_dir, mode=0o750, exist_ok=True)
-            
-            for h in list(self.logger.handlers):
-                if getattr(h, '_debug_file', False):
-                    self.logger.removeHandler(h)
-                    try:
-                        h.close()
-                    except (OSError, IOError) as close_error:
-                        logging.warning(f'Failed to close log handler: {close_error}')
-                    except Exception as unexpected_error:
-                        logging.error(f'Unexpected error closing log handler: {unexpected_error}')
-            
-            # Add new file handler
-            fh = logging.FileHandler(validated_path, mode='a', encoding='utf-8')
-            fh.setLevel(logging.DEBUG)
-            fh.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s'))
-            fh.addFilter(lambda record: record.levelno != logging.INFO)  # Filter out INFO
-            fh._debug_file = True
-            self.logger.addHandler(fh)
-            self.logger.setLevel(logging.DEBUG)
-            
-            logging.info(f'Debug file logging enabled: {validated_path}')
-            return True
-        except (ValueError, OSError, IOError) as e:
-            logging.error(f'Failed to setup file logging: {e}')
-            return False
-        except Exception as e:
-            logging.error(f'Unexpected error setting up file logging: {e}')
-            return False
+            validated_path = self._resolve_log_file_path(file_path)
+            os.makedirs(os.path.dirname(validated_path), mode=0o750, exist_ok=True)
+
+            needs_newline = _file_missing_trailing_newline(validated_path)
+            file_handler = logging.FileHandler(validated_path, mode='a', encoding='utf-8')
+            if file_handler.stream is not None:
+                stamp = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
+                prefix = '\n' if needs_newline else ''
+                file_handler.stream.write(
+                    f'{prefix}==================== NEW SESSION STARTED AT : {stamp} ====================\n'
+                )
+                file_handler.stream.flush()
+            file_handler.setLevel(logging.NOTSET)
+            file_handler.setFormatter(logging.Formatter(
+                '%(asctime)s %(levelname)s %(name)s: %(message)s',
+                datefmt='%Y-%m-%d %H:%M:%S',
+            ))
+            file_handler._debug_file = debug
+
+            self._detach_log_file()
+            self.logger.addHandler(file_handler)
+            self.command_logger.addHandler(file_handler)
+            self._log_file_handler = file_handler
+            self._debug_file_enabled = debug
+            if debug:
+                for h in self._console_handlers():
+                    if h.level == logging.NOTSET and self.logger.level != logging.NOTSET:
+                        h.setLevel(self.logger.level)
+                self.logger.setLevel(logging.DEBUG)
+            try:
+                from . import utils
+                utils.set_file_permissions(file_handler.baseFilename)
+            except Exception:
+                logging.warning('Failed to set permissions on log file %s', file_handler.baseFilename)
+            return file_handler.baseFilename
+        except (ValueError, OSError) as e:
+            logging.error('Failed to set up log file: %s', e)
+            if file_handler is not None:
+                file_handler.close()
+            return None
+
+    def _detach_log_file(self):
+        h = self._log_file_handler
+        if h is not None:
+            self.logger.removeHandler(h)
+            self.command_logger.removeHandler(h)
+            try:
+                h.close()
+            except OSError as close_error:
+                logging.warning('Failed to close log handler: %s', close_error)
+        self._log_file_handler = None
+        self._debug_file_enabled = False
+
+    def _resolve_log_file_path(self, file_path):
+        sanitized = _sanitize_log_file_path(file_path)
+        expanded = os.path.expanduser(sanitized)
+        separators = tuple(sep for sep in (os.sep, os.altsep) if sep)
+        if expanded.endswith(separators) or os.path.isdir(expanded):
+            expanded = os.path.join(expanded, DEFAULT_LOG_FILE)
+        validated = self._validate_log_file_path(expanded)
+        return self._timestamped_default_log_path(validated)
+
+    def _timestamped_default_log_path(self, file_path, now=None):
+        if os.path.basename(file_path) != DEFAULT_LOG_FILE or not os.path.exists(file_path):
+            return file_path
+        now = now or datetime.datetime.now()
+        stem, ext = os.path.splitext(file_path)
+        base = f"{stem}.{now.strftime('%Y-%m-%d.%H-%M-%S')}"
+        candidate = base + ext
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = f'{base}.{counter}{ext}'
+            counter += 1
+        return candidate
 
     def _validate_log_file_path(self, file_path):
         """Validate and sanitize log file path to prevent security issues."""
-        if not file_path or not isinstance(file_path, str):
-            raise ValueError("File path must be a non-empty string")
-        
-        sanitized_path = ''.join(char for char in file_path if ord(char) >= 32 and char != '\x7f')
-        
-        if not sanitized_path:
-            raise ValueError("File path contains only invalid characters")
-        
+        sanitized_path = _sanitize_log_file_path(file_path)
+        path_obj = Path(sanitized_path)
         try:
-            path_obj = Path(sanitized_path)
-            
             resolved_path = path_obj.resolve()
-                        
-            resolved_str = str(resolved_path).lower()
-            forbidden_paths = ['/etc/', '/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/', 
-                             '/boot/', '/dev/', '/proc/', '/sys/', '/root/']
-            
-            for forbidden in forbidden_paths:
-                if resolved_str.startswith(forbidden):
-                    raise ValueError(f"Access to system directory '{forbidden}' is not allowed")
-            
-            filename = path_obj.name
-            if not filename or filename in ('.', '..'):
-                raise ValueError("Invalid filename")
-            
-            suspicious_patterns = ['..', '~/', '$', '`', ';', '|', '&', '<', '>', '*', '?']
-            for pattern in suspicious_patterns:
-                if pattern in filename:
-                    raise ValueError(f"Filename contains suspicious pattern: '{pattern}'")
-            
-            valid_extensions = ['.log', '.txt', '.out']
-            if not any(filename.lower().endswith(ext) for ext in valid_extensions):
-                logging.warning(f"Log file '{filename}' does not have a standard log extension")
-            
-            return str(resolved_path)
-            
         except (OSError, RuntimeError) as e:
             raise ValueError(f"Invalid file path: {e}")
-        except Exception as e:
-            raise ValueError(f"Path validation failed: {e}")
-    
+
+        resolved_str = str(resolved_path).lower()
+        forbidden_paths = (
+            '/etc/', '/bin/', '/sbin/', '/usr/bin/', '/usr/sbin/',
+            '/boot/', '/dev/', '/proc/', '/sys/', '/root/',
+        )
+        for forbidden in forbidden_paths:
+            if resolved_str.startswith(forbidden):
+                raise ValueError(f"Access to system directory '{forbidden}' is not allowed")
+
+        filename = path_obj.name
+        if not filename or filename in ('.', '..'):
+            raise ValueError("Invalid filename")
+
+        for pattern in ('..', '~/', '$', '`', ';', '|', '&', '<', '>', '*', '?'):
+            if pattern in filename:
+                raise ValueError(f"Filename contains suspicious pattern: '{pattern}'")
+
+        if not any(filename.lower().endswith(ext) for ext in ('.log', '.txt', '.out')):
+            logging.warning("Log file '%s' does not have a standard log extension", filename)
+
+        return str(resolved_path)
+
     def _looks_like_filename(self, token):
         """Check if a token looks like a filename with proper validation."""
         if not token or not isinstance(token, str):
             return False
-        
+
         token = token.strip()
-        
+
         if len(token) < 1:
             return False
-        
+
         has_extension = re.search(r'\.[a-zA-Z0-9]{1,10}$', token)
-        
+
         has_path_separator = '/' in token or '\\' in token
-        
+
         looks_like_name = len(token) > 2 and re.match(r'^[a-zA-Z0-9._-]+$', token)
-        
+
         return bool(has_extension or has_path_separator or looks_like_name)
-    
+
     def toggle_console_debug(self, batch_mode):
         """Toggle console debug on/off."""
         current = self.is_console_debug_on(batch_mode)
         new_state = not current
-        
+
         self.set_console_debug(new_state, batch_mode)
-        
-        if not self.has_file_logging():
+
+        if not self.has_debug_file_logging():
             level = logging.DEBUG if new_state else (logging.WARNING if batch_mode else logging.INFO)
             self.logger.setLevel(level)
-        
-        logging.info(f'Debug {"ON" if new_state else "OFF"}')
+
+        logging.info('Debug %s', 'ON' if new_state else 'OFF')
         return new_state
-    
+
     def process_command(self, tokens, batch_mode):
         """Process debug command."""
         # Look for --file argument
         file_path = None
         file_flag_present = False
-        
+
         for i, token in enumerate(tokens[1:], 1):
             if token == '--file':
                 file_flag_present = True
@@ -811,12 +916,15 @@ class DebugManager:
                 if not file_path.strip():
                     file_path = None
                 break
-        
+
         if file_flag_present and not file_path:
             print("Please specify the file path for logging to file: debug --file <file_path>")
             return False
         elif file_path:
-            return self.setup_file_logging(file_path)
+            log_path = self.attach_log_file(file_path, debug=True)
+            if log_path:
+                logging.info('Logging to file: %s', log_path)
+            return bool(log_path)
         else:
             # No --file flag present, check for potential filename arguments
             if len(tokens) > 1:
@@ -825,7 +933,7 @@ class DebugManager:
                     if not token.startswith('-') and self._looks_like_filename(token):
                         print(f"Please specify the --file flag for logging to file: debug --file {token}")
                         return False
-            
+
             self.toggle_console_debug(batch_mode)
             return True
 
@@ -837,13 +945,13 @@ def read_command_with_continuation(prompt_session, params):
     command_lines = []
     continuation_prompt = "... "
     current_prompt = get_prompt(params)
-    
+
     while True:
         if prompt_session is not None:
             line = prompt_session.prompt(current_prompt)
         else:
             line = input(current_prompt)
-        
+
         # Check if line ends with backslash (line continuation)
         # First strip all trailing whitespace, then check for backslash
         stripped_line = line.rstrip()
@@ -859,7 +967,7 @@ def read_command_with_continuation(prompt_session, params):
             if line_content:
                 command_lines.append(line_content)
             break
-    
+
     # Join all lines with spaces, ensuring no extra spaces
     # Also clean up any multiple spaces that might have been introduced
     result = ' '.join(command_lines)
@@ -964,6 +1072,8 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
                 finally:
                     if tmer:
                         tmer.cancel()
+
+            debug_manager.log_command(command)
 
             if command.lower() == 'q' or command.lower() == "quit":
                 break
