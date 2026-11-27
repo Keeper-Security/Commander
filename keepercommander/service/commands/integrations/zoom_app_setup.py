@@ -19,15 +19,46 @@ from typing import List
 from .... import vault
 from ....display import bcolors
 from ...docker import ZoomConfig, ZoomConstants
+from ...config.config_validation import ConfigValidator, ValidationError
 from .integration_setup_base import IntegrationSetupCommand
 
 
 _DOMAIN_LABEL = re.compile(r'^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$')
+_NUMERIC_OR_HEX_LABEL = re.compile(r'(?:[0-9]+|0[xX][0-9a-fA-F]+)$')
+_CLIENT_ID_PATTERN = re.compile(r'^[A-Za-z0-9._~+/=-]+$')
+_RESERVED_HOST_SUFFIXES = (
+    'localhost',
+    'local',
+    'localdomain',
+    'internal',
+    'test',
+    'invalid',
+    'example',
+    'home.arpa',
+    'onion',
+)
+
+
+def is_valid_zoom_client_id(value: str) -> bool:
+    """Return whether value contains only common OAuth client identifier characters."""
+    return bool(value and _CLIENT_ID_PATTERN.fullmatch(value))
+
+
+def is_valid_zoom_jid(value: str) -> bool:
+    """Require a non-empty local and domain part, separated by @, with no whitespace."""
+    if not value or not value.isprintable() or any(char.isspace() for char in value):
+        return False
+    local, separator, domain = value.partition('@')
+    return bool(separator and local and domain)
 
 
 def is_valid_public_endpoint_url(value: str) -> bool:
     """Return whether value is an absolute HTTPS URL with a public hostname."""
-    if not value or any(char.isspace() for char in value):
+    if (
+        not value
+        or not value.isprintable()
+        or any(char.isspace() for char in value)
+    ):
         return False
     try:
         parsed = urlsplit(value)
@@ -42,15 +73,27 @@ def is_valid_public_endpoint_url(value: str) -> bool:
     if parsed.netloc.endswith(':') or (port is not None and port < 1):
         return False
 
-    hostname = parsed.hostname.rstrip('.')
-    try:
-        return ipaddress.ip_address(hostname).is_global
-    except ValueError:
-        pass
-
-    if hostname.lower() == 'localhost' or '.' not in hostname:
+    hostname = parsed.hostname.rstrip('.').lower()
+    if not hostname:
         return False
-    return all(_DOMAIN_LABEL.fullmatch(label) for label in hostname.split('.'))
+
+    if any(
+        hostname == suffix or hostname.endswith(f'.{suffix}')
+        for suffix in _RESERVED_HOST_SUFFIXES
+    ):
+        return False
+
+    labels = hostname.split('.')
+    if all(_NUMERIC_OR_HEX_LABEL.fullmatch(label) for label in labels):
+        try:
+            return ipaddress.ip_address(hostname).is_global
+        except ValueError:
+            # Reject non-standard numeric IPv4 forms such as 127.1 and 0x7f.0.0.1.
+            return False
+
+    if '.' not in hostname:
+        return False
+    return all(_DOMAIN_LABEL.fullmatch(label) for label in labels)
 
 
 class ZoomAppSetupCommand(IntegrationSetupCommand):
@@ -72,15 +115,17 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
         return ZoomConstants.FIELD_CLIENT_ID
 
     def get_integration_service_ports(self, config) -> List[str]:
-        return [f'{ZoomConstants.BOT_PORT}:{ZoomConstants.BOT_PORT}']
+        return [
+            f'127.0.0.1:{config.host_bot_port}:{ZoomConstants.BOT_PORT}'
+        ]
 
     def collect_integration_config(self, params) -> ZoomConfig:
         print(f"\n{bcolors.BOLD}ZOOM_CLIENT_ID:{bcolors.ENDC}")
         print("  Client ID from Zoom App Basic Information")
         client_id = self._prompt_with_validation(
             'Client ID:',
-            lambda value: bool(value),
-            'Client ID is required',
+            is_valid_zoom_client_id,
+            'Client ID must contain only letters, numbers, ".", "_", "~", "+", "/", "=", or "-"',
         )
 
         print(f"\n{bcolors.BOLD}ZOOM_CLIENT_SECRET:{bcolors.ENDC}")
@@ -96,9 +141,26 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
         print("  Bot JID from Zoom App Features → Surface")
         bot_jid = self._prompt_with_validation(
             'Bot JID:',
-            lambda value: bool(value),
-            'Bot JID is required',
+            is_valid_zoom_jid,
+            "Bot JID must contain an '@' separating non-empty parts and no whitespace",
         )
+
+        print(f"\n{bcolors.BOLD}ZOOM_BOT_HOST_PORT:{bcolors.ENDC}")
+        print(
+            f"  Local host port forwarded to the Zoom bot container port "
+            f"{ZoomConstants.BOT_PORT}"
+        )
+        while True:
+            host_port_input = input(
+                f"{bcolors.OKBLUE}Bot Host Port "
+                f"[Press Enter for {ZoomConstants.DEFAULT_HOST_BOT_PORT}]:"
+                f"{bcolors.ENDC} "
+            ).strip() or str(ZoomConstants.DEFAULT_HOST_BOT_PORT)
+            try:
+                host_bot_port = ConfigValidator.validate_port(host_port_input)
+                break
+            except ValidationError as e:
+                print(f"{bcolors.FAIL}Error: {str(e)}{bcolors.ENDC}")
 
         print(f"\n{bcolors.BOLD}ZOOM_SECRET_TOKEN:{bcolors.ENDC}")
         print("  Secret Token from Zoom App Features → Access")
@@ -132,8 +194,8 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
         print("  Channel JID from Zoom Team Chat channel settings")
         approvals_channel_jid = self._prompt_with_validation(
             'Approvals Channel JID:',
-            lambda value: bool(value),
-            'Approvals Channel JID is required',
+            is_valid_zoom_jid,
+            "Approvals Channel JID must contain an '@' separating non-empty parts and no whitespace",
         )
 
         print(f"\n{bcolors.BOLD}ZOOM_PUBLIC_ENDPOINT_URL:{bcolors.ENDC}")
@@ -152,6 +214,7 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
             client_id=client_id,
             client_secret=client_secret,
             bot_jid=bot_jid,
+            host_bot_port=host_bot_port,
             secret_token=secret_token,
             approvals_channel_jid=approvals_channel_jid,
             public_endpoint_url=public_endpoint_url,
@@ -234,6 +297,11 @@ class ZoomAppSetupCommand(IntegrationSetupCommand):
     def print_integration_specific_resources(self, config: ZoomConfig):
         print(f"    • Zoom Client ID: {bcolors.OKBLUE}{config.client_id}{bcolors.ENDC}")
         print(f"    • Bot JID: {bcolors.OKBLUE}{config.bot_jid}{bcolors.ENDC}")
+        print(
+            f"    • Bot Host Port: "
+            f"{bcolors.OKBLUE}{config.host_bot_port} (container {ZoomConstants.BOT_PORT})"
+            f"{bcolors.ENDC}"
+        )
         print(
             f"    • /keeper-request-record ID: "
             f"{bcolors.OKBLUE}{config.chat_command_request_record_id}{bcolors.ENDC}"

@@ -205,6 +205,7 @@ class ZoomConstants:
 
     # Zoom Chat bot container port used by the integration service.
     BOT_PORT = 3000
+    DEFAULT_HOST_BOT_PORT = 3000
 
 
 @dataclass
@@ -238,6 +239,7 @@ class ZoomConfig:
     secret_token: str
     approvals_channel_jid: str
     public_endpoint_url: str
+    host_bot_port: int = ZoomConstants.DEFAULT_HOST_BOT_PORT
     chat_command_request_record_id: str = ZoomConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID
     chat_command_request_folder_id: str = ZoomConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID
     chat_command_external_share_id: str = ZoomConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID

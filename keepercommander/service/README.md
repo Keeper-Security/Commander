@@ -558,18 +558,23 @@ My Vault> zoom-app-setup
 
 The command follows the standard two-phase integration setup flow:
 - **Phase 1:** Sets up Commander Service Mode and its Keeper Secrets Manager configuration.
-- **Phase 2:** Prompts for the Zoom Client ID, Client Secret, Bot JID, Secret
-  Token, Approvals Channel JID, public HTTPS endpoint URL, and IDs for the four
-  supported slash commands. It also offers optional EPM and SSO Cloud Device
-  Approval configuration, including polling intervals.
+- **Phase 2:** Prompts for the Zoom Client ID, Client Secret, Bot JID, bot host
+  port, Secret Token, Approvals Channel JID, public HTTPS endpoint URL, and IDs
+  for the four supported slash commands. It also offers optional EPM and SSO
+  Cloud Device Approval configuration, including polling intervals.
 - Generates or updates `docker-compose.yml` with Commander and the Zoom app
-  service (`keeper/zoom-app:latest`). The compose file references the config
-  record through `ZOOM_RECORD`; it does not write the Zoom secrets in plaintext.
+  service (`keeper/zoom-app:latest`). The Compose file references the config
+  record through `ZOOM_RECORD` and contains `KSM_CONFIG` and record UIDs, so
+  treat it as sensitive.
 
 The slash commands are `/keeper-request-record`, `/keeper-request-folder`,
 `/keeper-one-time-share`, and `/keeper-create-secret`. Their IDs default to
 `1`–`4` and can be changed to match the Zoom app configuration. EPM and SSO
 Cloud Device Approval are disabled by default.
+
+The Zoom app listens on container port `3000`. The setup prompts for a host
+port (default `3000`) and binds it to loopback so a local HTTPS proxy or tunnel
+can forward requests to the bot without publishing the port on every interface.
 
 The command validates that the endpoint is an absolute HTTPS URL with a
 public-looking hostname. It does not check that the endpoint is live. Use the

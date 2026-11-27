@@ -10,6 +10,8 @@ from keepercommander.commands.start_service import register_commands, register_c
 from keepercommander.service.commands.integrations.integration_setup_base import IntegrationSetupCommand
 from keepercommander.service.commands.integrations.zoom_app_setup import (
     ZoomAppSetupCommand,
+    is_valid_zoom_client_id,
+    is_valid_zoom_jid,
     is_valid_public_endpoint_url,
 )
 from keepercommander.service.docker import ServiceConfig, SetupResult, ZoomConfig, ZoomConstants
@@ -77,11 +79,41 @@ class TestZoomAppSetupCommand(unittest.TestCase):
         self.assertFalse(is_valid_public_endpoint_url('https://example.com:'))
         self.assertFalse(is_valid_public_endpoint_url('https://user:password@example.com'))
         self.assertFalse(is_valid_public_endpoint_url('https://example.com/path#fragment'))
+        for url in (
+            'https://127.1',
+            'https://0x7f.0.0.1',
+            'https://10.1',
+            'https://app.localhost',
+            'https://zoom.local',
+            'https://host.docker.internal:3000',
+            'https://zoom.invalid',
+            'https://example.test',
+            'https://example.internal',
+            'https://example.com/\x1b[31m',
+            'https://example.com/\x00',
+        ):
+            with self.subTest(url=repr(url)):
+                self.assertFalse(is_valid_public_endpoint_url(url))
+
+    def test_client_id_validation(self):
+        self.assertTrue(is_valid_zoom_client_id('TEST_ZOOM_CLIENT_ID'))
+        self.assertTrue(is_valid_zoom_client_id('abc-123.XYZ+/='))
+        self.assertFalse(is_valid_zoom_client_id(''))
+        self.assertFalse(is_valid_zoom_client_id('client id'))
+        self.assertFalse(is_valid_zoom_client_id('client-id!'))
+
+    def test_zoom_jid_validation(self):
+        self.assertTrue(is_valid_zoom_jid('bot@example.com'))
+        self.assertFalse(is_valid_zoom_jid('dummy-bot-jid'))
+        self.assertFalse(is_valid_zoom_jid('bot @example.com'))
+        self.assertFalse(is_valid_zoom_jid('@example.com'))
+        self.assertFalse(is_valid_zoom_jid('bot@'))
 
     def test_collects_zoom_values_commands_and_optional_features(self):
         responses = [
             '', 'client-id',
             'bot@example.com',
+            '3301',
             '11', '12', '13', '14',
             'approvals@example.com',
             'https://abc123.ngrok.app/zoom/webhook',
@@ -92,7 +124,11 @@ class TestZoomAppSetupCommand(unittest.TestCase):
                 mock.patch(
                     'getpass.getpass',
                     side_effect=['client-secret', 'secret-token'],
-                ) as secret_prompt:
+                ) as secret_prompt, \
+                mock.patch(
+                    'keepercommander.service.commands.integrations.zoom_app_setup.ConfigValidator.validate_port',
+                    side_effect=lambda value: int(value),
+                ):
             config = self.command.collect_integration_config(None)
         expected = ZoomConfig(
             client_id='client-id',
@@ -101,6 +137,7 @@ class TestZoomAppSetupCommand(unittest.TestCase):
             secret_token='secret-token',
             approvals_channel_jid='approvals@example.com',
             public_endpoint_url='https://abc123.ngrok.app/zoom/webhook',
+            host_bot_port=3301,
             chat_command_request_record_id='11',
             chat_command_request_folder_id='12',
             chat_command_external_share_id='13',
@@ -169,6 +206,7 @@ class TestZoomAppSetupCommand(unittest.TestCase):
         output = '\n'.join(str(call.args[0]) for call in print_mock.call_args_list)
         self.assertIn('Zoom Client ID:', output)
         self.assertIn('client-id', output)
+        self.assertIn('Bot Host Port:', output)
         self.assertNotIn('client-secret', output)
         self.assertNotIn('secret-token', output)
 
@@ -208,7 +246,7 @@ class TestZoomAppSetupCommand(unittest.TestCase):
         self.assertIn('commander-zoom', services)
         zoom_service = services['zoom-app']
         self.assertEqual(zoom_service['image'], 'keeper/zoom-app:latest')
-        self.assertEqual(zoom_service['ports'], ['3000:3000'])
+        self.assertEqual(zoom_service['ports'], ['127.0.0.1:3000:3000'])
         self.assertEqual(zoom_service['environment']['ZOOM_RECORD'], 'zoom-record-uid')
         self.assertEqual(
             services['commander-zoom']['environment']['ZOOM_RECORD'],
