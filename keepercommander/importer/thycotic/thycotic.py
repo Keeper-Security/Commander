@@ -67,6 +67,10 @@ SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 # before it can be read.
 SECRET_REQUIRES_CHECKOUT_ERROR = 'API_SecretRequiresCheckout'
 
+# First Secret Server version with GET /api/v2/secrets. Older 11.x servers
+# read secrets with GET /api/v1/secrets instead.
+V2_SECRETS_MIN_VERSION = (11, 3)
+
 # Parameters that check a secret out or in. A read URL replaces any of these
 # already present so the chosen checkout mode is the only one sent.
 SECRET_ACCESS_PARAM_NAMES = frozenset((
@@ -189,6 +193,15 @@ def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
         return list(dict.fromkeys(secret_ids))
     query = build_secrets_lookup_query(include_restricted=include_restricted)
     return _ids_from_lookup_response(search(query))
+
+
+def select_secret_read_endpoint(auth, secret_id):
+    # type: (Any, Any) -> str
+    """Secret read for this server: /v2/secrets/{id}, or /v1/secrets/{id} when that route is absent."""
+    # Mock auth objects invent attributes, so only a real ThycoticAuth picks the versioned route.
+    if isinstance(auth, ThycoticAuth):
+        return auth.build_secret_read_endpoint(secret_id)
+    return '/v1/secrets/{0}'.format(secret_id)
 
 
 DEFAULT_SECRET_SHARE_WORKERS = 4
@@ -809,7 +822,7 @@ class ThycoticMixin:
     def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
         # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
         """Fetch one secret and its permission rows. Runs on a worker thread."""
-        secret = auth.thycotic_entity('/v1/secrets/{0}'.format(secret_id)) or {}
+        secret = auth.thycotic_entity(select_secret_read_endpoint(auth, secret_id)) or {}
         if not isinstance(secret, dict):
             return None, []
         secret['id'] = secret.get('id') or secret_id
@@ -2234,6 +2247,8 @@ class ThycoticAuth:
         self.last_login = 0
         self.proxy = None
         self._token_lock = threading.Lock()
+        self._supports_v2_secrets = None  # type: Optional[bool]
+        self._version_lock = threading.Lock()
         warnings.simplefilter('ignore', InsecureRequestWarning)
 
     def authenticate(self, username, password, on_totp=None):  # type: (str, str, Optional[Callable[[], str]]) -> None
@@ -2424,14 +2439,106 @@ class ThycoticAuth:
             result = fetch(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
         return result
 
+    @staticmethod
+    def parse_secret_server_version(raw_version):  # type: (Any) -> Optional[Tuple[int, int]]
+        """Return (major, minor) from a version such as '11.10.000000', or None.
+
+        The build is not read. Comparison with (11, 3) only needs these two numbers.
+        """
+        if not isinstance(raw_version, str):
+            return None
+        major, dot, rest = raw_version.strip().partition('.')
+        if not dot or not major or not all('0' <= ch <= '9' for ch in major):
+            return None
+        idx = 0
+        while idx < len(rest) and '0' <= rest[idx] <= '9':
+            idx += 1
+        if idx == 0 or (idx < len(rest) and rest[idx].isalnum()):
+            return None
+        return int(major), int(rest[:idx])
+
+    def get_secret_server_version(self):  # type: () -> Optional[Tuple[int, int]]
+        """Ask GET /api/v1/version which Secret Server version is running.
+
+        The answer looks like {"success": true, "model": {"version": "11.10.000000"}}.
+        Returns the parsed version, or None when the body cannot be read or the
+        account lacks access (e.g. 403/404). A request error, 401, 408, 429, or
+        5xx propagates so the caller can ask again.
+        """
+        self.ensure_auth_token()
+        headers = {
+            'Accept': 'application/json',
+            'Authorization': 'Bearer {0}'.format(self.access_token),
+        }
+        rs = self._get(self.api_url('/v1/version'), headers=headers)
+        # Transient failures are retried on later reads. 403, 404, and unreadable 200 fall back and cache.
+        if rs.status_code in (401, 408, 429) or rs.status_code >= 500:
+            raise requests.exceptions.HTTPError('HTTP {0} from /v1/version'.format(rs.status_code))
+        if rs.status_code != 200:
+            logging.info('"/v1/version" error: %s', self._error_message(rs))
+            return None
+        try:
+            payload = rs.json()
+        except ValueError:
+            payload = None
+        raw_version = None
+        if isinstance(payload, dict):
+            model = payload.get('model')
+            if isinstance(model, dict):
+                raw_version = model.get('version')
+            if raw_version is None:
+                raw_version = payload.get('version')
+        version = self.parse_secret_server_version(raw_version)
+        if version is None:
+            logging.info('Could not read the Secret Server version from /v1/version: %s',
+                         (rs.text or '').strip()[:300])
+        return version
+
+    def _v2_secrets_supported(self):  # type: () -> bool
+        """True when the server is Secret Server 11.3 or later, so GET /api/v2/secrets exists.
+
+        The version comes from GET /api/v1/version. 11.0 through 11.2 have no
+        /v2/secrets and use /v1/secrets for the same secret read. When the
+        version cannot be read, /v2/secrets is assumed. The answer is kept for
+        the session, except after a request error, 401, 408, 429, or 5xx,
+        which is tried again.
+        """
+        if self._supports_v2_secrets is not None:
+            return self._supports_v2_secrets
+        # Workers share this auth object. Own lock, not the token lock: the version
+        # request refreshes the token, and one lock would deadlock.
+        with self._version_lock:
+            if self._supports_v2_secrets is not None:
+                return self._supports_v2_secrets
+            try:
+                version = self.get_secret_server_version()
+            except requests.exceptions.RequestException as exc:
+                # Do not remember this. A blip must not lock an 11.0 server onto /v2/secrets.
+                logging.info('Could not read the Secret Server version, will try again: %s', exc)
+                return True
+            if version is None:
+                logging.info('Secret Server version unknown; using /v2/secrets')
+                self._supports_v2_secrets = True
+            else:
+                self._supports_v2_secrets = version >= V2_SECRETS_MIN_VERSION
+                logging.info('Secret Server version %s; using %s', '.'.join(str(v) for v in version),
+                             '/v2/secrets' if self._supports_v2_secrets else '/v1/secrets')
+            return self._supports_v2_secrets
+
+    def build_secret_read_endpoint(self, secret_id):  # type: (Any) -> str
+        """GET /v2/secrets/{id} when that route exists, else GET /v1/secrets/{id}."""
+        if self._v2_secrets_supported():
+            return '/v2/secrets/{0}'.format(secret_id)
+        return '/v1/secrets/{0}'.format(secret_id)
+
     def read_secret(self, secret_id):  # type: (Union[int, str]) -> ReadSecretResult
-        """Read a secret with GET /v1/secrets/{id}.
+        """Read a secret with GET /v2/secrets/{id}, or GET /v1/secrets/{id} on 11.0-11.2.
 
         The first read is sent without checkout. Only when the server answers
         400 with API_SecretRequiresCheckout is it sent again with autoCheckout
         and autoCheckIn.
         """
-        endpoint = f'/v1/secrets/{secret_id}'
+        endpoint = self.build_secret_read_endpoint(secret_id)
         try:
             entity = self._read_with_checkout_retry(
                 endpoint, self._read_entity,
