@@ -132,6 +132,26 @@ class TestLogFileHandler(LoggingTestCase):
         logging.warning('into the new folder')
         self.assertIn('into the new folder', _read(path))
 
+    def test_directory_target_writes_the_default_file_inside_it(self):
+        nested = os.path.join(self.tmp, 'sub')
+        os.mkdir(nested)
+        cwd = os.getcwd()
+        try:
+            os.chdir(nested)
+            for target, folder in (('./', nested), ('.', nested), ('../', self.tmp), ('..', self.tmp)):
+                with self.subTest(target=target):
+                    path = cli.debug_manager.attach_log_file(target)
+                    cli.debug_manager._detach_log_files()
+                    self.assertEqual(os.path.dirname(path), os.path.realpath(folder))
+                    self.assertTrue(os.path.basename(path).startswith('keeper.'))
+        finally:
+            os.chdir(cwd)
+
+    def test_missing_directory_with_trailing_separator_gets_the_default_file(self):
+        path = cli.debug_manager.attach_log_file(os.path.join(self.tmp, 'new', ''))
+        cli.debug_manager._detach_log_files()
+        self.assertEqual(path, os.path.join(os.path.realpath(self.tmp), 'new', file_logging.DEFAULT_LOG_FILE))
+
     def test_unwritable_parent_logs_an_error_and_creates_nothing(self):
         with mock.patch('keepercommander.file_logging.os.access', return_value=False), \
                 self.assertLogs(level='ERROR') as captured:

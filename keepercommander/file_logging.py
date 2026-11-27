@@ -166,8 +166,15 @@ class DebugManager:
         self._log_file_handler = None
 
     def _expand_log_file_path(self, file_path):
-        """Expand a leading ``~``; relative paths stay relative to the current directory."""
-        return os.path.expanduser(file_path)
+        """Expand a leading ``~``; relative paths stay relative to the current directory.
+
+        A folder (an existing one, or a path ending in a separator) gets keeper.log in it.
+        """
+        expanded = os.path.expanduser(file_path)
+        separators = tuple(sep for sep in (os.sep, os.altsep) if sep)
+        if expanded.endswith(separators) or os.path.isdir(expanded):
+            expanded = os.path.join(expanded, DEFAULT_LOG_FILE)
+        return expanded
 
     def _validate_log_file_writable(self, file_path):
         """Raise ValueError when file_path cannot be opened for appending.
