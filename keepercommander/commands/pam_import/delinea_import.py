@@ -137,15 +137,15 @@ class DelineaImportOrchestrator:
         opts = self.options
         # Pre-activate users before secrets are imported so later migration steps
         # can share data to accounts that already exist.
-        if opts.add_users is True:
-            if opts.dry_run is True:
+        if opts.add_users:
+            if opts.dry_run:
                 self._preview_thycotic_users(self.client)
             else:
                 self._migrate_thycotic_users(self.client, self.params)
 
         # Teams are created after users so members provisioned above can be added.
-        if opts.add_teams is True:
-            if opts.dry_run is True:
+        if opts.add_teams:
+            if opts.dry_run:
                 self._preview_thycotic_teams(self.client)
             else:
                 self._migrate_thycotic_teams(self.client, self.params)
