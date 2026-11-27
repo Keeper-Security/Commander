@@ -195,12 +195,12 @@ def lookup_secret_ids(search, folder_ids=None, include_restricted=True):
     return _ids_from_lookup_response(search(query))
 
 
-def choose_secret_read_endpoint(auth, secret_id):
+def select_secret_read_endpoint(auth, secret_id):
     # type: (Any, Any) -> str
     """Secret read for this server: /v2/secrets/{id}, or /v1/secrets/{id} when that route is absent."""
-    chooser = getattr(type(auth), 'build_secret_read_endpoint', None)
-    if callable(chooser):
-        return chooser(auth, secret_id)
+    select = getattr(type(auth), 'build_secret_read_endpoint', None)
+    if callable(select):
+        return select(auth, secret_id)
     return '/v1/secrets/{0}'.format(secret_id)
 
 
@@ -822,7 +822,7 @@ class ThycoticMixin:
     def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
         # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
         """Fetch one secret and its permission rows. Runs on a worker thread."""
-        secret = auth.thycotic_entity(choose_secret_read_endpoint(auth, secret_id)) or {}
+        secret = auth.thycotic_entity(select_secret_read_endpoint(auth, secret_id)) or {}
         if not isinstance(secret, dict):
             return None, []
         secret['id'] = secret.get('id') or secret_id
@@ -2439,22 +2439,23 @@ class ThycoticAuth:
         return result
 
     @staticmethod
-    def parse_secret_server_version(text):  # type: (Any) -> Optional[Tuple[int, ...]]
-        """Turn a version string such as '11.3.000001' into (11, 3, 1).
+    def parse_secret_server_version(text):  # type: (Any) -> Optional[Tuple[int, int]]
+        """Return (major, minor) from a version such as '11.10.000000', or None.
 
-        Returns None when the text does not start with a dotted number.
+        The build is not read. Comparison with (11, 3) only needs these two numbers.
         """
         if not isinstance(text, str):
             return None
-        match = re.match(r'\s*v?(\d+(?:\.\d+)*)', text)
-        if not match:
+        major, dot, rest = text.partition('.')
+        minor = rest.partition('.')[0]
+        if not dot or not major.isdigit() or not minor.isdigit():
             return None
-        return tuple(int(part) for part in match.group(1).split('.'))
+        return int(major), int(minor)
 
-    def get_secret_server_version(self):  # type: () -> Optional[Tuple[int, ...]]
+    def get_secret_server_version(self):  # type: () -> Optional[Tuple[int, int]]
         """Ask GET /api/v1/version which Secret Server version is running.
 
-        The answer looks like {"success": true, "model": {"version": "11.3.000001"}}.
+        The answer looks like {"success": true, "model": {"version": "11.10.000000"}}.
         Returns the parsed version, or None when it cannot be read. Request
         errors propagate to the caller.
         """

@@ -164,9 +164,9 @@ class TestSecretServerVersion(unittest.TestCase):
 
     def test_version_parsing(self):
         parse = ThycoticAuth.parse_secret_server_version
-        self.assertEqual(parse('11.3.000001'), (11, 3, 1))
-        self.assertEqual(parse('12.0.0'), (12, 0, 0))
-        self.assertEqual(parse('v11.2'), (11, 2))
+        self.assertEqual(parse('11.10.000000'), (11, 10))
+        self.assertEqual(parse('11.3.000001'), (11, 3))
+        self.assertEqual(parse('12.0.000000'), (12, 0))
         self.assertIsNone(parse(''))
         self.assertIsNone(parse(None))
         self.assertIsNone(parse('unknown'))
@@ -190,40 +190,43 @@ class TestSecretServerVersion(unittest.TestCase):
         secret_urls = [url for url in urls if '/secrets/4' in url]
         return auth, version_calls, secret_urls
 
-    def test_v2_secret_read_is_used_from_11_3(self):
-        for text in ('11.3.000001', '11.4.0', '12.0.000000'):
+    def test_secret_read_follows_the_server_version(self):
+        # 11.3 and later use /v2/secrets. Earlier servers stay on /v1/secrets.
+        # The lookup is cached, so the second secret does not ask for the version again.
+        cases = (
+            ('11.3.000001', True),
+            ('11.4.000000', True),
+            ('11.10.000000', True),
+            ('12.0.000000', True),
+            ('11.0.000000', False),
+            ('11.2.000002', False),
+            ('10.9.000000', False),
+        )
+        for text, use_v2 in cases:
             with self.subTest(version=text):
                 auth, version_calls, secret_urls = self._read_with_version(_version(text))
-                self.assertTrue(auth._v2_secrets)
+                api = 'v2' if use_v2 else 'v1'
+                self.assertIs(auth._v2_secrets, use_v2)
                 self.assertEqual(version_calls, 1)
-                self.assertTrue(secret_urls[0].endswith(f'/api/v2/secrets/42?{PLAIN_QUERY}'))
-                self.assertTrue(secret_urls[1].endswith(f'/api/v2/secrets/43?{PLAIN_QUERY}'))
+                self.assertTrue(secret_urls[0].endswith(f'/api/{api}/secrets/42?{PLAIN_QUERY}'))
+                self.assertTrue(secret_urls[1].endswith(f'/api/{api}/secrets/43?{PLAIN_QUERY}'))
 
-    def test_v1_secret_read_is_used_before_11_3(self):
-        for text in ('11.0.000000', '11.2.000002', '10.9.0'):
-            with self.subTest(version=text):
-                auth, version_calls, secret_urls = self._read_with_version(_version(text))
-                self.assertFalse(auth._v2_secrets)
-                self.assertEqual(version_calls, 1)
-                self.assertTrue(secret_urls[0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
-                self.assertTrue(secret_urls[1].endswith(f'/api/v1/secrets/43?{PLAIN_QUERY}'))
-
-    def test_unreadable_version_defaults_to_v2_and_is_remembered(self):
-        for response in (_version('unknown'), _response(404, 'Not Found'), _response(200, 'not json')):
-            with self.subTest(status=response.status_code, text=response.text):
+    def test_version_lookup_is_cached_only_when_it_completes(self):
+        # An unreadable answer (unknown text, 404, non-JSON) is remembered as v2.
+        # A request error or 5xx is not remembered, so the next read asks again.
+        cases = (
+            ('unknown', _version('unknown'), True, 1),
+            ('not found', _response(404, 'Not Found'), True, 1),
+            ('not json', _response(200, 'not json'), True, 1),
+            ('connection error', requests.exceptions.ConnectionError('blip'), None, 2),
+            ('server error', _response(503, 'busy'), None, 2),
+        )
+        for label, response, cached, version_calls in cases:
+            with self.subTest(case=label):
                 with self.assertLogs(level='INFO'):
-                    auth, version_calls, secret_urls = self._read_with_version(response)
-                self.assertTrue(auth._v2_secrets)
-                self.assertEqual(version_calls, 1)
-                self.assertTrue(secret_urls[0].split('?', 1)[0].endswith('/api/v2/secrets/42'))
-
-    def test_version_failure_is_not_remembered(self):
-        for failure in (requests.exceptions.ConnectionError('blip'), _response(503, 'busy')):
-            with self.subTest(failure=failure):
-                with self.assertLogs(level='INFO'):
-                    auth, version_calls, secret_urls = self._read_with_version(failure)
-                self.assertIsNone(auth._v2_secrets)
-                self.assertEqual(version_calls, 2)
+                    auth, calls, secret_urls = self._read_with_version(response)
+                self.assertIs(auth._v2_secrets, cached)
+                self.assertEqual(calls, version_calls)
                 self.assertTrue(secret_urls[0].split('?', 1)[0].endswith('/api/v2/secrets/42'))
 
     def test_checkout_retry_uses_the_same_versioned_url(self):
