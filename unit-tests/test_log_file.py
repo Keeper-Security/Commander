@@ -666,6 +666,16 @@ class TestCommandLogging(TestCase):
         with open(self.log_path, encoding='utf-8') as handle:
             return handle.read()
 
+    def _test_log_file_handlers(self):
+        # Ignore handlers injected by test runners (e.g. pytest's _FileHandler).
+        command_logger = logging.getLogger(cli.COMMAND_LOGGER_NAME)
+        tmp_dir = os.path.realpath(self.tmp.name)
+        return [
+            h for h in command_logger.handlers
+            if isinstance(h, logging.FileHandler)
+            and os.path.realpath(h.baseFilename).startswith(tmp_dir + os.sep)
+        ]
+
     def test_command_is_written_to_the_file_only(self):
         stream = io.StringIO()
         console = logging.StreamHandler(stream)
@@ -694,9 +704,9 @@ class TestCommandLogging(TestCase):
         cli.debug_manager.log_command('first')
         cli.debug_manager.attach_log_file(other_path)
         cli.debug_manager.log_command('second')
-        command_logger = logging.getLogger(cli.COMMAND_LOGGER_NAME)
-        log_files = [h for h in command_logger.handlers if isinstance(h, logging.FileHandler)]
+        log_files = self._test_log_file_handlers()
         self.assertEqual(len(log_files), 1)
+        self.assertEqual(os.path.realpath(log_files[0].baseFilename), os.path.realpath(other_path))
         body = self._body()
         self.assertIn('first', body)
         self.assertNotIn('second', body)
@@ -709,8 +719,7 @@ class TestCommandLogging(TestCase):
         os.remove(self.log_path)
         cli.debug_manager.log_command('list')
         self.assertFalse(os.path.exists(self.log_path))
-        command_logger = logging.getLogger(cli.COMMAND_LOGGER_NAME)
-        self.assertFalse(any(isinstance(h, logging.FileHandler) for h in command_logger.handlers))
+        self.assertEqual(self._test_log_file_handlers(), [])
 
     def test_console_debug_toggle_leaves_the_log_file_level_alone(self):
         cli.debug_manager.attach_log_file(self.log_path)
