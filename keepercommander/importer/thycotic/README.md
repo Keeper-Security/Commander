@@ -155,7 +155,8 @@ Thycotic Secret Server restricts access to certain secrets. To import restricted
    - Try a normal `GET` of the secret (and sensitive fields)
    - If that fails, **retry the same request with checkout query parameters** (`autoCheckout`, `autoCheckIn`, `autoComment`) so Delinea checks the secret out for the API read, then checks it back in
 
-This checkout behavior applies only when loading secret content for import. It is not used for membership export or user provisioning previews.
+This checkout behavior applies only when loading secret content for import.
+Membership export uses `GET /api/v2/secrets` to list secret summaries (name, folder, inheritsPermissions) without reading secret values.
 
 No extra flags are required on the import command.
 
@@ -340,7 +341,8 @@ The import uses the following Thycotic Secret Server API endpoints:
 - `GET /api/v1/users/{id}` - Get user details
 - `GET /api/v1/groups` - List groups
 - `GET /api/v1/groups/{id}/users` - Get group members
-- `GET /api/v1/secrets/lookup` - Search secrets (with folder/restriction filters)
+- `GET /api/v1/secrets/lookup` - Secret ids for import (with folder/restriction filters)
+- `GET /api/v2/secrets` - Secret summaries for membership (name, folder, inheritsPermissions; no checkout)
 - `GET /api/v1/secrets/{id}` - Get secret (with checkout parameters if needed)
 - `GET /api/v1/secrets/{id}/fields/{slug}` - Get secret field (with checkout parameters if needed)
 - `GET /api/v1/secret-permissions` - Get permissions (bulk or per-secret)

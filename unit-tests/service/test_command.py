@@ -72,6 +72,18 @@ class TestCommandAPI(TestCase):
             result = CommandExecutor.validate_session()
             self.assertIsNone(result)
 
+    def test_execute_rejects_shell_only_commands_with_forbidden_status(self):
+        """The real Service Mode executor must reject shell/session controls."""
+        params = params_module.KeeperParams()
+        with mock.patch(
+                'keepercommander.service.core.globals.ensure_params_loaded',
+                return_value=params):
+            for command in ('history', 'h', 'server host --insecure'):
+                with self.subTest(command=command):
+                    response, status_code = CommandExecutor.execute(command)
+                    self.assertEqual(status_code, 403)
+                    self.assertIn('Interactive shell/session commands', response['error'])
+
     @unittest.skip
     def test_command_execution_success(self):
         """Test successful command execution"""

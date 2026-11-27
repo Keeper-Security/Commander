@@ -149,7 +149,7 @@ class TestThycoticFolderAcl(TestCase):
             ('/v1/users', _users()),
             ('/v1/folders', [row for row in _folders() if row['id'] != 11]),
             ('/v1/folder-permissions?filter.folderId=10', rows),
-            ('/v1/secrets/lookup', []),
+            ('/v2/secrets', []),
         ])
         with mock.patch.object(thycotic.ThycoticMixin, 'connect_to_server', return_value=auth):
             shared = list(thycotic.ThycoticMembershipDownload().download_membership(None))
@@ -180,21 +180,14 @@ class TestThycoticSecretRecordPermissions(TestCase):
                 return []
             if endpoint.startswith('/v1/users'):
                 return _users()
-            if endpoint.startswith('/v1/secrets/lookup'):
-                return [{'id': secret['id']}]
+            if endpoint.startswith('/v2/secrets'):
+                return [secret]
             if endpoint.startswith('/v1/secret-permissions'):
                 return permission_rows
             raise AssertionError(endpoint)
 
-        def entity_impl(self, endpoint):
-            calls.append(endpoint)
-            if endpoint == '/v1/secrets/{0}'.format(secret['id']):
-                return secret
-            raise AssertionError(endpoint)
-
         auth = mock.Mock()
         auth.thycotic_search.side_effect = search.__get__(auth, type(auth))
-        auth.thycotic_entity.side_effect = entity_impl.__get__(auth, type(auth))
         with mock.patch.object(thycotic.ThycoticMixin, 'connect_to_server', return_value=auth):
             downloaded = list(thycotic.ThycoticMembershipDownload().download_membership(None))
         records = [item for item in downloaded if getattr(item, 'shares', None)]
@@ -205,7 +198,7 @@ class TestThycoticSecretRecordPermissions(TestCase):
             'id': 100,
             'name': 'prod-db',
             'folderId': 10,
-            'inheritPermissions': inherit,
+            'inheritsPermissions': inherit,
         }
 
     def _shares(self, record):
@@ -263,20 +256,14 @@ class TestThycoticSecretRecordPermissions(TestCase):
                 return []
             if endpoint.startswith('/v1/users'):
                 return _users()
-            if endpoint.startswith('/v1/secrets/lookup'):
-                return [{'id': secret['id']}]
+            if endpoint.startswith('/v2/secrets'):
+                return [secret]
             if endpoint.startswith('/v1/groups'):
                 return []
             raise AssertionError(endpoint)
 
-        def entity_impl(self, endpoint):
-            if endpoint == '/v1/secrets/100':
-                return secret
-            raise AssertionError(endpoint)
-
         auth = mock.Mock()
         auth.thycotic_search.side_effect = search.__get__(auth, type(auth))
-        auth.thycotic_entity.side_effect = entity_impl.__get__(auth, type(auth))
         with mock.patch.object(thycotic.ThycoticMixin, 'connect_to_server', return_value=auth):
             downloaded = list(thycotic.ThycoticMembershipDownload().download_membership(None))
         records = [item for item in downloaded if getattr(item, 'shares', None)]
@@ -299,7 +286,7 @@ class TestThycoticSecretRecordPermissions(TestCase):
     def test_absent_inherit_flag_falls_back_to_folder_roles(self):
         calls = []
         secret = self._secret(True)
-        del secret['inheritPermissions']
+        del secret['inheritsPermissions']
         folder_rows = [
             {'userId': 5, 'groupId': 0, 'folderAccessRoleId': 3, 'secretAccessRoleId': 3, 'secretAccessRoleName': 'Edit'},
             {'userId': 6, 'groupId': 0, 'folderAccessRoleId': 4, 'secretAccessRoleId': 4, 'secretAccessRoleName': 'View'},
@@ -315,22 +302,16 @@ class TestThycoticSecretRecordPermissions(TestCase):
                 return []
             if endpoint.startswith('/v1/users'):
                 return _users()
-            if endpoint.startswith('/v1/secrets/lookup'):
-                return [{'id': secret['id']}]
+            if endpoint.startswith('/v2/secrets'):
+                return [secret]
             if endpoint.startswith('/v1/secret-permissions'):
                 return []
             if endpoint.startswith('/v1/groups'):
                 return []
             raise AssertionError(endpoint)
 
-        def entity_impl(self, endpoint):
-            if endpoint == '/v1/secrets/100':
-                return secret
-            raise AssertionError(endpoint)
-
         auth = mock.Mock()
         auth.thycotic_search.side_effect = search.__get__(auth, type(auth))
-        auth.thycotic_entity.side_effect = entity_impl.__get__(auth, type(auth))
         with mock.patch.object(thycotic.ThycoticMixin, 'connect_to_server', return_value=auth):
             downloaded = list(thycotic.ThycoticMembershipDownload().download_membership(None))
         records = [item for item in downloaded if getattr(item, 'shares', None)]
@@ -342,7 +323,7 @@ class TestThycoticSecretRecordPermissions(TestCase):
 
     def test_missing_inherit_flag_still_pulls_secret_permissions(self):
         secret = self._secret(True)
-        del secret['inheritPermissions']
+        del secret['inheritsPermissions']
         records, calls = self._download(secret, [
             {'userId': 5, 'userName': 'owner-login', 'secretId': 100, 'secretAccessRoleName': 'Edit'},
         ])
@@ -400,8 +381,7 @@ class TestSecretSharesRequireExistingUsers(TestCase):
         grant.assert_not_called()
 
 
-def _secret_auth(secrets, secret_permissions=None, folder_permissions=None, failing_secrets=(),
-                 failing_endpoints=()):
+def _secret_auth(secrets, secret_permissions=None, folder_permissions=None, failing_endpoints=()):
     """Mock auth for iter_secret_shares. failing_* raise instead of returning."""
     auth = mock.Mock()
     auth.calls = []
@@ -413,8 +393,8 @@ def _secret_auth(secrets, secret_permissions=None, folder_permissions=None, fail
         for prefix in failing_endpoints:
             if endpoint.startswith(prefix):
                 raise RuntimeError('boom')
-        if endpoint.startswith('/v1/secrets/lookup'):
-            return [{'id': secret['id']} for secret in secrets]
+        if endpoint.startswith('/v2/secrets'):
+            return list(secrets)
         if endpoint == '/v1/secret-permissions':
             return [dict(row, secretId=secret_id) for secret_id, rows in secret_permissions.items() for row in rows]
         if endpoint.startswith('/v1/secret-permissions?filter.secretId='):
@@ -427,18 +407,7 @@ def _secret_auth(secrets, secret_permissions=None, folder_permissions=None, fail
             return []
         raise AssertionError(endpoint)
 
-    def entity(endpoint):
-        auth.calls.append(endpoint)
-        secret_id = int(endpoint.rsplit('/', 1)[1])
-        if secret_id in failing_secrets:
-            raise RuntimeError('secret {0} unavailable'.format(secret_id))
-        for secret in secrets:
-            if secret['id'] == secret_id:
-                return dict(secret)
-        return None
-
     auth.thycotic_search.side_effect = search
-    auth.thycotic_entity.side_effect = entity
     return auth
 
 
@@ -449,26 +418,33 @@ def _folder_map():
 class TestExternalCallFailures(TestCase):
     def test_failed_secret_fetch_skips_only_that_secret(self):
         secrets = [
-            {'id': 100, 'name': 'broken', 'folderId': 10, 'inheritPermissions': False},
-            {'id': 101, 'name': 'ok', 'folderId': 10, 'inheritPermissions': False},
+            {'id': 100, 'name': 'broken', 'folderId': 10, 'inheritsPermissions': False},
+            {'id': 101, 'name': 'ok', 'folderId': 10, 'inheritsPermissions': False},
         ]
         auth = _secret_auth(secrets, secret_permissions={
             101: [{'userId': 5, 'secretId': 101, 'secretAccessRoleName': 'Owner'}],
-        }, failing_secrets=(100,))
-        with self.assertLogs(level='WARNING') as logs:
+        })
+        real = thycotic.ThycoticMixin.permission_rows_for_secret
+        def rows(auth_arg, folders, secret, folder_cache=None, secret_permissions=None):
+            if secret.get('id') == 100:
+                raise RuntimeError('secret 100 unavailable')
+            return real(auth_arg, folders, secret, folder_cache, secret_permissions)
+
+        with mock.patch.object(thycotic.ThycoticMixin, 'permission_rows_for_secret', side_effect=rows), \
+                self.assertLogs(level='WARNING') as logs:
             records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
         self.assertEqual([record.title for record in records], ['ok'])
         self.assertTrue(any('Secret 100 permissions skipped' in line for line in logs.output))
         self.assertTrue(any('1 secret(s) were skipped' in line for line in logs.output))
 
     def test_failed_secret_lookup_yields_nothing(self):
-        auth = _secret_auth([], failing_endpoints=('/v1/secrets/lookup',))
+        auth = _secret_auth([], failing_endpoints=('/v2/secrets',))
         with self.assertLogs(level='WARNING'):
             records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
         self.assertEqual(records, [])
 
     def test_failed_secret_permissions_falls_back_to_folder(self):
-        secret = {'id': 100, 'name': 'prod-db', 'folderId': 10, 'inheritPermissions': False}
+        secret = {'id': 100, 'name': 'prod-db', 'folderId': 10, 'inheritsPermissions': False}
         auth = _secret_auth([secret], folder_permissions={
             10: [{'userId': 6, 'secretAccessRoleName': 'View'}],
         }, failing_endpoints=('/v1/secret-permissions',))
@@ -691,7 +667,7 @@ class TestPermissionEdgeCases(TestCase):
         self.assertEqual(records, [])
 
     def test_secret_without_name_is_not_yielded(self):
-        secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritPermissions': False}
+        secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritsPermissions': False}
         auth = _secret_auth([secret], secret_permissions={
             100: [{'userId': 5, 'secretAccessRoleName': 'Owner'}],
         })
@@ -699,7 +675,7 @@ class TestPermissionEdgeCases(TestCase):
         self.assertEqual(records, [])
 
     def test_secret_in_unknown_folder_has_no_folder_path(self):
-        secret = {'id': 100, 'name': 'loose', 'folderId': 404, 'inheritPermissions': False}
+        secret = {'id': 100, 'name': 'loose', 'folderId': 404, 'inheritsPermissions': False}
         auth = _secret_auth([secret], secret_permissions={
             100: [{'userId': 5, 'secretAccessRoleName': 'Edit'}],
         })
@@ -841,7 +817,7 @@ class TestThycoticUserReport(TestCase):
 
 class TestCustomSecretRoles(TestCase):
     def _secret(self):
-        return {'id': 100, 'name': 'prod-db', 'folderId': 10, 'inheritPermissions': False}
+        return {'id': 100, 'name': 'prod-db', 'folderId': 10, 'inheritsPermissions': False}
 
     def test_custom_role_is_warned_and_known_roles_still_shared(self):
         auth = _secret_auth([self._secret()], secret_permissions={100: [
@@ -1022,6 +998,77 @@ class TestSecretServerRateLimit(TestCase):
         sleep.assert_not_called()
 
 
+class TestSecretServerPagination(TestCase):
+    def _auth(self):
+        auth = thycotic.ThycoticAuth('https://ss.example.com')
+        auth.access_token = 'token'
+        auth.expires_in = 3600
+        auth.last_login = 10 ** 12
+        return auth
+
+    def _page(self, records, has_next, next_skip, total):
+        return _response(200, {
+            'records': records,
+            'hasNext': has_next,
+            'nextSkip': next_skip,
+            'total': total,
+        })
+
+    def test_last_page_with_one_record_is_kept(self):
+        pages = [
+            self._page([{'id': 1}, {'id': 2}], True, 2, 3),
+            self._page([{'id': 3}], False, 4, 3),
+        ]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=pages) as get:
+            with self.assertLogs(level='DEBUG') as logs:
+                result = self._auth().thycotic_search('/v1/secrets/lookup')
+        self.assertEqual([row['id'] for row in result], [1, 2, 3])
+        self.assertEqual(get.call_count, 2)
+        self.assertIn('skip=2', get.call_args_list[1].args[0])
+        text = '\n'.join(logs.output)
+        self.assertIn('records=1', text)
+        self.assertIn('short page records=1 take=1000 hasNext=False', text)
+        self.assertIn('pagination finished, 3 record(s) in 2 page(s)', text)
+
+    def test_one_record_page_with_has_next_continues(self):
+        pages = [
+            self._page([{'id': 1}], True, 1, 2),
+            self._page([{'id': 2}], False, 2, 2),
+        ]
+        with mock.patch.object(thycotic.requests, 'get', side_effect=pages) as get:
+            with self.assertLogs(level='DEBUG') as logs:
+                result = self._auth().thycotic_search('/v1/secrets/lookup')
+        self.assertEqual([row['id'] for row in result], [1, 2])
+        self.assertEqual(get.call_count, 2)
+        self.assertIn('short page records=1 take=1000 hasNext=True', '\n'.join(logs.output))
+
+    def test_has_next_without_advancing_skip_stops(self):
+        stuck = self._page([{'id': 1}], True, 0, 5)
+        with mock.patch.object(thycotic.requests, 'get', return_value=stuck) as get:
+            with self.assertLogs(level='WARNING') as logs:
+                result = self._auth().thycotic_search('/v1/users')
+        self.assertEqual(result, [{'id': 1}])
+        get.assert_called_once()
+        self.assertIn('does not advance from skip=0', '\n'.join(logs.output))
+
+    def test_missing_records_list_stops(self):
+        with mock.patch.object(thycotic.requests, 'get', return_value=_response(200, {'hasNext': True, 'nextSkip': 1000})):
+            with self.assertLogs(level='WARNING') as logs:
+                result = self._auth().thycotic_search('/v1/users')
+        self.assertEqual(result, [])
+        self.assertIn('has no records list', '\n'.join(logs.output))
+
+    def test_full_page_with_has_next_false_stops(self):
+        full_page = self._page([{'id': i} for i in range(1, 1001)], False, 1000, 1000)
+        with mock.patch.object(thycotic.requests, 'get', return_value=full_page) as get:
+            with self.assertLogs(level='DEBUG') as logs:
+                result = self._auth().thycotic_search('/v1/secrets')
+        self.assertEqual(len(result), 1000)
+        get.assert_called_once()
+        log_text = '\n'.join(logs.output)
+        self.assertNotIn('short page', log_text)
+
+
 class TestSecretShareHelpers(TestCase):
     def test_folder_path_accepts_int_or_str_ids(self):
         folders = {10: {'folderPath': '\\Apps'}, '11': {'folderPath': '\\Ops'}}
@@ -1041,8 +1088,15 @@ class TestSecretShareHelpers(TestCase):
         self.assertFalse(record.folders)
         self.assertIs(record.shares, shares)
 
+    def test_membership_lookup_uses_secrets_lookup_query(self):
+        auth = _secret_auth([])
+        list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
+        expected_query = thycotic.build_secrets_search_query()
+        self.assertIn(expected_query, auth.calls)
+        self.assertTrue(any('includeRestricted=true' in call for call in auth.calls))
+
     def test_unnamed_secret_does_not_load_groups(self):
-        secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritPermissions': False}
+        secret = {'id': 100, 'name': '', 'folderId': 10, 'inheritsPermissions': False}
         auth = _secret_auth([secret], secret_permissions={100: [{'groupId': 9, 'secretAccessRoleName': 'Owner'}]})
         list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
         self.assertFalse(any(call.startswith('/v1/groups') for call in auth.calls))
@@ -1050,7 +1104,7 @@ class TestSecretShareHelpers(TestCase):
 
 class TestBulkSecretPermissions(TestCase):
     def _secrets(self, count):
-        return [{'id': 100 + i, 'name': 'secret-{0}'.format(i), 'folderId': 10, 'inheritPermissions': False}
+        return [{'id': 100 + i, 'name': 'secret-{0}'.format(i), 'folderId': 10, 'inheritsPermissions': False}
                 for i in range(count)]
 
     def test_one_bulk_call_replaces_per_secret_calls(self):
@@ -1092,15 +1146,14 @@ class TestBulkSecretPermissions(TestCase):
                 return []
             if endpoint.startswith('/v1/secret-permissions?filter.secretId=100'):
                 return [{'userId': 5, 'secretId': 100, 'secretAccessRoleName': 'Edit'}]
-            if endpoint.startswith('/v1/secrets/lookup'):
-                return [{'id': 100}]
+            if endpoint.startswith('/v2/secrets'):
+                return [secret]
             if endpoint.startswith('/v1/users'):
                 return _users()
             return []
 
         auth = mock.Mock()
         auth.thycotic_search.side_effect = search
-        auth.thycotic_entity.return_value = dict(secret)
         records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
         self.assertEqual([share.name for share in records[0].shares], ['owner@example.com'])
         self.assertIn('/v1/secret-permissions?filter.secretId=100', calls)
@@ -1189,7 +1242,7 @@ class TestOrderedWorkerPool(TestCase):
 class TestParallelSecretShares(TestCase):
     def _secrets(self, count):
         return [{'id': 100 + i, 'name': 'secret-{0}'.format(i), 'folderId': 10 + (i % 2),
-                 'inheritPermissions': i % 3 == 0} for i in range(count)]
+                 'inheritsPermissions': i % 3 == 0} for i in range(count)]
 
     def _permissions(self, secrets):
         return {secret['id']: [{'userId': 5 + (secret['id'] % 2), 'secretAccessRoleName': 'Edit'}]
@@ -1210,15 +1263,27 @@ class TestParallelSecretShares(TestCase):
 
     def test_failed_secret_is_counted_once_in_parallel(self):
         secrets = self._secrets(10)
-        auth = _secret_auth(secrets, self._permissions(secrets), failing_secrets=(103, 107))
-        with self.assertLogs(level='WARNING') as logs:
+        auth = _secret_auth(secrets, self._permissions(secrets))
+        real = thycotic.ThycoticMixin.permission_rows_for_secret
+
+        def rows(auth_arg, folders, secret, folder_cache=None, secret_permissions=None):
+            if secret.get('id') in (103, 107):
+                raise RuntimeError('secret {0} unavailable'.format(secret.get('id')))
+            return real(auth_arg, folders, secret, folder_cache, secret_permissions)
+
+        with mock.patch.object(thycotic.ThycoticMixin, 'permission_rows_for_secret', side_effect=rows), \
+                self.assertLogs(level='WARNING') as logs:
             records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map(), workers=4))
         self.assertEqual(len(records), 8)
         self.assertNotIn('secret-3', [record.title for record in records])
+        self.assertNotIn('secret-7', [record.title for record in records])
+        for secret_id in (103, 107):
+            matches = [line for line in logs.output if 'Secret {0} permissions skipped'.format(secret_id) in line]
+            self.assertEqual(len(matches), 1)
         self.assertTrue(any('2 secret(s) were skipped' in line for line in logs.output))
 
     def test_folder_permissions_fetched_at_most_once_per_worker(self):
-        secrets = [{'id': 100 + i, 'name': 's{0}'.format(i), 'folderId': 10, 'inheritPermissions': True}
+        secrets = [{'id': 100 + i, 'name': 's{0}'.format(i), 'folderId': 10, 'inheritsPermissions': True}
                    for i in range(40)]
         auth = _secret_auth(secrets, folder_permissions={10: [{'userId': 5, 'secretAccessRoleName': 'View'}]})
         records = list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map(), workers=4))
@@ -1320,7 +1385,7 @@ class TestFolderPermissionCache(TestCase):
         self.assertTrue(all(cache.get(folder_id) is not None for folder_id in range(200)))
 
     def test_parallel_shares_use_the_locked_cache(self):
-        secrets = [{'id': 100 + i, 'name': 's{0}'.format(i), 'folderId': 10, 'inheritPermissions': True}
+        secrets = [{'id': 100 + i, 'name': 's{0}'.format(i), 'folderId': 10, 'inheritsPermissions': True}
                    for i in range(30)]
         auth = _secret_auth(secrets, folder_permissions={10: [{'userId': 5, 'secretAccessRoleName': 'Edit'}]})
         with mock.patch.object(thycotic, 'FolderPermissionCache', wraps=thycotic.FolderPermissionCache) as cache_class:
@@ -1349,10 +1414,10 @@ class TestUnnestedHelpers(TestCase):
 
     def test_fetch_secret_entry_never_raises(self):
         auth = mock.Mock()
-        auth.thycotic_entity.side_effect = RuntimeError('down')
-        secret, rows, error = thycotic.ThycoticMixin._fetch_secret_entry(
-            auth, {}, thycotic.FolderPermissionCache(), None, ({'id': 1}, 1))
-        self.assertIsNone(secret)
+        with mock.patch.object(
+                thycotic.ThycoticMixin, 'permission_rows_for_secret', side_effect=RuntimeError('down')):
+            rows, error = thycotic.ThycoticMixin._load_secret_permissions(
+                auth, {}, thycotic.FolderPermissionCache(), None, {'id': 1, 'name': 'x'})
         self.assertEqual(rows, [])
         self.assertIsInstance(error, RuntimeError)
 

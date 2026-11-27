@@ -61,7 +61,9 @@ PARAM_AUTO_COMMENT = 'autoComment'
 PARAM_NO_AUTO_CHECKOUT = 'noAutoCheckout'
 
 # Audit comment sent with every secret and secret-field read.
-SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
+# Kept outside SecretAccessMode: an Enum class body would treat a plain
+# assignment as another member, and member values are fixed at definition.
+DEFAULT_SECRET_ACCESS_COMMENT = 'Checking out for Keeper Import'
 
 # Delinea error code returned (HTTP 400) when a secret must be checked out
 # before it can be read.
@@ -80,21 +82,32 @@ SECRET_ACCESS_PARAM_NAMES = frozenset((
 class SecretAccessMode(Enum):
     """How a secret or secret field is read, with the query parameters each mode sends."""
     # Plain read: the server must not check the secret out.
+    # autoComment's value is filled from the comment passed to params().
     PLAIN = (
         (PARAM_AUTO_CHECKOUT, 'false'),
-        (PARAM_AUTO_COMMENT, SECRET_ACCESS_COMMENT),
+        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMMENT),
         (PARAM_NO_AUTO_CHECKOUT, 'true'),
     )
     # Checkout read: the secret is checked out and checked back in after the response.
     CHECKOUT = (
         (PARAM_AUTO_CHECKOUT, 'true'),
         (PARAM_AUTO_CHECKIN, 'true'),
-        (PARAM_AUTO_COMMENT, SECRET_ACCESS_COMMENT),
+        (PARAM_AUTO_COMMENT, DEFAULT_SECRET_ACCESS_COMMENT),
     )
 
-    @property
-    def params(self):  # type: () -> Tuple[Tuple[str, str], ...]
-        return self.value
+    def params(self, comment=None):  # type: (Optional[str]) -> Tuple[Tuple[str, str], ...]
+        comment = normalize_checkout_comment(comment)
+        return tuple(
+            (key, comment if key == PARAM_AUTO_COMMENT else value)
+            for key, value in self.value
+        )
+
+
+def normalize_checkout_comment(comment):  # type: (Optional[str]) -> str
+    """Return the stripped comment. A blank or missing comment gives the default."""
+    if isinstance(comment, str) and comment.strip():
+        return comment.strip()
+    return DEFAULT_SECRET_ACCESS_COMMENT
 
 
 @dataclass(frozen=True)
@@ -138,8 +151,8 @@ def _replace_query(endpoint, params):
     return urlunparse(parts._replace(query=urlencode(params, quote_via=quote)))
 
 
-def with_secret_access_params(endpoint, mode=SecretAccessMode.PLAIN):
-    # type: (str, SecretAccessMode) -> str
+def with_secret_access_params(endpoint, mode=SecretAccessMode.PLAIN, comment=None):
+    # type: (str, SecretAccessMode, Optional[str]) -> str
     """Add checkout and comment parameters to a secret read URL.
 
     Existing query parameters are kept. Any existing checkout or comment
@@ -147,7 +160,7 @@ def with_secret_access_params(endpoint, mode=SecretAccessMode.PLAIN):
     """
     query = parse_qsl(urlparse(endpoint).query, keep_blank_values=True)
     params = [(k, v) for k, v in query if k not in SECRET_ACCESS_PARAM_NAMES]
-    params.extend(mode.params)
+    params.extend(mode.params(comment))
     return _replace_query(endpoint, params)
 
 
@@ -167,6 +180,16 @@ def build_secrets_lookup_query(folder_id=None, include_restricted=True):
         f'/v1/secrets/lookup?filter.folderId={folder_id}'
         f'&filter.includeSubFolders=true&filter.includeRestricted={restricted}'
     )
+
+
+def build_secrets_search_query(include_restricted=True):
+    # type: (bool) -> str
+    """GET /v2/secrets summary search. Each record has id, name, folderId, and inheritsPermissions.
+
+    The search does not return field values and does not check a secret out.
+    """
+    restricted = 'true' if include_restricted else 'false'
+    return f'/v2/secrets?filter.includeRestricted={restricted}'
 
 
 def _ids_from_lookup_response(response):
@@ -791,7 +814,7 @@ class ThycoticMixin:
         """
         folder_id = secret.get('folderId') if isinstance(secret, dict) else None
         secret_id = secret.get('id') if isinstance(secret, dict) else None
-        inherits = isinstance(secret, dict) and secret.get('inheritPermissions') is True
+        inherits = isinstance(secret, dict) and secret.get('inheritsPermissions') is True
 
         if inherits:
             rows = ThycoticMixin.folder_permission_rows(auth, folders, folder_id, folder_cache)
@@ -819,26 +842,15 @@ class ThycoticMixin:
         return rows if isinstance(rows, list) else []
 
     @staticmethod
-    def _fetch_secret_permissions(auth, folders, secret_id, folder_cache, secret_permissions=None):
-        # type: (ThycoticAuth, Dict, Any, Dict, Optional[Dict[Any, list]]) -> Tuple[Optional[dict], list]
-        """Fetch one secret and its permission rows. Runs on a worker thread."""
-        secret = auth.thycotic_entity(select_secret_read_endpoint(auth, secret_id)) or {}
-        if not isinstance(secret, dict):
-            return None, []
-        secret['id'] = secret.get('id') or secret_id
-        return secret, ThycoticMixin.permission_rows_for_secret(
-            auth, folders, secret, folder_cache, secret_permissions)
-
-    @staticmethod
-    def _fetch_secret_entry(auth, folders, folder_cache, secret_permissions, entry):
-        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], Tuple[dict, Any]) -> Tuple[Optional[dict], list, Optional[Exception]]
-        """Worker task: (secret, rows, None) on success, (None, [], error) on failure. Never raises."""
+    def _load_secret_permissions(auth, folders, folder_cache, secret_permissions, secret):
+        # type: (ThycoticAuth, Dict, FolderPermissionCache, Optional[Dict[Any, list]], dict) -> Tuple[list, Optional[Exception]]
+        """Worker task: (rows, None) on success, ([], error) on failure. Never raises."""
         try:
-            secret, rows = ThycoticMixin._fetch_secret_permissions(
-                auth, folders, entry[1], folder_cache, secret_permissions)
-            return secret, rows, None
+            rows = ThycoticMixin.permission_rows_for_secret(
+                auth, folders, secret, folder_cache, secret_permissions)
+            return rows, None
         except Exception as exc:
-            return None, [], exc
+            return [], exc
 
     @staticmethod
     def secret_share_workers(value):
@@ -949,26 +961,27 @@ class ThycoticMixin:
         emails = ThycoticMixin.provisioned_emails(auth)
         groups = None
         try:
-            lookup = auth.thycotic_search('/v1/secrets/lookup') or []
+            secrets = auth.thycotic_search(build_secrets_search_query()) or []
         except Exception as exc:
-            logging.warning('secret lookup for permissions: %s', exc)
+            logging.warning('secret search for permissions: %s', exc)
             return
-        if not isinstance(lookup, list):
-            lookup = []
+        if not isinstance(secrets, list):
+            secrets = []
         folders = folders or {}
-        entries = [(row, row.get('id')) for row in lookup if isinstance(row, dict) and row.get('id')]
+        valid_secrets = [row for row in secrets if isinstance(row, dict) and isinstance(row.get('id'), int)]
         written = 0
         seen = 0
         unmapped = 0
         failed = 0
         custom_role_secrets = 0
         folder_cache = FolderPermissionCache()
-        secret_permissions = ThycoticMixin.all_secret_permission_rows(auth) if entries else None
-        workers = min(ThycoticMixin.secret_share_workers(workers), max(len(entries), 1))
-        logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(entries), workers)
+        secret_permissions = ThycoticMixin.all_secret_permission_rows(auth) if valid_secrets else None
+        workers = min(ThycoticMixin.secret_share_workers(workers), max(len(valid_secrets), 1))
+        logging.info('Loading secret permissions for %d secrets (%d worker(s))', len(valid_secrets), workers)
 
-        fetch = functools.partial(ThycoticMixin._fetch_secret_entry, auth, folders, folder_cache, secret_permissions)
-        for (row, secret_id), (secret, perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, entries, workers):
+        fetch = functools.partial(ThycoticMixin._load_secret_permissions, auth, folders, folder_cache, secret_permissions)
+        for secret, (perm_rows, error) in ThycoticMixin._fetch_in_order(fetch, valid_secrets, workers):
+            secret_id = secret.get('id')
             if error is not None:
                 logging.warning('Secret %s permissions skipped: %s', secret_id, error)
                 failed += 1
@@ -976,8 +989,9 @@ class ThycoticMixin:
             if secret is None:
                 continue
             seen += 1
-            title = secret.get('name') or row.get('name') or ''
+            title = secret.get('name') or ''
             if not title:
+                logging.warning('Secret %s has no name in /v2/secrets response, skipping', secret_id)
                 continue
             if ThycoticMixin._warn_unmapped_roles(title, secret_id, perm_rows):
                 custom_role_secrets += 1
@@ -1518,9 +1532,9 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
             failed += len(active_users)
             active_users = []
 
-        requests = []
+        all_requests = []
         for user in queued_users:
-            requests.append({
+            all_requests.append({
                 'command': 'team_queue_user',
                 'team_uid': team_uid,
                 'enterprise_user_id': user.get('enterprise_user_id'),
@@ -1528,14 +1542,14 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         for user in active_users:
             request = EnterpriseTeamCommand._create_add_user_request(params, team_uid, team_key, user, '')
             if request:
-                requests.append(request)
+                all_requests.append(request)
             else:
                 failed += 1
 
         added = 0
         queued = 0
-        for offset in range(0, len(requests), _TEAM_BATCH_SIZE):
-            chunk = requests[offset:offset + _TEAM_BATCH_SIZE]
+        for offset in range(0, len(all_requests), _TEAM_BATCH_SIZE):
+            chunk = all_requests[offset:offset + _TEAM_BATCH_SIZE]
             try:
                 responses = api.execute_batch(params, chunk) or []
             except Exception as e:
@@ -1746,7 +1760,7 @@ class ThycoticImporter(BaseImporter, ThycoticMixin):
         if not password:
             raise Exception('Import canceled')
 
-        auth = ThycoticAuth(host)
+        auth = ThycoticAuth(host, checkout_comment=kwargs.get('checkout_comment'))
         auth.proxy = params.rest_context.proxies if params else None
         auth.authenticate(username, password, ThycoticImporter.request_totp)
 
@@ -2236,11 +2250,13 @@ class ThycoticAuth:
     max_throttle_retries = 3
     throttle_backoff_seconds = 5
     max_throttle_wait_seconds = 300
+    page_size = 1000
 
-    def __init__(self, base_url):    # type: (str) -> None
+    def __init__(self, base_url, checkout_comment=None):    # type: (str, Optional[str]) -> None
         if not base_url.endswith('/'):
             base_url += '/'
         self.base_url = base_url
+        self.checkout_comment = normalize_checkout_comment(checkout_comment)
         self.access_token = ''
         self.expires_in = 0
         self.refresh_token = ''
@@ -2347,12 +2363,16 @@ class ThycoticAuth:
         }
 
         urlp = urlparse(self.base_url + 'api' + endpoint)
-        queries = tuple(x for x in urlp.query.split(sep='&') if x)
+        base_params = tuple(x for x in urlp.query.split(sep='&') if x)
+        page_params = [x for x in base_params if not x.partition('=')[0].lower() in ('take', 'skip')]
         result = []
         skip = 0
+        page_num = 0
+        status = 'finished'
         while True:
-            q = list(queries)
-            q.append('take=1000')
+            page_num += 1
+            q = list(page_params)
+            q.append(f'take={self.page_size}')
             if skip > 0:
                 q.append(f'skip={skip}')
             url = urlunparse((urlp.scheme or 'https', urlp.netloc, urlp.path, None, '&'.join(q), None))
@@ -2363,16 +2383,43 @@ class ThycoticAuth:
                 rs = self._get(url, headers=headers)
             if rs.status_code != 200:
                 raise Exception(self._error_message(rs))
-            chunk_rs = rs.json()
-            records = chunk_rs.get('records')
-            if isinstance(records, list):
-                result.extend(records)
-            else:
+            try:
+                payload = rs.json()
+            except (ValueError, UnicodeDecodeError) as e:
+                logging.warning('Secret Server page %d %s JSON decode error: %s, stopping pagination', page_num, endpoint, str(e))
+                status = 'truncated'
                 break
-            if chunk_rs.get('hasNext') is True:
-                skip = chunk_rs['nextSkip']
-            else:
+            if not isinstance(payload, dict):
+                logging.warning('Secret Server page %d %s response is not an object, stopping pagination', page_num, endpoint)
+                status = 'truncated'
                 break
+            records = payload.get('records')
+            is_records_list = isinstance(records, list)
+            has_next = payload.get('hasNext') is True
+            next_skip = payload.get('nextSkip')
+            record_count = len(records) if is_records_list else None
+            logging.debug(
+                'Secret Server page %d %s skip=%s take=%s records=%s total=%s hasNext=%s nextSkip=%s accumulated=%s',
+                page_num, endpoint, skip, self.page_size, record_count, payload.get('total'), has_next, next_skip, len(result) + (record_count or 0))
+            if not is_records_list:
+                logging.warning('Secret Server page %d %s has no records list, stopping pagination', page_num, endpoint)
+                status = 'truncated'
+                break
+            result.extend(records)
+            if record_count < self.page_size:
+                logging.debug(
+                    'Secret Server page %d %s short page records=%d take=%d hasNext=%s',
+                    page_num, endpoint, record_count, self.page_size, has_next)
+            if not has_next:
+                break
+            if isinstance(next_skip, bool) or not isinstance(next_skip, int) or next_skip <= skip:
+                logging.warning(
+                    'Secret Server page %d %s hasNext but nextSkip=%s does not advance from skip=%s, stopping pagination',
+                    page_num, endpoint, next_skip, skip)
+                status = 'truncated'
+                break
+            skip = next_skip
+        logging.info('Secret Server %s pagination %s, %d record(s) in %d page(s)', endpoint, status, len(result), page_num)
         return result
 
     @staticmethod
@@ -2422,9 +2469,8 @@ class ThycoticAuth:
         """True when the server refused a read because the secret must be checked out."""
         return status == 400 and SECRET_REQUIRES_CHECKOUT_ERROR in (error_code, message)
 
-    @staticmethod
-    def _read_with_checkout_retry(endpoint, fetch, needs_checkout, discard=None):
-        # type: (str, Callable[[str], Any], Callable[[Any], bool], Optional[Callable[[Any], None]]) -> Any
+    def _read_with_checkout_retry(self, endpoint, fetch, needs_checkout, discard=None):
+        # type: (ThycoticAuth, str, Callable[[str], Any], Callable[[Any], bool], Optional[Callable[[Any], None]]) -> Any
         """Shared plain-then-checkout read policy.
 
         Calls fetch with the plain-read URL. Only when needs_checkout says the
@@ -2432,11 +2478,11 @@ class ThycoticAuth:
         again with autoCheckout and autoCheckIn. discard, if given, releases the
         first response before the retry.
         """
-        result = fetch(with_secret_access_params(endpoint, SecretAccessMode.PLAIN))
+        result = fetch(with_secret_access_params(endpoint, SecretAccessMode.PLAIN, self.checkout_comment))
         if needs_checkout(result):
             if discard is not None:
                 discard(result)
-            result = fetch(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT))
+            result = fetch(with_secret_access_params(endpoint, SecretAccessMode.CHECKOUT, self.checkout_comment))
         return result
 
     @staticmethod
