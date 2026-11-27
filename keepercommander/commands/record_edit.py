@@ -1610,11 +1610,11 @@ class RecordDuplicateCommand(Command, RecordEditMixin):
             else:
                 record_data['notes'] = notes
         
-        # Remove attachments, addresses, paymentCards
+        # Remove attachments, addresses, paymentCards and pamScripts
         fields = record_data.get('fields', [])
-        if any(f.get('type') in ['fileRef','addressRef','cardRef'] and f.get('value') for f in fields):
-            logging.warning('Warning: Attachments, Addresses and Payment Cards are not duplicated')
-        record_data['fields'] = [f for f in fields if f.get('type') not in ['fileRef','addressRef','cardRef']]
+        if any(f.get('type') in ['fileRef','addressRef','cardRef','script'] and f.get('value') for f in fields):
+            logging.warning('Warning: Attachments, Addresses, Payment Cards and Rotation Scripts are not duplicated')
+        record_data['fields'] = [f for f in fields if f.get('type') not in ['fileRef','addressRef','cardRef','script']]
 
         uid = recordv3.RecordAddCommand().execute(params,data=json.dumps(record_data),folder=folder,force=kwargs.get('force'))
         params.sync_data = True       
