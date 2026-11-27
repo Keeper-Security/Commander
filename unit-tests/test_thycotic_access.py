@@ -1091,7 +1091,7 @@ class TestSecretShareHelpers(TestCase):
     def test_membership_lookup_uses_secrets_lookup_query(self):
         auth = _secret_auth([])
         list(thycotic.ThycoticMixin.iter_secret_shares(auth, _folder_map()))
-        expected_query = thycotic.build_secrets_lookup_query()
+        expected_query = thycotic.build_secrets_search_query()
         self.assertIn(expected_query, auth.calls)
         self.assertTrue(any('includeRestricted=true' in call for call in auth.calls))
 
