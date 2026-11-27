@@ -20,6 +20,8 @@ import json
 import shutil
 import tempfile
 
+KEEPER_DIR = '/home/commander/.keeper'
+
 # =============================================================================
 # SECURITY AND VALIDATION FUNCTIONS
 # =============================================================================
@@ -409,6 +411,71 @@ def download_config(ksm_config_path, ksm_token, record_identifier, output_path):
         return False
 
 
+def download_attachment(ksm_config_path, ksm_token, record_identifier, file_name, output_path):
+    """Download one named OIDC attachment to a private file in the Keeper directory."""
+    if not check_ksm_dependency():
+        return False
+
+    if file_name not in ('federated-config.json', 'oidc-token.jwt'):
+        print("ERROR: Unsupported OIDC attachment name")
+        return False
+
+    if ksm_config_path:
+        is_valid, validated_config_path = validate_file_path(ksm_config_path)
+        if not is_valid:
+            print("ERROR: Invalid KSM config file path")
+            return False
+        ksm_config_path = validated_config_path
+
+    is_valid, validated_output_path = validate_file_path(
+        output_path, base_dir=KEEPER_DIR
+    )
+    if not is_valid:
+        print(f"ERROR: OIDC attachment output must be inside {KEEPER_DIR}")
+        return False
+    output_path = validated_output_path
+
+    secrets_manager = _initialize_secrets_manager(ksm_config_path, ksm_token)
+    if not secrets_manager:
+        return False
+
+    try:
+        secret = _get_secret_by_uid_or_title(secrets_manager, record_identifier)
+        if not secret:
+            return False
+
+        matches = [
+            file for file in (getattr(secret, 'files', None) or [])
+            if str(getattr(file, 'name', '') or '') == file_name
+        ]
+        if len(matches) != 1:
+            if not matches:
+                print(f"ERROR: {file_name} attachment not found in KSM record")
+            else:
+                print(f"ERROR: Multiple {file_name} attachments found in KSM record")
+            return False
+
+        output_dir = os.path.dirname(output_path)
+        os.makedirs(output_dir, mode=0o700, exist_ok=True)
+        os.chmod(output_dir, 0o700)
+        if os.path.exists(output_path):
+            os.chmod(output_path, 0o600)
+        previous_umask = os.umask(0o077)
+        try:
+            matches[0].save_file(output_path, True)
+        finally:
+            os.umask(previous_umask)
+        if os.path.getsize(output_path) == 0:
+            os.unlink(output_path)
+            print(f"ERROR: {file_name} attachment is empty")
+            return False
+        os.chmod(output_path, 0o600)
+        return True
+    except Exception as e:
+        print(f"ERROR: Failed to download OIDC attachment from KSM: {e}")
+        return False
+
+
 # =============================================================================
 # FILE MANAGEMENT HELPER FUNCTIONS
 # =============================================================================
@@ -691,6 +758,30 @@ def _validate_command_args(args):
             print("ERROR: --ksm-config is required for process-config command")
             return False
         return True
+
+    if args.command == 'download-attachment':
+        if not args.record_uid:
+            print("ERROR: --record-uid is required for this command")
+            return False
+        if not args.file_name:
+            print("ERROR: --file-name is required for this command")
+            return False
+        if not args.output_file:
+            print("ERROR: --output-file is required for this command")
+            return False
+        if not args.ksm_config and not args.ksm_token:
+            print("Either --ksm-config or --ksm-token must be provided")
+            return False
+        if args.ksm_config and args.ksm_token:
+            print("Cannot specify both --ksm-config and --ksm-token")
+            return False
+        if args.ksm_config and not validate_file_path(args.ksm_config)[0]:
+            print("Invalid KSM config file path")
+            return False
+        if not validate_file_path(args.output_file, base_dir=KEEPER_DIR)[0]:
+            print("Invalid output file path")
+            return False
+        return True
     
     # For other commands, validate required parameters
     if not args.record_uid:
@@ -746,6 +837,15 @@ def _execute_command(args):
         return download_config(
             args.ksm_config, args.ksm_token, args.record_uid, args.config_file
         )
+
+    elif args.command == 'download-attachment':
+        return download_attachment(
+            args.ksm_config,
+            args.ksm_token,
+            args.record_uid,
+            args.file_name,
+            args.output_file,
+        )
     
     elif args.command == 'upload':
         return upload_config(
@@ -773,7 +873,7 @@ def main():
     
     parser.add_argument(
         "command",
-        choices=['download', 'upload', 'monitor', 'process-config'],
+        choices=['download', 'download-attachment', 'upload', 'monitor', 'process-config'],
         help="Command to execute"
     )
     parser.add_argument(
@@ -791,6 +891,15 @@ def main():
     parser.add_argument(
         "--config-file",
         help="Local config.json file path"
+    )
+    parser.add_argument(
+        "--file-name",
+        choices=['federated-config.json', 'oidc-token.jwt'],
+        help="Name of the OIDC attachment to download"
+    )
+    parser.add_argument(
+        "--output-file",
+        help="Local output path for an OIDC attachment"
     )
     
     args = parser.parse_args()

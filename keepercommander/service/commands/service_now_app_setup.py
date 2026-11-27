@@ -19,7 +19,7 @@ from ...display import bcolors
 from ...error import CommandError
 from ..config.service_config import ServiceConfig as RuntimeServiceConfig
 from ..docker import (
-    DockerComposeBuilder,
+    DockerComposeBuilder, DockerLoginMode,
     DockerSetupConstants,
     DockerSetupPrinter,
     ServiceConfig as DockerServiceConfig,
@@ -114,6 +114,7 @@ service_now_app_setup_parser.add_argument(
     '--skip-device-setup', dest='skip_device_setup', action='store_true',
     help='Skip device registration and setup if already configured',
 )
+ServiceDockerSetupCommand.add_login_flow_arguments(service_now_app_setup_parser)
 service_now_app_setup_parser.error = raise_parse_exception
 service_now_app_setup_parser.exit = suppress_exit
 
@@ -239,10 +240,13 @@ class ServiceNowAppSetupCommand(ServiceDockerSetupCommand):
         )
         return builder.build()
 
-    def _print_next_steps(self, config: DockerServiceConfig, config_path: str) -> None:
+    def _print_next_steps(self, config: DockerServiceConfig, config_path: str,
+                          setup_result: SetupResult = None) -> None:
         DockerSetupPrinter.print_common_deployment_steps(
             str(config.port),
             config_path,
             container_name=ServiceNowSetupConstants.COMMANDER_CONTAINER_NAME,
+            login_mode=setup_result.login_mode if setup_result else DockerLoginMode.KSM,
+            cleanup_paths=setup_result.cleanup_paths if setup_result else None,
         )
         print()

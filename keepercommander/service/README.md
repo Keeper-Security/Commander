@@ -18,11 +18,13 @@ The Service Mode module for Keeper Commander enables REST API integration by pro
 | `service-stop` | Gracefully stop the running service |
 | `service-status` | Display current service status |
 | `service-config-add` | Add new API configuration and command access settings |
-| `service-docker-setup` | Automated Docker service mode setup with KSM configuration |
+| `service-docker-setup` | Automated Docker service mode setup with KSM or federated OIDC login |
 | `service-now-app-setup` | Automated ServiceNow MID Server integration setup with Commander Service Mode |
+| `terraform-app-setup` | Automated Terraform provider setup with Commander Service Mode |
 | `slack-app-setup` | Automated Slack App integration setup with Commander Service Mode |
 | `teams-app-setup` | Automated Teams App integration setup with Commander Service Mode |
 | `gchat-app-setup` | Automated Google Chat App integration setup with Commander Service Mode |
+| `sailpoint-app-setup` | Automated SailPoint integration setup with Commander Service Mode |
 
 ### Security Features
 - API key authentication
@@ -459,11 +461,48 @@ docker images | grep keeper/commander
 
 ### Quick Setup with service-docker-setup (Recommended)
 
-If you have Keeper Secrets Manager (KSM) activated in your account, you can use the `service-docker-setup` command for automated Docker deployment setup:
+Use `service-docker-setup` for automated Docker deployment. Both login flows
+use a KSM client/config to retrieve the login material from the Keeper record.
 
 **Prerequisites:**
 - Active Keeper vault with KSM enabled
 - Docker installed and image pulled
+
+#### Choose a login flow
+
+The setup command prompts you to choose one:
+
+- **Commander config.json (default):** The container downloads `config.json`
+  from the Keeper record and uses it to log in to Service Mode.
+- **Federated OIDC:** The container downloads a provider-issued JWT and a
+  federated config, then uses OIDC to create its Keeper session. This requires
+  Keeper file storage.
+
+Select a flow without the prompt using `--login-flow ksm` or
+`--login-flow oidc`. For OIDC, provide the JWT file; setup reads `iss` and `sub`
+from it when present and prompts for missing claims. Setup preflights its
+`aud`, `nbf`, and `exp` claims; Keeper verifies the token signature at login.
+The JWKS URI is optional; an empty value selects issuer discovery:
+
+```bash
+My Vault> service-docker-setup --login-flow oidc \
+  --oidc-token-file /path/to/provider.jwt \
+  --oidc-jwks-uri ''
+```
+
+The provider JWT is not refreshed automatically. Replace its Keeper attachment
+and restart the container before it expires. The Docker entrypoint uses an
+existing `.keeper/config.json` before federated environment settings; on a fresh
+container without that file, it downloads the selected OIDC attachments from
+the Keeper record. The federated config contains the vault data key and grants
+full-vault access, so protect the Docker record and KSM bootstrap credentials as
+full-vault secrets. Keep your local `config.json` for normal Commander login;
+setup prints a cleanup command for the local JWT after upload. Integration
+sidecars continue to use their existing KSM configuration.
+
+Service Mode honors `KEEPER_CONFIG_FILE` as a config-path override when loading
+its parameters. The Docker OIDC startup sets it to an absent temporary path so
+the default config cannot be loaded accidentally.
 
 **Setup Steps:**
 
@@ -479,12 +518,11 @@ If you have Keeper Secrets Manager (KSM) activated in your account, you can use 
    ```
    
    This command will automatically:
-   - Register your device and enable persistent login
+   - Register your device and enable persistent login for the `config.json` flow (OIDC skips this)
    - Create a shared folder ("Commander Service Mode - Docker")
-   - Create a config record with `config.json` attachment
-   - Create a KSM application
-   - Share the folder with the KSM app
-   - Generate a KSM client device with base64 config
+   - Create a Docker config record and KSM application
+   - Share the folder with the KSM app and generate its bootstrap client
+   - Store the selected login material; OIDC also registers a federated client
    - Generate `docker-compose.yml` with the complete configuration
 
 3. **Interactive Configuration:**
@@ -504,7 +542,7 @@ If you have Keeper Secrets Manager (KSM) activated in your account, you can use 
 4. **Deploy:**
    ```bash
    My Vault> quit
-   $ rm ~/.keeper/config.json  # Prevent device token conflicts
+   # Run the local-file cleanup command printed by setup.
    $ docker compose up -d
    ```
 
@@ -514,7 +552,7 @@ Resources Created:
   • Shared Folder: Commander Service Mode - Docker
   • KSM App: Commander Service Mode - KSM App
   • Config Record: <UID>
-  • KSM Base64 Config: ✓ Generated
+  • KSM Bootstrap Config: ✓ Generated
 ```
 
 The generated `docker-compose.yml` includes all your configuration and can be customized before deployment.

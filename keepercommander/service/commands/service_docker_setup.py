@@ -21,14 +21,14 @@ from ...commands.base import Command, raise_parse_exception, suppress_exit
 from ...display import bcolors
 from ..config.config_validation import ConfigValidator, ValidationError
 from ..docker import (
-    DockerSetupBase, DockerSetupConstants, DockerSetupPrinter,
+    DockerLoginMode, DockerSetupBase, DockerSetupConstants, DockerSetupPrinter,
     SetupResult, ServiceConfig, DockerComposeBuilder
 )
 
 
 service_docker_setup_parser = argparse.ArgumentParser(
     prog='service-docker-setup',
-    description='Automate Docker service mode setup with KSM configuration',
+    description='Automate Docker service mode setup with KSM or federated OIDC login',
     formatter_class=argparse.RawDescriptionHelpFormatter
 )
 service_docker_setup_parser.add_argument(
@@ -55,6 +55,7 @@ service_docker_setup_parser.add_argument(
     '--skip-device-setup', dest='skip_device_setup', action='store_true',
     help='Skip device registration and setup if already configured'
 )
+DockerSetupBase.add_login_flow_arguments(service_docker_setup_parser)
 service_docker_setup_parser.error = raise_parse_exception
 service_docker_setup_parser.exit = suppress_exit
 
@@ -69,11 +70,22 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         """Main execution flow for standalone command"""
         command_name = self.get_parser().prog
         self._require_file_based_config(params, command_name)
-
         config_path = self._require_commander_config_file(
             command_name,
             kwargs.get('config_path'),
             params,
+        )
+        login_mode, federated_options = self.collect_login_options(
+            login_flow=kwargs.get('login_flow'),
+            oidc_token_file=kwargs.get('oidc_token_file'),
+            oidc_issuer=kwargs.get('oidc_issuer'),
+            oidc_subject=kwargs.get('oidc_subject'),
+            oidc_jwks_uri=kwargs.get('oidc_jwks_uri'),
+            command_name=command_name,
+            default_oidc_token_file=os.path.join(
+                os.path.dirname(config_path), DockerSetupConstants.OIDC_TOKEN_FILENAME
+            ),
+            keeper_server=params.server,
         )
 
         DockerSetupPrinter.print_header("Docker Setup")
@@ -85,7 +97,10 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             record_name=kwargs.get('record_name', DockerSetupConstants.DEFAULT_RECORD_NAME),
             config_path=config_path,
             timeout=kwargs.get('timeout', DockerSetupConstants.DEFAULT_TIMEOUT),
-            skip_device_setup=kwargs.get('skip_device_setup', False)
+            skip_device_setup=kwargs.get('skip_device_setup', False),
+            login_mode=login_mode,
+            federated_options=federated_options,
+            command_name=command_name,
         )
 
         DockerSetupPrinter.print_completion("Docker Setup Complete!")
@@ -93,7 +108,9 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
 
         self.generate_and_save_docker_compose(setup_result, service_config)
         DockerSetupPrinter.print_completion("Service Mode Configuration Complete!")
-        self.print_standalone_success_message(setup_result, service_config, config_path)
+        self.print_standalone_success_message(
+            setup_result, service_config, config_path
+        )
 
     def get_service_configuration(self, params) -> ServiceConfig:
         """Interactively get service configuration from user"""
@@ -174,11 +191,17 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
         print(f"\n{bcolors.BOLD}Resources Created:{bcolors.ENDC}")
         DockerSetupPrinter.print_phase1_resources(setup_result)
         
-        self._print_next_steps(config, config_path)
+        self._print_next_steps(config, config_path, setup_result)
 
-    def _print_next_steps(self, config: ServiceConfig, config_path: str) -> None:
+    def _print_next_steps(self, config: ServiceConfig, config_path: str,
+                          setup_result: SetupResult = None) -> None:
         """Print next steps for deployment"""
-        DockerSetupPrinter.print_common_deployment_steps(str(config.port), config_path)
+        DockerSetupPrinter.print_common_deployment_steps(
+            str(config.port),
+            config_path,
+            login_mode=setup_result.login_mode if setup_result else DockerLoginMode.KSM,
+            cleanup_paths=setup_result.cleanup_paths if setup_result else None,
+        )
         print()  # Add trailing newline
 
     # ========================

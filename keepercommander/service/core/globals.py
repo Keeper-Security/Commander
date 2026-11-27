@@ -9,12 +9,14 @@
 # Contact: ops@keepersecurity.com
 #
 
+import os
 from typing import Optional
+
 from ...params import KeeperParams
 from ... import utils
 
 # commands that start Service Mode and may log in with a federated client
-FEDERATED_LOGIN_COMMANDS = ('service-create', 'service-start')
+FEDERATED_LOGIN_COMMANDS = ('service-create', 'service-start', 'service-status')
 
 _current_params: Optional[KeeperParams] = None
 
@@ -35,8 +37,10 @@ def ensure_params_loaded() -> KeeperParams:
     params = get_current_params()
     if not params: 
         from ...__main__ import get_params_from_config
-        config_path = utils.get_default_path() / "config.json"
-        params = get_params_from_config(str(config_path))
+        config_path = os.environ.get('KEEPER_CONFIG_FILE')
+        if not config_path:
+            config_path = str(utils.get_default_path() / 'config.json')
+        params = get_params_from_config(config_path)
         init_federated_login(params)
         init_globals(params)
     return params

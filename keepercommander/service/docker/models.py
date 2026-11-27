@@ -26,6 +26,14 @@ class DockerSetupConstants:
     DEFAULT_APP_NAME = 'Commander Service Mode - KSM App'
     DEFAULT_RECORD_NAME = 'Commander Service Mode Docker Config'
     DEFAULT_CLIENT_NAME = 'Commander Service Mode - KSM App Client'
+    DEFAULT_FEDERATED_CLIENT_NAME = 'Commander Service Mode - Federated Client'
+
+    FEDERATED_CONFIG_FILENAME = 'federated-config.json'
+    OIDC_TOKEN_FILENAME = 'oidc-token.jwt'
+    FEDERATED_CONFIG_CONTAINER_PATH = '/home/commander/.keeper/federated-config.json'
+    OIDC_TOKEN_CONTAINER_PATH = '/home/commander/.keeper/oidc-token.jwt'
+    FEDERATED_CONFIG_ENV = 'KEEPER_FEDERATED_CONFIG'
+    OIDC_TOKEN_ENV = 'KEEPER_OIDC_TOKEN_FILE'
     
     # Default service configuration
     DEFAULT_PORT = 8900
@@ -41,10 +49,17 @@ class SetupStep(Enum):
     DEVICE_SETUP = 1
     CREATE_FOLDER = 2
     CREATE_RECORD = 3
-    UPLOAD_CONFIG = 4
-    CREATE_KSM_APP = 5
-    SHARE_FOLDER = 6
-    CREATE_CLIENT = 7
+    CREATE_KSM_APP = 4
+    SHARE_FOLDER = 5
+    CREATE_CLIENT = 6
+    STORE_LOGIN_ARTIFACTS = 7
+
+
+class DockerLoginMode(str, Enum):
+    """Authentication artifact mode used by a Docker Service Mode setup."""
+
+    KSM = 'ksm'
+    OIDC = 'oidc'
 
 
 @dataclass
@@ -55,6 +70,8 @@ class SetupResult:
     app_name: str
     record_uid: str
     b64_config: str
+    login_mode: DockerLoginMode = DockerLoginMode.KSM
+    cleanup_paths: List[str] = field(default_factory=list)
 
 
 @dataclass

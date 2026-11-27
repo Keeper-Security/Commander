@@ -20,7 +20,7 @@ This module provides reusable components for Docker-based integrations:
 """
 
 from .models import (
-    DockerSetupConstants, SetupResult, ServiceConfig,
+    DockerLoginMode, DockerSetupConstants, SetupResult, ServiceConfig,
     SlackConfig, TeamsConfig, SailPointConfig, GChatConfig, GChatConstants,
     SetupStep, ApproverTeam, ApprovalsConfig,
 )
@@ -29,6 +29,7 @@ from .setup_base import DockerSetupBase
 from .compose_builder import DockerComposeBuilder
 
 __all__ = [
+    'DockerLoginMode',
     'DockerSetupConstants',
     'SetupResult',
     'ServiceConfig',

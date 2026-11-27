@@ -13,6 +13,8 @@
 import json
 from typing import Dict, Any, List
 
+from .models import DockerLoginMode, DockerSetupConstants
+
 # containerboot swaps ${TS_CERT_DOMAIN} for the node's cert domain and re-applies on
 # change. `$$` so Compose emits a literal `$` instead of interpolating it away.
 TAILSCALE_CERT_DOMAIN_PLACEHOLDER = '$${TS_CERT_DOMAIN}'
@@ -79,8 +81,16 @@ class DockerComposeBuilder:
             'restart': 'unless-stopped'
         }
 
-        if self.commander_environment:
-            service['environment'] = dict(self.commander_environment)
+        commander_environment = dict(self.commander_environment)
+        if getattr(self.setup_result, 'login_mode', DockerLoginMode.KSM) == DockerLoginMode.OIDC:
+            commander_environment.update({
+                DockerSetupConstants.FEDERATED_CONFIG_ENV:
+                    DockerSetupConstants.FEDERATED_CONFIG_CONTAINER_PATH,
+                DockerSetupConstants.OIDC_TOKEN_ENV:
+                    DockerSetupConstants.OIDC_TOKEN_CONTAINER_PATH,
+            })
+        if commander_environment:
+            service['environment'] = commander_environment
         
         if self._volumes:
             service['volumes'] = self._volumes
