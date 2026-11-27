@@ -117,7 +117,7 @@ def show_brief_help():
     print('  --password, -kp PASSWORD Master password for the account')
     print('  --config CONFIG          Config file to use')
     print('  --debug                  Turn on debug mode')
-    print('  --silent                 Turn off all logging statements')    
+    print('  --silent                 Turn off all logging statements')
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --skip-scan              Skip login-time BreachWatch/security scans and device registration')
     print('                           Vault and enterprise sync still run')
@@ -137,6 +137,8 @@ def show_brief_help():
     print('')
     print('Examples:')
     print('  keeper shell                         # Start interactive shell')
+    print('  keeper shell --file                  # Log the shell and its commands to ./keeper.log')
+    print('  keeper shell --file=PATH             # Log the shell and its commands to PATH')
     print('  keeper --server EU login             # Login to EU region')
     print('  keeper login -h                      # Show login command help')
     print('  keeper search "github" --format=json # Search and output JSON')
@@ -144,6 +146,82 @@ def show_brief_help():
     print('User Guide: https://docs.keeper.io/en/keeperpam/commander-cli')
     print('')
     sys.exit(0)
+
+
+HELP_FLAGS = ('-h', '--help')
+SHELL_START_COMMANDS = {'shell', '-'}
+
+
+def _wants_help(args):
+    return any(arg in HELP_FLAGS for arg in args)
+
+
+def _is_known_command(token):
+    from .commands.base import aliases, commands, enterprise_commands, msp_commands
+    name = token.lstrip('@')
+    return (
+        name == 'help'
+        or name in SHELL_START_COMMANDS
+        or name in commands
+        or name in enterprise_commands
+        or name in msp_commands
+        or name in aliases
+    )
+
+
+def _extract_shell_log_file(parser, argv):
+    """Extract startup ``--file`` / ``--file=PATH`` when launching the shell.
+
+    Returns ``(log_file, remaining_argv)``. Leaves tokens untouched for non-shell
+    commands and anything after a shell sub-command or ``--``.
+    """
+    value_opts = {
+        opt for opt, action in parser._option_string_actions.items()
+        if action.nargs != 0
+    }
+    log_file = None
+    remaining = []
+    command = None
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == '--':
+            remaining.extend(argv[i:])
+            break
+        if token in value_opts:
+            remaining.append(token)
+            if i + 1 < len(argv):
+                i += 1
+                remaining.append(argv[i])
+        elif token == '--file':
+            next_token = argv[i + 1] if i + 1 < len(argv) else None
+            if next_token and not next_token.startswith('-') and not _is_known_command(next_token):
+                raise ValueError(
+                    f'--file does not take a separate value. Use --file={next_token}, '
+                    f'or a bare --file to write ./{cli.DEFAULT_LOG_FILE}'
+                )
+            log_file = cli.DEFAULT_LOG_FILE
+        elif token.startswith('--file='):
+            path = token.split('=', 1)[1].strip()
+            if not path:
+                raise ValueError(
+                    f'--file= requires a file path. Use --file=PATH, '
+                    f'or a bare --file to write ./{cli.DEFAULT_LOG_FILE}'
+                )
+            log_file = path
+        elif token == '-' or not token.startswith('-'):
+            if command is None:
+                command = token
+                if command not in SHELL_START_COMMANDS:
+                    return None, list(argv)
+                remaining.append(token)
+            else:
+                remaining.extend(argv[i:])
+                break
+        else:
+            remaining.append(token)
+        i += 1
+    return log_file, remaining
 
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False, allow_abbrev=False)
@@ -216,15 +294,21 @@ def main(from_package=False):
             return
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
-    opts, flags = parser.parse_known_args(sys.argv[1:])
-    
+    try:
+        log_file, argv = _extract_shell_log_file(parser, sys.argv[1:])
+    except ValueError as e:
+        logging.error('Error: %s', e)
+        sys.exit(1)
+    opts, flags = parser.parse_known_args(argv)
+
     # Store the original command arguments for proper reconstruction
     if opts.command:
         # Find where the command starts in the original args and take everything after it
         try:
-            cmd_index = sys.argv[1:].index(opts.command)
-            original_args_after_command = sys.argv[1:][cmd_index+1:]
-            
+            # Use argv, which no longer holds the --file tokens.
+            cmd_index = argv.index(opts.command)
+            original_args_after_command = argv[cmd_index+1:]
+
             # Filter out arguments that were consumed by the main parser
             filtered_args = []
             skip_next = False
@@ -232,7 +316,7 @@ def main(from_package=False):
                 if skip_next:
                     skip_next = False
                     continue
-                    
+
                 # Skip arguments that were handled by main parser.
                 # Value flags: skip the flag AND the following value argument.
                 # Boolean flags: skip only the flag itself (no value follows).
@@ -252,12 +336,12 @@ def main(from_package=False):
                         if arg == main_arg and main_arg in value_main_parser_args:
                             skip_next = True
                         break
-                
+
                 if is_main_parser_arg:
                     continue
-                    
+
                 filtered_args.append(arg)
-            
+
             original_args_after_command = filtered_args
         except ValueError:
             original_args_after_command = []
@@ -269,6 +353,15 @@ def main(from_package=False):
     if opts.silent:
         logging.disable(logging.CRITICAL)
 
+    log_file_path = None
+    wants_help = _wants_help(original_args_after_command if opts.command else flags)
+    shell_will_start = (
+        not wants_help and not opts.version
+        and (opts.command in SHELL_START_COMMANDS or (from_package and not opts.command))
+    )
+    if shell_will_start and log_file and not opts.silent:
+        log_file_path = cli.debug_manager.attach_log_file(log_file)
+
     params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 
     if opts.batch_mode:
@@ -279,6 +372,9 @@ def main(from_package=False):
         params.debug = opts.debug
 
     logging.getLogger().setLevel(logging.WARNING if params.batch_mode else logging.DEBUG if opts.debug else logging.INFO)
+
+    if log_file_path:
+        logging.info('Logging to file: %s', log_file_path)
 
     # Log SSL certificate selection in debug mode (after logging is configured)
     if opts.debug:
@@ -316,17 +412,10 @@ def main(from_package=False):
         print(f'Keeper Commander, version {__version__}')
         return
 
-    # Handle help flags and commands
-    has_help_flag = flags and len(flags) > 0 and flags[0] in ('-h', '--help')
-
-    if has_help_flag:
-        if not opts.command:
-            # 'keeper -h' with no command → show brief help
-            show_brief_help()
-        else:
-            # 'keeper <command> -h' → pass -h to the command (keep it in original_args)
-            # The -h is already in original_args_after_command, so just continue
-            pass
+    # 'keeper -h' with no command → show brief help and exit.
+    # 'keeper <command> -h' keeps -h in original_args_after_command for the command.
+    if not opts.command and _wants_help(flags):
+        show_brief_help()
 
     # Handle 'keeper help' and 'keeper help <command>'
     if opts.command == 'help':
@@ -364,9 +453,9 @@ def main(from_package=False):
         cli.runcommands(params)
     else:
         # Check if -h/--help is in the arguments for a command
-        command_wants_help = any(arg in ('-h', '--help') for arg in original_args_after_command)
+        command_wants_help = _wants_help(original_args_after_command)
 
-        if opts.command in {'shell', '-'} and not command_wants_help:
+        if opts.command in SHELL_START_COMMANDS and not command_wants_help:
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True
