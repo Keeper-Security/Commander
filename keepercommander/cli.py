@@ -628,46 +628,10 @@ def force_quit():
 
 prompt_session = None
 
-
-_ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-
-
-class PlainLogFormatter(logging.Formatter):
-    """File formatter. Console color codes are removed from the stored line."""
-
-    def format(self, record):
-        return _ANSI_ESCAPE_RE.sub('', super().format(record))
-
-
-class NonEmptyLogFilter(logging.Filter):
-    """Skip blank records. Those calls only add space on the console."""
-
-    def filter(self, record):
-        text = _ANSI_ESCAPE_RE.sub('', record.getMessage())
-        return bool(text.strip())
-
-
-def _session_start_line():
-    """A raw marker that shows where a new shell session was appended.
-
-    The clock time is the machine's local time. The offset says which zone
-    that clock used, without printing the zone name.
-    """
-    stamp = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
-    return '==================== NEW SESSION STARTED AT : %s ====================' % stamp
-
-
-# One shell word. Quoted text stays inside its word, so a quoted value is never
-# split into pieces that look like options. An unclosed quote runs to the end.
-_COMMAND_WORD_RE = re.compile(r'''(?:[^\s"']|"[^"]*(?:"|$)|'[^']*(?:'|$))+''')
-# Option name at the start of a word: -t, -kp, --format, --format=json -> --format
-_OPTION_NAME_RE = re.compile(r'^--?[A-Za-z][\w-]*')
-
 DEFAULT_LOG_FILE = 'keeper.log'
 COMMAND_LOGGER_NAME = 'keepercommander.command'
 _COMMAND_WORD_RE = re.compile(r'''(?:[^\s"']|"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$))+''')
 _OPTION_NAME_RE = re.compile(r'^--?[A-Za-z][\w-]*')
-
 
 def redact_command_for_log(command_line):
     """Return only the command name and option flags, stripping all values."""
@@ -870,6 +834,7 @@ class DebugManager:
             logging.warning("Log file '%s' does not have a standard log extension", filename)
 
         return str(resolved_path)
+
     def _looks_like_filename(self, token):
         """Check if a token looks like a filename with proper validation."""
         if not token or not isinstance(token, str):
@@ -899,7 +864,7 @@ class DebugManager:
             level = logging.DEBUG if new_state else (logging.WARNING if batch_mode else logging.INFO)
             self.logger.setLevel(level)
 
-        logging.info(f'Debug {"ON" if new_state else "OFF"}')
+        logging.info('Debug %s', 'ON' if new_state else 'OFF')
         return new_state
 
     def process_command(self, tokens, batch_mode):
@@ -1083,7 +1048,6 @@ def loop(params, skip_init=False, suppress_goodbye=False, new_login=False):  # t
             debug_manager.log_command(command)
 
             if command.lower() == 'q' or command.lower() == "quit":
-                debug_manager.log_command(command)
                 break
 
             suppress_errno = False

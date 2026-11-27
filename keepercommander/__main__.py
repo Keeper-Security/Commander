@@ -300,8 +300,6 @@ def main(from_package=False):
         logging.error('Error: %s', e)
         sys.exit(1)
     opts, flags = parser.parse_known_args(argv)
-    # Not a parser option: set from the --file taken out above.
-    opts.log_file = log_file
 
     # Store the original command arguments for proper reconstruction
     if opts.command:
@@ -310,7 +308,7 @@ def main(from_package=False):
             # Use argv, which no longer holds the --file tokens.
             cmd_index = argv.index(opts.command)
             original_args_after_command = argv[cmd_index+1:]
-            
+
             # Filter out arguments that were consumed by the main parser
             filtered_args = []
             skip_next = False
@@ -318,7 +316,7 @@ def main(from_package=False):
                 if skip_next:
                     skip_next = False
                     continue
-                    
+
                 # Skip arguments that were handled by main parser.
                 # Value flags: skip the flag AND the following value argument.
                 # Boolean flags: skip only the flag itself (no value follows).
@@ -338,12 +336,12 @@ def main(from_package=False):
                         if arg == main_arg and main_arg in value_main_parser_args:
                             skip_next = True
                         break
-                
+
                 if is_main_parser_arg:
                     continue
-                    
+
                 filtered_args.append(arg)
-            
+
             original_args_after_command = filtered_args
         except ValueError:
             original_args_after_command = []
