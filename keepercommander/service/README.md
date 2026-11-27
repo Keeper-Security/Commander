@@ -480,20 +480,29 @@ The setup command prompts you to choose one:
 
 Select a flow without the prompt using `--login-flow ksm` or
 `--login-flow oidc`. For OIDC, provide the JWT file; setup reads `iss` and `sub`
-from it when present and prompts for missing claims. The JWKS URI is optional:
+from it when present and prompts for missing claims. Setup preflights its
+`aud`, `nbf`, and `exp` claims; Keeper verifies the token signature at login.
+The JWKS URI is optional; an empty value selects issuer discovery:
 
 ```bash
 My Vault> service-docker-setup --login-flow oidc \
-  --oidc-token-file /path/to/provider.jwt
+  --oidc-token-file /path/to/provider.jwt \
+  --oidc-jwks-uri ''
 ```
 
 The provider JWT is not refreshed automatically. Replace its Keeper attachment
-and restart the container before it expires. The federated config contains the
-vault data key and grants full-vault access, so protect the Docker record and
-KSM bootstrap credentials as full-vault secrets. For OIDC, keep your local
-`config.json` for normal Commander login; setup prints flow-specific local-file
-cleanup instructions after uploading the selected login material. Integration
+and restart the container before it expires. The Docker entrypoint uses an
+existing `.keeper/config.json` before federated environment settings; on a fresh
+container without that file, it downloads the selected OIDC attachments from
+the Keeper record. The federated config contains the vault data key and grants
+full-vault access, so protect the Docker record and KSM bootstrap credentials as
+full-vault secrets. Keep your local `config.json` for normal Commander login;
+setup prints a cleanup command for the local JWT after upload. Integration
 sidecars continue to use their existing KSM configuration.
+
+Service Mode honors `KEEPER_CONFIG_FILE` as a config-path override when loading
+its parameters. The Docker OIDC startup sets it to an absent temporary path so
+the default config cannot be loaded accidentally.
 
 **Setup Steps:**
 

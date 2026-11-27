@@ -465,92 +465,83 @@ parse_credentials "$@"
 # Ensure keeper directory exists
 mkdir -p "${KEEPER_DIR}"
 
-# OIDC mode is explicit: both existing Commander federated-login variables
-# must be provided as paths inside .keeper. A config.json may still exist for
-# local/mounted use, but it is deliberately not loaded in this mode.
+# Existing config.json takes precedence over federated environment settings,
+# matching the local Service Mode login order.
 OIDC_CONFIG_PATH="${KEEPER_FEDERATED_CONFIG:-}"
 OIDC_TOKEN_PATH="${KEEPER_OIDC_TOKEN_FILE:-}"
-OIDC_MODE=false
+OIDC_REQUESTED=false
 if [[ -n "${OIDC_CONFIG_PATH}" || -n "${OIDC_TOKEN_PATH}" ]]; then
-    if [[ -z "${OIDC_CONFIG_PATH}" || -z "${OIDC_TOKEN_PATH}" ]]; then
-        log "ERROR: OIDC mode requires both KEEPER_FEDERATED_CONFIG and KEEPER_OIDC_TOKEN_FILE"
-        exit 1
-    fi
-    case "${OIDC_CONFIG_PATH}" in
-        "${KEEPER_DIR}"/*) ;;
-        *) log "ERROR: KEEPER_FEDERATED_CONFIG must be inside ${KEEPER_DIR}"; exit 1 ;;
-    esac
-    case "${OIDC_TOKEN_PATH}" in
-        "${KEEPER_DIR}"/*) ;;
-        *) log "ERROR: KEEPER_OIDC_TOKEN_FILE must be inside ${KEEPER_DIR}"; exit 1 ;;
-    esac
-    if [[ "${OIDC_CONFIG_PATH}" != "${OIDC_CONFIG_FILE}" ||
-          "${OIDC_TOKEN_PATH}" != "${OIDC_TOKEN_FILE}" ]]; then
-        log "ERROR: OIDC files must use the managed paths inside ${KEEPER_DIR}"
-        exit 1
-    fi
-    OIDC_MODE=true
+    OIDC_REQUESTED=true
 fi
 
-# Process KSM config if provided
-if [[ -n "${KSM_CONFIG}" ]]; then
-    if PROCESSED_CONFIG_PATH=$(process_ksm_config "${KSM_CONFIG}"); then
-        KSM_CONFIG="${PROCESSED_CONFIG_PATH}"
-        log "KSM config ready: ${KSM_CONFIG}"
-    else
-        log "ERROR: Failed to process KSM config"
+prepare_ksm_bootstrap() {
+    if [[ -n "${KSM_CONFIG}" && -n "${KSM_TOKEN}" ]]; then
+        log "ERROR: Cannot specify both --ksm-config and --ksm-token"
         exit 1
     fi
-fi
 
-if [[ "${OIDC_MODE}" == true &&
-      ( -z "${KSM_CONFIG}" && -z "${KSM_TOKEN}" || -z "${RECORD}" ) ]]; then
-    log "ERROR: OIDC Docker login requires KSM bootstrap credentials and --record"
-    exit 1
-fi
+    if [[ -n "${KSM_CONFIG}" ]]; then
+        if PROCESSED_CONFIG_PATH=$(process_ksm_config "${KSM_CONFIG}"); then
+            KSM_CONFIG="${PROCESSED_CONFIG_PATH}"
+            log "KSM config ready: ${KSM_CONFIG}"
+        else
+            log "ERROR: Failed to process KSM config"
+            exit 1
+        fi
+        if [[ ! -f "${KSM_CONFIG}" ]]; then
+            log "ERROR: KSM config file not found: ${KSM_CONFIG}"
+            exit 1
+        fi
+    fi
+    export KSM_CONFIG_SKIP_MODE_WARNING=TRUE
+}
 
 # =============================================================================
 # AUTHENTICATION METHOD DETECTION AND EXECUTION
 # =============================================================================
 
-# Check if KSM authentication is requested with record download
-if [[ (-n "${KSM_CONFIG}" || -n "${KSM_TOKEN}") && -n "${RECORD}" ]]; then
-    log "KSM bootstrap authentication detected for record: ${RECORD}"
-    
-    # Validate KSM authentication parameters
-    if [[ -n "${KSM_CONFIG}" && -n "${KSM_TOKEN}" ]]; then
-        log "ERROR: Cannot specify both --ksm-config and --ksm-token"
+# An existing local config.json wins over federated environment variables.
+if [[ -f "${CONFIG_FILE}" ]]; then
+    log "Config file found at ${CONFIG_FILE}, using config-based authentication"
+    unset KEEPER_FEDERATED_CONFIG KEEPER_OIDC_TOKEN_FILE
+    filter_args "$@"
+    status=0
+    run_command_args "${CONFIG_FILE}" || status=$?
+    finish "${status}"
+# Federated login is the fallback when no config.json is available.
+elif [[ "${OIDC_REQUESTED}" == true ]]; then
+    if [[ -z "${OIDC_CONFIG_PATH}" || -z "${OIDC_TOKEN_PATH}" ]]; then
+        log "ERROR: OIDC login requires both KEEPER_FEDERATED_CONFIG and KEEPER_OIDC_TOKEN_FILE"
         exit 1
     fi
-    
-    if [[ -n "${KSM_CONFIG}" && ! -f "${KSM_CONFIG}" ]]; then
-        log "ERROR: KSM config file not found: ${KSM_CONFIG}"
-        exit 1
-    fi
-    
-    # Set environment variable to suppress KSM config file permission warnings
-    export KSM_CONFIG_SKIP_MODE_WARNING=TRUE
-    
-    if [[ "${OIDC_MODE}" == true ]]; then
-        export KEEPER_FEDERATED_CONFIG="${OIDC_CONFIG_PATH}"
-        export KEEPER_OIDC_TOKEN_FILE="${OIDC_TOKEN_PATH}"
-        export KSM_CONFIG_SKIP_MODE_WARNING=TRUE
-        prepare_oidc_runtime_config
+    log "Federated OIDC authentication requested"
+
+    # Setup-generated Compose files use these managed paths and KSM bootstrap
+    # arguments to fetch the two attachments. Directly supplied or mounted
+    # federated files are passed through to Commander without KSM requirements.
+    if [[ "${OIDC_CONFIG_PATH}" == "${OIDC_CONFIG_FILE}" &&
+          "${OIDC_TOKEN_PATH}" == "${OIDC_TOKEN_FILE}" &&
+          ( -n "${KSM_CONFIG}" || -n "${KSM_TOKEN}" ) && -n "${RECORD}" ]]; then
+        prepare_ksm_bootstrap
         download_oidc_attachment_from_ksm \
             "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}" \
             "federated-config.json" "${OIDC_CONFIG_PATH}"
         download_oidc_attachment_from_ksm \
             "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}" \
             "oidc-token.jwt" "${OIDC_TOKEN_PATH}"
-        log "Federated OIDC artifacts are ready; local config.json will not be used."
-
-        filter_args "$@"
-        status=0
-        run_command_args "" || status=$?
-        finish "${status}"
+        log "Federated OIDC artifacts are ready."
     fi
 
-    # KSM config.json flow remains unchanged.
+    prepare_oidc_runtime_config
+    filter_args "$@"
+    status=0
+    run_command_args "" || status=$?
+    finish "${status}"
+# KSM bootstrap downloads config.json when neither local config nor OIDC is selected.
+elif [[ ( -n "${KSM_CONFIG}" || -n "${KSM_TOKEN}" ) && -n "${RECORD}" ]]; then
+    log "KSM bootstrap authentication detected for record: ${RECORD}"
+    prepare_ksm_bootstrap
+
     download_config_from_ksm "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}"
     filter_args "$@"
 
@@ -565,16 +556,6 @@ if [[ (-n "${KSM_CONFIG}" || -n "${KSM_TOKEN}") && -n "${RECORD}" ]]; then
     run_command_args "${CONFIG_FILE}" || status=$?
     upload_config_to_ksm "${KSM_CONFIG}" "${KSM_TOKEN}" "${RECORD}"
     exit "${status}"
-# Check if config.json is mounted or available
-elif [[ -f "${CONFIG_FILE}" ]]; then
-    log "Config file found at ${CONFIG_FILE}, using config-based authentication"
-
-    # Filter out authentication arguments, keep the rest
-    filter_args "$@"
-
-    status=0
-    run_command_args "${CONFIG_FILE}" || status=$?
-    finish "${status}"
 # Check if user/password authentication is provided
 elif [[ -n "${USER}" && -n "${PASSWORD}" ]]; then
     log "No config file found, using user/password authentication"

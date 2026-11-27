@@ -76,12 +76,12 @@ class DockerSetupPrinter:
         
         if login_mode == DockerLoginMode.OIDC:
             paths = cleanup_paths or []
-            print(f"\n{bcolors.BOLD}Step 2: Remove the local federated login files{bcolors.ENDC}")
+            print(f"\n{bcolors.BOLD}Step 2: Remove the local JWT file{bcolors.ENDC}")
             if paths:
                 quoted_paths = ' '.join(shlex.quote(path) for path in paths)
                 print(f"  {bcolors.OKGREEN}rm {quoted_paths}{bcolors.ENDC}")
             else:
-                print("  Remove the local federated-config.json and JWT files after confirming their upload.")
+                print("  Remove the local JWT after confirming its upload.")
             print(
                 "  Keep your local config.json for normal Commander login; the OIDC container "
                 "uses the uploaded federated files instead."

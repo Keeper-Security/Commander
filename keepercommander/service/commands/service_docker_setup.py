@@ -85,6 +85,7 @@ class ServiceDockerSetupCommand(Command, DockerSetupBase):
             default_oidc_token_file=os.path.join(
                 os.path.dirname(config_path), DockerSetupConstants.OIDC_TOKEN_FILENAME
             ),
+            keeper_server=params.server,
         )
 
         DockerSetupPrinter.print_header("Docker Setup")

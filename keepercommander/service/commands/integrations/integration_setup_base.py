@@ -249,6 +249,7 @@ class IntegrationSetupCommand(Command, DockerSetupBase, ABC):
             default_oidc_token_file=os.path.join(
                 os.path.dirname(config_path), DockerSetupConstants.OIDC_TOKEN_FILENAME
             ),
+            keeper_server=params.server,
         )
 
         # Phase 1 -- Docker service mode setup

@@ -35,7 +35,10 @@ from .printer import DockerSetupPrinter
 from .federated_setup import (
     FederatedSetupOptions,
     create_federated_config,
+    keeper_token_audience,
     remove_managed_login_artifacts,
+    remove_managed_federated_clients,
+    remove_managed_federated_client,
     read_jwt_claims,
     upload_federated_artifacts,
 )
@@ -115,6 +118,7 @@ class DockerSetupBase:
         oidc_jwks_uri: Optional[str] = None,
         command_name: str = 'docker-setup',
         default_oidc_token_file: Optional[str] = None,
+        keeper_server: Optional[str] = None,
     ) -> Tuple[DockerLoginMode, Optional[FederatedSetupOptions]]:
         """Resolve login mode and validate OIDC input before provisioning resources."""
         login_mode = DockerSetupBase._select_login_mode(login_flow, command_name)
@@ -140,7 +144,13 @@ class DockerSetupBase:
             )
             token_input = input(prompt).strip() or default_token
         token_path = os.path.abspath(os.path.expanduser(token_input))
-        claims = read_jwt_claims(token_path, command_name)
+        expected_audience = None
+        if keeper_server:
+            try:
+                expected_audience = keeper_token_audience(keeper_server)
+            except (TypeError, ValueError) as e:
+                raise CommandError(command_name, f'Unable to determine Keeper token audience: {e}')
+        claims = read_jwt_claims(token_path, command_name, expected_audience)
 
         issuer_default = claims.get('iss')
         subject_default = claims.get('sub')
@@ -347,14 +357,16 @@ class DockerSetupBase:
                 total_steps,
                 'Registering federated login and uploading OIDC artifacts...',
             )
-            federated_config_path = create_federated_config(
-                params,
-                app_uid,
-                federated_options,
-                command_name,
-                output_dir=os.path.dirname(config_path),
-            )
+            federated_config_path = None
+            client_name = None
             try:
+                federated_config_path, client_name = create_federated_config(
+                    params,
+                    app_uid,
+                    federated_options,
+                    command_name,
+                    output_dir=os.path.dirname(config_path),
+                )
                 upload_federated_artifacts(
                     params,
                     record_uid,
@@ -362,22 +374,47 @@ class DockerSetupBase:
                     federated_options.token_path,
                     command_name,
                 )
-            except Exception:
                 try:
-                    os.unlink(federated_config_path)
-                except OSError as cleanup_error:
-                    logging.warning(
-                        'Could not remove generated federated config at %s after upload failure: %s',
-                        federated_config_path,
-                        cleanup_error,
+                    remove_managed_federated_clients(
+                        params, app_uid, keep_client_name=client_name
                     )
+                except Exception as cleanup_error:
+                    DockerSetupPrinter.print_warning(
+                        f'Could not revoke previous setup-managed federated client(s): {cleanup_error}'
+                    )
+            except Exception:
+                if client_name:
+                    try:
+                        remove_managed_federated_client(params, app_uid, client_name)
+                    except Exception as cleanup_error:
+                        logging.warning(
+                            'Could not revoke federated client %s after setup failure: %s',
+                            client_name,
+                            cleanup_error,
+                        )
                 raise
-            cleanup_paths = [federated_config_path, federated_options.token_path]
+            finally:
+                if federated_config_path and os.path.exists(federated_config_path):
+                    try:
+                        os.unlink(federated_config_path)
+                    except OSError as cleanup_error:
+                        logging.warning(
+                            'Could not remove generated federated config at %s: %s',
+                            federated_config_path,
+                            cleanup_error,
+                        )
+            cleanup_paths = [federated_options.token_path]
         else:
             DockerSetupPrinter.print_step(
                 SetupStep.STORE_LOGIN_ARTIFACTS.value, total_steps, 'Storing config.json...'
             )
             self._upload_config_file(params, record_uid, config_path)
+            try:
+                remove_managed_federated_clients(params, app_uid)
+            except Exception as cleanup_error:
+                DockerSetupPrinter.print_warning(
+                    f'Could not revoke previous setup-managed federated client(s): {cleanup_error}'
+                )
             cleanup_paths = []
 
         return SetupResult(

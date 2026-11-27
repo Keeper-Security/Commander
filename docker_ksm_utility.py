@@ -458,7 +458,13 @@ def download_attachment(ksm_config_path, ksm_token, record_identifier, file_name
         output_dir = os.path.dirname(output_path)
         os.makedirs(output_dir, mode=0o700, exist_ok=True)
         os.chmod(output_dir, 0o700)
-        matches[0].save_file(output_path, True)
+        if os.path.exists(output_path):
+            os.chmod(output_path, 0o600)
+        previous_umask = os.umask(0o077)
+        try:
+            matches[0].save_file(output_path, True)
+        finally:
+            os.umask(previous_umask)
         if os.path.getsize(output_path) == 0:
             os.unlink(output_path)
             print(f"ERROR: {file_name} attachment is empty")

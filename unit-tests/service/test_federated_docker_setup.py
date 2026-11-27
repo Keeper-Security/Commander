@@ -7,16 +7,21 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from types import SimpleNamespace
 from unittest import mock
 
 import docker_ksm_utility
 from keepercommander.error import CommandError
 from keepercommander.display import bcolors
+from keepercommander.proto import APIRequest_pb2, enterprise_pb2
 from keepercommander.service.core.globals import FEDERATED_LOGIN_COMMANDS
 from keepercommander.service.docker.compose_builder import DockerComposeBuilder
 from keepercommander.service.docker.federated_setup import (
     FederatedSetupOptions,
     create_federated_config,
+    keeper_token_audience,
+    remove_managed_federated_client,
+    remove_managed_federated_clients,
     read_jwt_claims,
 )
 from keepercommander.service.docker.models import (
@@ -35,6 +40,16 @@ def _jwt(claims):
 
 
 class TestFederatedSetup(unittest.TestCase):
+    def test_keeper_token_audience_matches_registered_client_audience(self):
+        self.assertEqual(
+            keeper_token_audience('keepersecurity.com'),
+            'https://keepersecurity.com',
+        )
+        self.assertEqual(
+            keeper_token_audience('https://vault.example.test:8443'),
+            'https://vault.example.test:8443',
+        )
+
     @mock.patch('keepercommander.service.core.globals.init_globals')
     @mock.patch('keepercommander.service.core.globals.get_current_params', return_value=None)
     @mock.patch('keepercommander.__main__.get_params_from_config')
@@ -141,6 +156,87 @@ class TestFederatedSetup(unittest.TestCase):
             finally:
                 os.unlink(token_path)
 
+    def test_read_jwt_claims_checks_expected_audience(self):
+        token = _jwt({
+            'iss': 'https://id.example.test/',
+            'sub': 'client-123@clients',
+            'aud': ['https://other.example.test', 'https://keepersecurity.com'],
+        })
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as token_file:
+            token_file.write(token)
+            token_path = token_file.name
+        try:
+            output = StringIO()
+            with redirect_stdout(output):
+                claims = read_jwt_claims(
+                    token_path, 'test-setup', 'https://keepersecurity.com'
+                )
+            self.assertEqual(claims['aud'][-1], 'https://keepersecurity.com')
+            self.assertIn('Required JWT audience: https://keepersecurity.com', output.getvalue())
+
+            with self.assertRaisesRegex(CommandError, 'does not include the required Keeper audience'):
+                read_jwt_claims(token_path, 'test-setup', 'https://wrong.example.test')
+        finally:
+            os.unlink(token_path)
+
+    def test_oidc_setup_checks_keeper_audience_before_provisioning(self):
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as token_file:
+            token_file.write(_jwt({
+                'iss': 'https://id.example.test/',
+                'sub': 'client-123@clients',
+                'aud': 'https://wrong.example.test',
+            }))
+            token_path = token_file.name
+        try:
+            with self.assertRaisesRegex(CommandError, 'required Keeper audience'):
+                DockerSetupBase.collect_login_options(
+                    login_flow='oidc',
+                    oidc_token_file=token_path,
+                    keeper_server='keepersecurity.com',
+                    command_name='test-setup',
+                )
+        finally:
+            os.unlink(token_path)
+
+    def test_read_jwt_claims_rejects_missing_or_invalid_audience(self):
+        for audience in (None, 42, ['https://keepersecurity.com', 42]):
+            claims = {
+                'iss': 'https://id.example.test/',
+                'sub': 'client-123@clients',
+            }
+            if audience is not None:
+                claims['aud'] = audience
+            with self.subTest(audience=audience), tempfile.NamedTemporaryFile(
+                mode='w', delete=False
+            ) as token_file:
+                token_file.write(_jwt(claims))
+                token_path = token_file.name
+            try:
+                with self.assertRaisesRegex(CommandError, 'missing or invalid aud claim'):
+                    read_jwt_claims(
+                        token_path, 'test-setup', 'https://keepersecurity.com'
+                    )
+            finally:
+                os.unlink(token_path)
+
+    def test_read_jwt_claims_rejects_future_or_invalid_not_before(self):
+        for nbf in (time.time() + 60, '123', True, float('nan')):
+            with self.subTest(nbf=nbf), tempfile.NamedTemporaryFile(
+                mode='w', delete=False
+            ) as token_file:
+                token_file.write(_jwt({
+                    'iss': 'https://id.example.test/',
+                    'sub': 'client-123@clients',
+                    'nbf': nbf,
+                }))
+                token_path = token_file.name
+            try:
+                expected_error = 'not valid yet' if isinstance(nbf, float) and nbf > time.time() else 'invalid nbf'
+                with self.assertRaisesRegex(CommandError, expected_error):
+                    read_jwt_claims(token_path, 'test-setup')
+            finally:
+                os.unlink(token_path)
+
     def test_read_jwt_claims_warns_with_chmod_command_for_insecure_permissions(self):
         token = _jwt({'iss': 'https://id.example.test/', 'sub': 'client-123@clients'})
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as token_file:
@@ -173,7 +269,7 @@ class TestFederatedSetup(unittest.TestCase):
                 'keepercommander.service.docker.federated_setup.utils.get_default_path',
                 return_value=config_dir,
             ):
-                config_path = create_federated_config(
+                config_path, client_name = create_federated_config(
                     mock.Mock(),
                     'app-uid',
                     FederatedSetupOptions(
@@ -196,9 +292,60 @@ class TestFederatedSetup(unittest.TestCase):
                 )
                 self.assertEqual(os.path.dirname(config_path), config_dir)
                 self.assertTrue(os.path.basename(config_path).startswith('federated-config-'))
+                self.assertEqual(client_name, 'Commander Service Mode - Federated Client')
                 self.assertEqual(stat.S_IMODE(os.stat(config_path).st_mode), 0o600)
             finally:
                 os.unlink(config_path)
+
+    @mock.patch('keepercommander.service.docker.federated_setup.KSMCommand.remove_client')
+    @mock.patch('keepercommander.service.docker.federated_setup.KSMCommand.get_app_info')
+    def test_removes_only_setup_managed_vault_session_clients(
+        self, mock_get_app_info, mock_remove_client
+    ):
+        def client(name, auth_type=APIRequest_pb2.APP_CLIENT_AUTH_OAUTH,
+                   access_type=APIRequest_pb2.APP_CLIENT_ACCESS_VAULT_SESSION,
+                   client_type=enterprise_pb2.GENERAL):
+            return SimpleNamespace(
+                id=name,
+                authType=auth_type,
+                allowedAccessType=access_type,
+                appClientType=client_type,
+            )
+
+        managed_name = DockerSetupConstants.DEFAULT_FEDERATED_CLIENT_NAME
+        suffixed_name = f'{managed_name} a1b2c3d4'
+        mock_get_app_info.return_value = [SimpleNamespace(clients=[
+            client(managed_name),
+            client(suffixed_name),
+            client('User-created client'),
+            client(f'{managed_name} not-a-hex-suffix'),
+            client(f'{managed_name} deadbeef', access_type=APIRequest_pb2.APP_CLIENT_ACCESS_SECRETS_MANAGER),
+        ])]
+
+        remove_managed_federated_clients(
+            mock.Mock(), 'app-uid', keep_client_name=suffixed_name
+        )
+
+        mock_remove_client.assert_called_once_with(
+            mock.ANY, 'app-uid', [managed_name], force=True
+        )
+
+    @mock.patch('keepercommander.service.docker.federated_setup.KSMCommand.remove_client')
+    @mock.patch('keepercommander.service.docker.federated_setup.KSMCommand.get_app_info')
+    def test_failed_setup_can_revoke_only_its_new_managed_client(
+        self, mock_get_app_info, mock_remove_client
+    ):
+        name = f'{DockerSetupConstants.DEFAULT_FEDERATED_CLIENT_NAME} a1b2c3d4'
+        mock_get_app_info.return_value = [SimpleNamespace(clients=[SimpleNamespace(
+            id=name,
+            authType=APIRequest_pb2.APP_CLIENT_AUTH_OAUTH,
+            allowedAccessType=APIRequest_pb2.APP_CLIENT_ACCESS_VAULT_SESSION,
+            appClientType=enterprise_pb2.GENERAL,
+        )])]
+
+        remove_managed_federated_client(mock.Mock(), 'app-uid', name)
+
+        mock_remove_client.assert_called_once_with(mock.ANY, 'app-uid', [name], force=True)
 
     @mock.patch('builtins.input', return_value='1')
     def test_config_setup_prompt_explains_both_login_paths(self, mock_input):
@@ -309,12 +456,12 @@ class TestFederatedSetup(unittest.TestCase):
 
     @mock.patch('keepercommander.service.docker.setup_base.DockerSetupPrinter')
     @mock.patch('keepercommander.service.docker.setup_base.upload_federated_artifacts')
-    @mock.patch('keepercommander.service.docker.setup_base.create_federated_config',
-                return_value='/tmp/federated-config.json')
+    @mock.patch('keepercommander.service.docker.setup_base.remove_managed_federated_clients')
+    @mock.patch('keepercommander.service.docker.setup_base.create_federated_config')
     @mock.patch('keepercommander.service.docker.setup_base.RecordHandler.has_file_storage',
                 return_value=True)
     def test_setup_steps_provision_oidc_files_instead_of_config_json(
-        self, _has_storage, _create_config, mock_upload, _printer
+        self, _has_storage, _create_config, mock_remove_clients, mock_upload, _printer
     ):
         setup = DockerSetupBase()
         options = FederatedSetupOptions(
@@ -322,51 +469,62 @@ class TestFederatedSetup(unittest.TestCase):
             issuer='https://id.example.test/',
             subject='client-123@clients',
         )
-        with (
-            mock.patch.object(setup, '_setup_device') as mock_setup_device,
-            mock.patch.object(setup, '_create_shared_folder', return_value='folder-uid'),
-            mock.patch.object(setup, '_create_config_record', return_value='record-uid'),
-            mock.patch.object(setup, '_create_ksm_app', return_value='app-uid'),
-            mock.patch.object(setup, '_share_folder_with_app'),
-            mock.patch.object(setup, '_create_client_device', return_value='ksm-b64'),
-            mock.patch.object(setup, '_upload_config_file') as mock_upload_config,
-        ):
-            result = setup.run_setup_steps(
-                params=mock.Mock(),
-                folder_name='folder',
-                app_name='app',
-                record_name='record',
-                config_path='/tmp/config.json',
-                timeout='30d',
-                skip_device_setup=True,
-                login_mode=DockerLoginMode.OIDC,
-                federated_options=options,
-                command_name='test-setup',
+        with tempfile.TemporaryDirectory() as config_dir:
+            federated_config_path = os.path.join(config_dir, 'federated-config.json')
+            with open(federated_config_path, 'w', encoding='utf-8') as config_file:
+                config_file.write('{"dataKey":"secret"}')
+            _create_config.return_value = (
+                federated_config_path,
+                'Commander Service Mode - Federated Client',
             )
+            with (
+                mock.patch.object(setup, '_setup_device') as mock_setup_device,
+                mock.patch.object(setup, '_create_shared_folder', return_value='folder-uid'),
+                mock.patch.object(setup, '_create_config_record', return_value='record-uid'),
+                mock.patch.object(setup, '_create_ksm_app', return_value='app-uid'),
+                mock.patch.object(setup, '_share_folder_with_app'),
+                mock.patch.object(setup, '_create_client_device', return_value='ksm-b64'),
+                mock.patch.object(setup, '_upload_config_file') as mock_upload_config,
+            ):
+                result = setup.run_setup_steps(
+                    params=mock.Mock(),
+                    folder_name='folder',
+                    app_name='app',
+                    record_name='record',
+                    config_path=os.path.join(config_dir, 'config.json'),
+                    timeout='30d',
+                    skip_device_setup=True,
+                    login_mode=DockerLoginMode.OIDC,
+                    federated_options=options,
+                    command_name='test-setup',
+                )
 
         mock_setup_device.assert_not_called()
         mock_upload_config.assert_not_called()
         self.assertEqual(
             _create_config.call_args.kwargs['output_dir'],
-            '/tmp',
+            config_dir,
         )
         mock_upload.assert_called_once_with(
-            mock.ANY, 'record-uid', '/tmp/federated-config.json', '/tmp/provider.jwt', 'test-setup'
+            mock.ANY, 'record-uid', federated_config_path, '/tmp/provider.jwt', 'test-setup'
+        )
+        mock_remove_clients.assert_called_once_with(
+            mock.ANY, 'app-uid',
+            keep_client_name='Commander Service Mode - Federated Client',
         )
         self.assertEqual(result.login_mode, DockerLoginMode.OIDC)
-        self.assertEqual(
-            result.cleanup_paths,
-            ['/tmp/federated-config.json', '/tmp/provider.jwt'],
-        )
+        self.assertEqual(result.cleanup_paths, ['/tmp/provider.jwt'])
+        self.assertFalse(os.path.exists(federated_config_path))
         self.assertEqual(result.b64_config, 'ksm-b64')
 
     @mock.patch('keepercommander.service.docker.setup_base.upload_federated_artifacts',
                 side_effect=CommandError('test-setup', 'upload failed'))
+    @mock.patch('keepercommander.service.docker.setup_base.remove_managed_federated_client')
     @mock.patch('keepercommander.service.docker.setup_base.create_federated_config')
     @mock.patch('keepercommander.service.docker.setup_base.RecordHandler.has_file_storage',
                 return_value=True)
     def test_failed_oidc_upload_removes_local_federated_config(
-        self, _has_storage, mock_create_config, _upload
+        self, _has_storage, mock_create_config, mock_remove_client, _upload
     ):
         setup = DockerSetupBase()
         options = FederatedSetupOptions(
@@ -378,7 +536,10 @@ class TestFederatedSetup(unittest.TestCase):
             federated_config_path = os.path.join(config_dir, 'federated-config.json')
             with open(federated_config_path, 'w', encoding='utf-8') as config_file:
                 config_file.write('{"dataKey":"sensitive"}')
-            mock_create_config.return_value = federated_config_path
+            mock_create_config.return_value = (
+                federated_config_path,
+                'Commander Service Mode - Federated Client',
+            )
 
             with (
                 mock.patch.object(setup, '_setup_device'),
@@ -404,6 +565,42 @@ class TestFederatedSetup(unittest.TestCase):
                     )
 
             self.assertFalse(os.path.exists(federated_config_path))
+            mock_remove_client.assert_called_once_with(
+                mock.ANY, 'app-uid', 'Commander Service Mode - Federated Client'
+            )
+
+    @mock.patch('keepercommander.service.docker.setup_base.RecordHandler.has_file_storage',
+                return_value=True)
+    def test_config_flow_removes_old_managed_federated_clients_after_upload(
+        self, _has_storage
+    ):
+        setup = DockerSetupBase()
+        events = []
+        with (
+            mock.patch.object(setup, '_create_shared_folder', return_value='folder-uid'),
+            mock.patch.object(setup, '_create_config_record', return_value='record-uid'),
+            mock.patch.object(setup, '_create_ksm_app', return_value='app-uid'),
+            mock.patch.object(setup, '_share_folder_with_app'),
+            mock.patch.object(setup, '_create_client_device', return_value='ksm-b64'),
+            mock.patch.object(setup, '_upload_config_file', side_effect=lambda *args: events.append('upload')),
+            mock.patch(
+                'keepercommander.service.docker.setup_base.remove_managed_federated_clients',
+                side_effect=lambda *args, **kwargs: events.append('revoke'),
+            ),
+        ):
+            setup.run_setup_steps(
+                params=mock.Mock(),
+                folder_name='folder',
+                app_name='app',
+                record_name='record',
+                config_path='/tmp/config.json',
+                timeout='30d',
+                skip_device_setup=True,
+                login_mode=DockerLoginMode.KSM,
+                command_name='test-setup',
+            )
+
+        self.assertEqual(events, ['upload', 'revoke'])
 
 
 class TestFederatedDockerCompose(unittest.TestCase):
@@ -507,11 +704,13 @@ class TestFederatedDockerCompose(unittest.TestCase):
                 '8900',
                 '/home/user/.keeper/config.json',
                 login_mode=DockerLoginMode.OIDC,
-                cleanup_paths=['/tmp/federated config.json', '/tmp/provider.jwt'],
+                cleanup_paths=['/tmp/provider.jwt'],
             )
 
         rendered = output.getvalue()
-        self.assertIn('rm \'/tmp/federated config.json\' /tmp/provider.jwt', rendered)
+        self.assertIn('Step 2: Remove the local JWT file', rendered)
+        self.assertIn('rm /tmp/provider.jwt', rendered)
+        self.assertNotIn('federated-config.json', rendered)
         self.assertIn('Keep your local config.json for normal Commander login', rendered)
         self.assertNotIn('rm /home/user/.keeper/config.json', rendered)
 
@@ -541,6 +740,7 @@ class TestDockerKsmOidcAttachmentDownload(unittest.TestCase):
     ):
         with tempfile.TemporaryDirectory() as temp_dir:
             output_path = os.path.join(temp_dir, 'oidc-token.jwt')
+            permissions_during_save = []
 
             class FakeFile:
                 name = 'oidc-token.jwt'
@@ -549,6 +749,9 @@ class TestDockerKsmOidcAttachmentDownload(unittest.TestCase):
                 def save_file(path, _force):
                     with open(path, 'w', encoding='utf-8') as token_file:
                         token_file.write('header.payload.signature')
+                    permissions_during_save.append(
+                        stat.S_IMODE(os.stat(path).st_mode)
+                    )
 
             mock_validate.side_effect = [(True, 'ksm-config.json'), (True, output_path)]
             mock_initialize.return_value = object()
@@ -565,6 +768,7 @@ class TestDockerKsmOidcAttachmentDownload(unittest.TestCase):
                 stat.S_IMODE(os.stat(output_path).st_mode),
                 0o600,
             )
+            self.assertEqual(permissions_during_save, [0o600])
             mock_initialize.assert_called_once_with('ksm-config.json', None)
             self.assertEqual(mock_validate.call_count, 2)
 

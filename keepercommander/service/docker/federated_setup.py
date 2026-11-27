@@ -15,19 +15,23 @@ import base64
 import contextlib
 import io
 import json
+import logging
 import math
 import os
+import re
 import shlex
 import stat
 import tempfile
 import time
+import urllib.parse
 import uuid
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from ... import api, attachment, record_management, utils, vault
 from ...commands.ksm import KSMCommand
 from ...error import CommandError
+from ...proto import APIRequest_pb2, enterprise_pb2
 from .models import DockerSetupConstants
 from .printer import DockerSetupPrinter
 
@@ -42,12 +46,27 @@ class FederatedSetupOptions:
     jwks_uri: Optional[str] = None
 
 
-def read_jwt_claims(token_path: str, command_name: str) -> Dict:
+def keeper_token_audience(server: str) -> str:
+    """Return the audience Commander registers for this Keeper server."""
+    if not isinstance(server, str) or not server:
+        raise ValueError('Keeper server URL is empty')
+    server_url = server if server.startswith('http') else f'https://{server}'
+    hostname = urllib.parse.urlparse(server_url).netloc.lower()
+    if not hostname:
+        raise ValueError('Keeper server URL is invalid')
+    return f'https://{hostname}'
+
+
+def read_jwt_claims(
+    token_path: str,
+    command_name: str,
+    expected_audience: Optional[str] = None,
+) -> Dict:
     """Read unverified JWT claims for setup-time confirmation only.
 
     Keeper remains responsible for signature and claim validation during token
     exchange. This helper only decodes the payload to prefill issuer/subject and
-    to catch obviously expired or malformed input before creating vault objects.
+    catch obviously invalid claims before creating vault objects.
     """
     path = os.path.abspath(os.path.expanduser(token_path or ''))
     if not os.path.isfile(path):
@@ -107,13 +126,43 @@ def read_jwt_claims(token_path: str, command_name: str) -> Dict:
                 'the container before expiry; the running container cannot refresh the provider JWT.'
             )
 
+    if expected_audience:
+        print(f'  Required JWT audience: {expected_audience}')
+        audience = claims.get('aud')
+        if isinstance(audience, str):
+            audiences = [audience]
+        elif isinstance(audience, list) and all(isinstance(value, str) for value in audience):
+            audiences = audience
+        else:
+            raise CommandError(command_name, 'OIDC JWT has a missing or invalid aud claim')
+        if expected_audience not in audiences:
+            raise CommandError(
+                command_name,
+                f'OIDC JWT audience does not include the required Keeper audience: {expected_audience}',
+            )
+
+    not_before = claims.get('nbf')
+    if not_before is not None:
+        if isinstance(not_before, bool) or not isinstance(not_before, (int, float)):
+            raise CommandError(command_name, 'OIDC JWT has an invalid nbf claim')
+        try:
+            finite_nbf = math.isfinite(not_before)
+        except OverflowError:
+            finite_nbf = False
+        if not finite_nbf:
+            raise CommandError(command_name, 'OIDC JWT has an invalid nbf claim')
+        if not_before > time.time():
+            raise CommandError(command_name, 'The supplied OIDC JWT is not valid yet (nbf is in the future)')
+
     return claims
 
 
 def create_federated_config(params, app_uid: str, options: FederatedSetupOptions,
-                            command_name: str, output_dir: Optional[str] = None) -> str:
+                            command_name: str, output_dir: Optional[str] = None) -> Tuple[str, str]:
     """Register a vault-session federated client and write its config privately."""
     config_path = None
+    client_name = None
+    client_registered = False
     try:
         config_dir = output_dir or utils.get_default_path()
         os.makedirs(config_dir, mode=0o700, exist_ok=True)
@@ -138,6 +187,7 @@ def create_federated_config(params, app_uid: str, options: FederatedSetupOptions
                 config_file=config_path,
                 force=True,
             )
+        client_registered = True
 
         if not os.path.isfile(config_path) or os.path.getsize(config_path) == 0:
             raise CommandError(command_name, 'Federated client config was not generated')
@@ -147,14 +197,25 @@ def create_federated_config(params, app_uid: str, options: FederatedSetupOptions
             'The federated config contains the vault data key and grants full-vault access. '
             'Protect the Keeper record and KSM bootstrap credentials.'
         )
-        return config_path
-    except CommandError:
-        if config_path and os.path.exists(config_path):
-            os.unlink(config_path)
-        raise
+        return config_path, client_name
     except Exception as e:
+        if client_registered and client_name:
+            try:
+                remove_managed_federated_client(params, app_uid, client_name)
+            except Exception as cleanup_error:
+                logging.warning(
+                    'Could not revoke federated client %s after config creation failed: %s',
+                    client_name,
+                    cleanup_error,
+                )
         if config_path and os.path.exists(config_path):
-            os.unlink(config_path)
+            try:
+                os.unlink(config_path)
+            except OSError as cleanup_error:
+                logging.warning('Could not remove generated federated config %s: %s',
+                                config_path, cleanup_error)
+        if isinstance(e, CommandError):
+            raise
         raise CommandError(command_name, f'Failed to create federated client: {e}')
 
 
@@ -181,12 +242,53 @@ def upload_federated_artifacts(params, record_uid: str, config_path: str,
         attachment.upload_attachments(params, record, upload_tasks)
         record_management.update_record(params, record)
         params.sync_data = True
-        api.sync_down(params)
+        try:
+            api.sync_down(params)
+        except Exception as e:
+            logging.warning('OIDC artifacts were uploaded, but vault refresh failed: %s', e)
         DockerSetupPrinter.print_success('Federated config and OIDC token uploaded')
     except CommandError:
         raise
     except Exception as e:
         raise CommandError(command_name, f'Failed to upload OIDC attachments: {e}')
+
+
+def remove_managed_federated_clients(
+    params,
+    app_uid: str,
+    keep_client_name: Optional[str] = None,
+) -> None:
+    """Remove only vault-session OAuth clients created by Docker OIDC setup."""
+    client_names = _managed_federated_client_names(params, app_uid)
+    client_names = [name for name in client_names if name != keep_client_name]
+    if client_names:
+        KSMCommand.remove_client(params, app_uid, client_names, force=True)
+
+
+def remove_managed_federated_client(params, app_uid: str, client_name: str) -> None:
+    """Revoke a single client created during a failed Docker OIDC setup."""
+    if client_name in _managed_federated_client_names(params, app_uid):
+        KSMCommand.remove_client(params, app_uid, [client_name], force=True)
+
+
+def _managed_federated_client_names(params, app_uid: str):
+    """Find clients matching the setup-owned name and vault-session contract."""
+    base_name = re.escape(DockerSetupConstants.DEFAULT_FEDERATED_CLIENT_NAME)
+    managed_name = re.compile(rf'{base_name}(?: [0-9a-f]{{8}})?\Z')
+    app_info = KSMCommand.get_app_info(params, app_uid)
+    client_names = []
+    for info in app_info or []:
+        for client in getattr(info, 'clients', []):
+            name = getattr(client, 'id', '')
+            if (
+                name
+                and managed_name.fullmatch(name)
+                and client.authType == APIRequest_pb2.APP_CLIENT_AUTH_OAUTH
+                and client.allowedAccessType == APIRequest_pb2.APP_CLIENT_ACCESS_VAULT_SESSION
+                and client.appClientType == enterprise_pb2.GENERAL
+            ):
+                client_names.append(name)
+    return client_names
 
 
 def remove_managed_login_artifacts(record, params) -> None:
