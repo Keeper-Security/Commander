@@ -117,7 +117,7 @@ def show_brief_help():
     print('  --password, -kp PASSWORD Master password for the account')
     print('  --config CONFIG          Config file to use')
     print('  --debug                  Turn on debug mode')
-    print('  --silent                 Turn off all logging statements')    
+    print('  --silent                 Turn off all logging statements')
     print('  --batch-mode             Run in batch/non-interactive mode')
     print('  --skip-scan              Skip login-time BreachWatch/security scans and device registration')
     print('                           Vault and enterprise sync still run')
@@ -149,11 +149,79 @@ def show_brief_help():
 
 
 HELP_FLAGS = ('-h', '--help')
+SHELL_START_COMMANDS = {'shell', '-'}
 
 
 def _wants_help(args):
-    """True when args hold -h or --help."""
     return any(arg in HELP_FLAGS for arg in args)
+
+
+def _is_known_command(token):
+    from .commands.base import aliases, commands, enterprise_commands, msp_commands
+    name = token.lstrip('@')
+    return (
+        name == 'help'
+        or name in SHELL_START_COMMANDS
+        or name in commands
+        or name in enterprise_commands
+        or name in msp_commands
+        or name in aliases
+    )
+
+
+def _extract_shell_log_file(parser, argv):
+    """Extract startup ``--file`` / ``--file=PATH`` when launching the shell.
+
+    Returns ``(log_file, remaining_argv)``. Leaves tokens untouched for non-shell
+    commands and anything after a shell sub-command or ``--``.
+    """
+    value_opts = {
+        opt for opt, action in parser._option_string_actions.items()
+        if action.nargs != 0
+    }
+    log_file = None
+    remaining = []
+    command = None
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token == '--':
+            remaining.extend(argv[i:])
+            break
+        if token in value_opts:
+            remaining.append(token)
+            if i + 1 < len(argv):
+                i += 1
+                remaining.append(argv[i])
+        elif token == '--file':
+            next_token = argv[i + 1] if i + 1 < len(argv) else None
+            if next_token and not next_token.startswith('-') and not _is_known_command(next_token):
+                raise ValueError(
+                    f'--file does not take a separate value. Use --file={next_token}, '
+                    f'or a bare --file to write ./{cli.DEFAULT_LOG_FILE}'
+                )
+            log_file = cli.DEFAULT_LOG_FILE
+        elif token.startswith('--file='):
+            path = token.split('=', 1)[1].strip()
+            if not path:
+                raise ValueError(
+                    f'--file= requires a file path. Use --file=PATH, '
+                    f'or a bare --file to write ./{cli.DEFAULT_LOG_FILE}'
+                )
+            log_file = path
+        elif token == '-' or not token.startswith('-'):
+            if command is None:
+                command = token
+                if command not in SHELL_START_COMMANDS:
+                    return None, list(argv)
+                remaining.append(token)
+            else:
+                remaining.extend(argv[i:])
+                break
+        else:
+            remaining.append(token)
+        i += 1
+    return log_file, remaining
 
 
 parser = argparse.ArgumentParser(prog='keeper', add_help=False, allow_abbrev=False)
@@ -226,18 +294,9 @@ def main(from_package=False):
             return
 
     sys.argv[0] = re.sub(r'(-script\.pyw?|\.exe)?$', '', sys.argv[0])
-    # --file is a shell startup option. A bare flag does not take the next token.
-    # It is not a main-parser option, so the parser leaves it unparsed. Whether it
-    # belongs to startup depends on the command, so:
-    #   1. parse once only to find the command;
-    #   2. take the startup --file out of the tokens;
-    #   3. parse again, so --file is not left in flags or in opts.options, where it
-    #      would be passed on to the shell or the command.
-    startup_opts = cli.parse_startup_command(parser, sys.argv[1:])
     try:
-        log_file, argv = cli.extract_shell_log_file_arg(
-            sys.argv[1:], startup_opts.command, startup_opts.options)
-    except cli.LogFileOptionError as e:
+        log_file, argv = _extract_shell_log_file(parser, sys.argv[1:])
+    except ValueError as e:
         logging.error('Error: %s', e)
         sys.exit(1)
     opts, flags = parser.parse_known_args(argv)
@@ -297,18 +356,13 @@ def main(from_package=False):
         logging.disable(logging.CRITICAL)
 
     log_file_path = None
-    # keeper.py with no command becomes the shell further down. Open the log now
-    # so that startup is included. A help or version request does not open one.
-    # The same help checks as below: help after the command keeps shell from
-    # starting, and help with no command shows the brief help and exits.
-    # --version returns before the shell starts.
     wants_help = _wants_help(original_args_after_command if opts.command else flags)
     shell_will_start = (
         not wants_help and not opts.version
-        and (opts.command in cli.SHELL_START_COMMANDS or (from_package and not opts.command))
+        and (opts.command in SHELL_START_COMMANDS or (from_package and not opts.command))
     )
-    if shell_will_start and opts.log_file and not opts.silent:
-        log_file_path = cli.debug_manager.attach_log_file(opts.log_file)
+    if shell_will_start and log_file and not opts.silent:
+        log_file_path = cli.debug_manager.attach_log_file(log_file)
 
     params = get_params_from_config(opts.config, opts.launched_with_shortcut, opts.data_dir)
 
@@ -403,7 +457,7 @@ def main(from_package=False):
         # Check if -h/--help is in the arguments for a command
         command_wants_help = _wants_help(original_args_after_command)
 
-        if opts.command in cli.SHELL_START_COMMANDS and not command_wants_help:
+        if opts.command in SHELL_START_COMMANDS and not command_wants_help:
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True

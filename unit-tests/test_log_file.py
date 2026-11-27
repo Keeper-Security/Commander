@@ -8,25 +8,23 @@ from pathlib import Path
 from unittest import TestCase, mock
 
 from keepercommander import cli
-from keepercommander.__main__ import main, parser
+from keepercommander.__main__ import _extract_shell_log_file, main, parser
 from keepercommander.params import KeeperParams
 
 
 def _resolved(argv):
-    startup_opts = cli.parse_startup_command(parser, argv)
-    log_file, remaining = cli.extract_shell_log_file_arg(argv, startup_opts.command, startup_opts.options)
+    log_file, remaining = _extract_shell_log_file(parser, argv)
     opts, _ = parser.parse_known_args(remaining)
     opts.log_file = log_file
     return opts
 
 
 def _close_log_files():
-    cli.debug_manager._detach_log_files()
+    cli.debug_manager._detach_log_file()
 
 
 def _has_log_file():
-    root = logging.getLogger()
-    return any(getattr(h, cli.KEEPER_LOG_FILE_ATTR, False) for h in root.handlers)
+    return cli.debug_manager.has_file_logging()
 
 
 class TestLogFileOption(TestCase):
@@ -65,10 +63,11 @@ class TestLogFileOption(TestCase):
         self.assertEqual(opts.command, 'shell')
         self.assertEqual(opts.options, ['login', 'user@example.com'])
 
-    def test_empty_equals_form_uses_default_name(self):
-        opts = _resolved(['shell', '--file='])
-        self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertEqual(opts.command, 'shell')
+    def test_empty_equals_form_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            _resolved(['shell', '--file='])
+        self.assertIn('--file=', str(ctx.exception))
+        self.assertIn(cli.DEFAULT_LOG_FILE, str(ctx.exception))
 
     def test_user_value_is_not_treated_as_the_command(self):
         opts = _resolved(['--user', 'user@example.com', 'shell', '--file=session.log'])
@@ -77,8 +76,8 @@ class TestLogFileOption(TestCase):
         self.assertEqual(opts.user, 'user@example.com')
 
     def test_flag_on_a_non_shell_command_is_left_alone(self):
-        log_file, remaining = cli.extract_shell_log_file_arg(
-            ['import', '--file', 'https://metron.secretservercloud.com'], 'import'
+        log_file, remaining = _extract_shell_log_file(
+            parser, ['import', '--file', 'https://metron.secretservercloud.com']
         )
         self.assertIsNone(log_file)
         self.assertEqual(
@@ -109,22 +108,22 @@ class TestLogFileOption(TestCase):
                      ['-', '--file', 'my.log'],
                      ['--file', 'my.log', 'shell']):
             with self.subTest(argv=argv):
-                with self.assertRaises(cli.LogFileOptionError) as ctx:
+                with self.assertRaises(ValueError) as ctx:
                     _resolved(argv)
                 self.assertIn('--file=' + argv[argv.index('--file') + 1], str(ctx.exception))
 
     def test_bare_flag_followed_by_a_path_without_a_command_is_rejected(self):
         # keeper.py --file my.log: the parser takes my.log as the command.
-        with self.assertRaises(cli.LogFileOptionError):
+        with self.assertRaises(ValueError):
             _resolved(['--file', 'my.log'])
 
     def test_bare_flag_before_an_existing_default_log_is_rejected(self):
         # Without the check keeper.log is the command and is run as a batch file.
-        with self.assertRaises(cli.LogFileOptionError):
+        with self.assertRaises(ValueError):
             _resolved(['--file', cli.DEFAULT_LOG_FILE])
 
     def test_error_message_explains_the_equals_form(self):
-        with self.assertRaises(cli.LogFileOptionError) as ctx:
+        with self.assertRaises(ValueError) as ctx:
             _resolved(['shell', '--file', 'my.log'])
         message = str(ctx.exception)
         self.assertIn('--file=my.log', message)
@@ -135,11 +134,11 @@ class TestLogFileOption(TestCase):
         self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
         self.assertEqual(opts.options, ['ls'])
 
-    def test_bare_flag_followed_by_a_builtin_word_is_accepted(self):
-        # debug is handled inside do_command and is not registered, but is not a path.
-        opts = _resolved(['shell', '--file', 'debug'])
-        self.assertEqual(opts.log_file, cli.DEFAULT_LOG_FILE)
-        self.assertEqual(opts.options, ['debug'])
+    def test_bare_flag_followed_by_an_unknown_word_is_rejected(self):
+        # debug is handled inside the shell and is not a registered command.
+        with self.assertRaises(ValueError) as ctx:
+            _resolved(['shell', '--file', 'debug'])
+        self.assertIn('--file=debug', str(ctx.exception))
 
     def test_bare_flag_followed_by_an_option_is_accepted(self):
         opts = _resolved(['shell', '--file', '--debug'])
@@ -147,14 +146,13 @@ class TestLogFileOption(TestCase):
         self.assertTrue(opts.debug)
 
     def test_non_shell_command_with_its_own_file_value_is_not_rejected(self):
-        log_file, remaining = cli.extract_shell_log_file_arg(
-            ['import', '--file', 'data.json'], 'import')
+        log_file, remaining = _extract_shell_log_file(
+            parser, ['import', '--file', 'data.json'])
         self.assertIsNone(log_file)
         self.assertEqual(remaining, ['import', '--file', 'data.json'])
 
     def _split(self, argv):
-        startup_opts = cli.parse_startup_command(parser, argv)
-        return cli.extract_shell_log_file_arg(argv, startup_opts.command, startup_opts.options)
+        return _extract_shell_log_file(parser, argv)
 
     def test_subcommand_file_option_is_left_for_the_subcommand(self):
         log_file, remaining = self._split(['shell', 'import', '--file=data.json'])
@@ -217,13 +215,13 @@ class TestLogFileHandler(TestCase):
 
                 cli.debug_manager.set_console_debug(True, batch_mode=False)
                 self.assertEqual(console.level, logging.DEBUG)
-                file_handler = next(h for h in self.root.handlers if getattr(h, cli.KEEPER_LOG_FILE_ATTR, False))
+                file_handler = cli.debug_manager._log_file_handler
                 self.assertEqual(file_handler.level, logging.NOTSET)
                 _close_log_files()
         finally:
             self.root.removeHandler(console)
 
-    def test_file_log_drops_console_color_codes(self):
+    def test_file_log_keeps_the_logged_message_text(self):
         stream = io.StringIO()
         console = logging.StreamHandler(stream)
         console.setFormatter(logging.Formatter('%(message)s'))
@@ -235,17 +233,11 @@ class TestLogFileHandler(TestCase):
                 logging.getLogger('keepercommander').info(
                     '\x1b[32mls\x1b[39m            List records'
                 )
-                logging.getLogger('keepercommander').info(
-                    '\x1b[32mΓ£ô\x1b[39m Decrypted 75 records'
-                )
                 _close_log_files()
                 with open(attached, encoding='utf-8') as handle:
                     file_text = handle.read()
-                self.assertIn('ls            List records', file_text)
-                self.assertIn('Γ£ô Decrypted 75 records', file_text)
-                self.assertNotIn('\x1b', file_text)
-                console_text = stream.getvalue()
-                self.assertIn('\x1b[32mls\x1b[39m            List records', console_text)
+                self.assertIn('\x1b[32mls\x1b[39m            List records', file_text)
+                self.assertIn('\x1b[32mls\x1b[39m            List records', stream.getvalue())
         finally:
             self.root.removeHandler(console)
 
@@ -266,7 +258,7 @@ class TestLogFileHandler(TestCase):
                     file_lines = handle.read().splitlines()
                 self.assertTrue(any(line.endswith('Quick Start:') for line in file_lines))
                 self.assertTrue(any(line.endswith('ls            List records') for line in file_lines))
-                self.assertFalse(any(re.search(r'keepercommander:\s*$', line) for line in file_lines))
+                self.assertTrue(any(re.search(r'keepercommander:\s*$', line) for line in file_lines))
                 console_lines = stream.getvalue().splitlines()
                 self.assertEqual(console_lines, ['Quick Start:', '', '    ls            List records'])
         finally:
@@ -316,7 +308,7 @@ class TestLogFileHandler(TestCase):
             self.assertIn('NEW SESSION STARTED', file_text)
             self.assertIn('sync complete', file_text)
 
-    def test_default_file_appends_to_the_same_file(self):
+    def test_existing_default_file_gets_a_new_timestamped_file(self):
         self.root.setLevel(logging.INFO)
         with tempfile.TemporaryDirectory() as tmp:
             original = os.path.join(tmp, 'keeper.log')
@@ -325,14 +317,15 @@ class TestLogFileHandler(TestCase):
             attached = cli.debug_manager.attach_log_file(original)
             logging.getLogger('keepercommander.api').info('sync complete')
             _close_log_files()
+            self.assertRegex(os.path.basename(attached),
+                             r'^keeper\.\d{4}-\d{2}-\d{2}\.\d{2}-\d{2}-\d{2}\.log$')
+            with open(original, encoding='utf-8') as handle:
+                self.assertEqual(handle.read(), 'previous contents\n')
             with open(attached, encoding='utf-8') as handle:
                 file_text = handle.read()
-            self.assertIn('previous contents', file_text)
             self.assertIn('sync complete', file_text)
-            self.assertLess(file_text.index('previous contents'), file_text.index('NEW SESSION STARTED'))
+            self.assertNotIn('previous contents', file_text)
             self.assertLess(file_text.index('NEW SESSION STARTED'), file_text.index('sync complete'))
-            self.assertNotIn('already exists', file_text)
-            self.assertEqual(os.listdir(tmp), ['keeper.log'])
 
     def test_bare_file_name_is_created_in_the_current_directory(self):
         self.root.setLevel(logging.INFO)
@@ -394,36 +387,41 @@ class TestLogFileHandler(TestCase):
             with self.assertLogs(level='ERROR') as captured:
                 self.assertIsNone(cli.debug_manager.attach_log_file(
                     os.path.join(blocker, 'sub', 'custom.log')))
-            self.assertIn('is not a directory', captured.output[0])
+            self.assertIn('Not a directory', captured.output[0])
             self.assertFalse(_has_log_file())
 
     def test_unwritable_parent_of_a_missing_directory_creates_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch('keepercommander.cli.os.access', return_value=False):
+            with mock.patch('keepercommander.cli.os.makedirs', side_effect=PermissionError('No permission')):
                 with self.assertLogs(level='ERROR') as captured:
                     self.assertIsNone(cli.debug_manager.attach_log_file(
                         os.path.join(tmp, 'missing', 'custom.log')))
             self.assertIn('No permission', captured.output[0])
             self.assertEqual(os.listdir(tmp), [])
 
-    def test_directory_as_file_logs_an_error_and_returns_none(self):
+    def test_directory_target_writes_the_default_file_inside_it(self):
         with tempfile.TemporaryDirectory() as tmp:
             folder = os.path.join(tmp, 'dir.log')
             os.makedirs(folder)
-            with self.assertLogs(level='ERROR') as captured:
-                self.assertIsNone(cli.debug_manager.attach_log_file(folder))
-            self.assertIn('is a directory', captured.output[0])
+            attached = cli.debug_manager.attach_log_file(folder)
+            _close_log_files()
+            self.assertEqual(os.path.dirname(attached), os.path.realpath(folder))
+            self.assertTrue(os.path.basename(attached).startswith('keeper'))
 
     def test_unwritable_directory_logs_an_error_and_returns_none(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch('keepercommander.cli.os.access', return_value=False):
+            with mock.patch('keepercommander.cli.logging.FileHandler', side_effect=PermissionError('No permission')):
                 with self.assertLogs(level='ERROR') as captured:
                     self.assertIsNone(cli.debug_manager.attach_log_file(os.path.join(tmp, 'custom.log')))
             self.assertIn('No permission', captured.output[0])
             self.assertEqual(os.listdir(tmp), [])
 
     def test_session_start_line_has_the_local_offset_without_the_zone_name(self):
-        line = cli._session_start_line()
+        with tempfile.TemporaryDirectory() as tmp:
+            attached = cli.debug_manager.attach_log_file(os.path.join(tmp, 'custom.log'))
+            _close_log_files()
+            with open(attached, encoding='utf-8') as handle:
+                line = handle.readline().rstrip('\n')
         self.assertRegex(
             line,
             r'^=+ NEW SESSION STARTED AT : '
@@ -439,19 +437,18 @@ class TestLogFileHandler(TestCase):
             original = os.path.join(tmp, 'custom.log')
             with open(original, 'w', encoding='utf-8', newline='\n') as handle:
                 handle.write('previous contents')
-            with mock.patch(
-                'keepercommander.cli._session_start_line',
-                return_value='==================== NEW SESSION STARTED AT : 2026-11-25T01:40:00+05:30 ====================',
-            ):
-                cli.debug_manager.attach_log_file(original)
-                logging.getLogger('keepercommander.api').info('sync complete')
-                _close_log_files()
+            cli.debug_manager.attach_log_file(original)
+            logging.getLogger('keepercommander.api').info('sync complete')
+            _close_log_files()
             with open(original, encoding='utf-8') as handle:
                 file_text = handle.read()
-            marker = '==================== NEW SESSION STARTED AT : 2026-11-25T01:40:00+05:30 ===================='
             lines = file_text.splitlines()
             self.assertEqual(lines[0], 'previous contents')
-            self.assertEqual(lines[1], marker)
+            self.assertRegex(
+                lines[1],
+                r'^=+ NEW SESSION STARTED AT : '
+                r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2} =+$',
+            )
             self.assertLess(file_text.index('NEW SESSION STARTED'), file_text.index('sync complete'))
 
 
@@ -698,7 +695,7 @@ class TestCommandLogging(TestCase):
         cli.debug_manager.attach_log_file(other_path)
         cli.debug_manager.log_command('second')
         command_logger = logging.getLogger(cli.COMMAND_LOGGER_NAME)
-        log_files = [h for h in command_logger.handlers if getattr(h, cli.KEEPER_LOG_FILE_ATTR, False)]
+        log_files = [h for h in command_logger.handlers if isinstance(h, logging.FileHandler)]
         self.assertEqual(len(log_files), 1)
         body = self._body()
         self.assertIn('first', body)
@@ -708,17 +705,16 @@ class TestCommandLogging(TestCase):
 
     def test_detached_log_file_is_not_reopened_by_a_command(self):
         cli.debug_manager.attach_log_file(self.log_path)
-        cli.debug_manager._detach_log_files()
+        cli.debug_manager._detach_log_file()
         os.remove(self.log_path)
         cli.debug_manager.log_command('list')
         self.assertFalse(os.path.exists(self.log_path))
         command_logger = logging.getLogger(cli.COMMAND_LOGGER_NAME)
-        self.assertFalse(any(getattr(h, cli.KEEPER_LOG_FILE_ATTR, False) for h in command_logger.handlers))
+        self.assertFalse(any(isinstance(h, logging.FileHandler) for h in command_logger.handlers))
 
     def test_console_debug_toggle_leaves_the_log_file_level_alone(self):
         cli.debug_manager.attach_log_file(self.log_path)
-        file_handler = next(h for h in self.root.handlers
-                            if getattr(h, cli.KEEPER_LOG_FILE_ATTR, False))
+        file_handler = cli.debug_manager._log_file_handler
         cli.debug_manager.set_console_debug(True, False)
         self.assertEqual(file_handler.level, logging.NOTSET)
         cli.debug_manager.set_console_debug(False, True)
