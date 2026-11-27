@@ -19,6 +19,7 @@ from ..service.commands.integrations import (
     SlackAppSetupCommand,
     TeamsAppSetupCommand,
     SailPointAppSetupCommand,
+    ZoomAppSetupCommand,
 )
 
 def register_commands(commands):
@@ -33,6 +34,7 @@ def register_commands(commands):
     commands['teams-app-setup'] = TeamsAppSetupCommand()
     commands['sailpoint-app-setup'] = SailPointAppSetupCommand()
     commands['gchat-app-setup'] = GChatAppSetupCommand()
+    commands['zoom-app-setup'] = ZoomAppSetupCommand()
 
 def register_command_info(aliases, command_info):
     service_classes = [
@@ -47,6 +49,7 @@ def register_command_info(aliases, command_info):
         TeamsAppSetupCommand,
         SailPointAppSetupCommand,
         GChatAppSetupCommand,
+        ZoomAppSetupCommand,
     ]
     
     for service_class in service_classes:

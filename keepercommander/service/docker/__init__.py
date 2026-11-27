@@ -22,6 +22,7 @@ This module provides reusable components for Docker-based integrations:
 from .models import (
     DockerSetupConstants, SetupResult, ServiceConfig,
     SlackConfig, TeamsConfig, SailPointConfig, GChatConfig, GChatConstants,
+    ZoomConfig, ZoomConstants,
     SetupStep, ApproverTeam, ApprovalsConfig,
 )
 from .printer import DockerSetupPrinter
@@ -37,6 +38,8 @@ __all__ = [
     'SailPointConfig',
     'GChatConfig',
     'GChatConstants',
+    'ZoomConfig',
+    'ZoomConstants',
     'ApproverTeam',
     'ApprovalsConfig',
     'SetupStep',

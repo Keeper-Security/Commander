@@ -85,7 +85,7 @@ COMMAND_CATEGORIES = {
         'service-create', 'service-add-config', 'service-start', 'service-stop', 'service-status',
         'service-config-add', 'service-docker-setup', 'terraform-app-setup',
         'slack-app-setup', 'teams-app-setup',
-        'sailpoint-app-setup', 'gchat-app-setup'
+        'sailpoint-app-setup', 'gchat-app-setup', 'zoom-app-setup'
     },
 
     # Email Configuration Commands

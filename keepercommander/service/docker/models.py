@@ -175,6 +175,39 @@ class GChatConstants:
     )
 
 
+class ZoomConstants:
+    """Defaults and field labels for Zoom Chat app setup."""
+    INTEGRATION_NAME = 'Zoom'
+    DISPLAY_NAME = 'Zoom Chat'
+    DEFAULT_FOLDER_NAME = 'Commander Service Mode - Zoom Chat App'
+    DEFAULT_RECORD_NAME = 'Commander Service Mode Zoom Chat App Config'
+
+    FIELD_CLIENT_ID = 'zoom_client_id'
+    FIELD_CLIENT_SECRET = 'zoom_client_secret'
+    FIELD_BOT_JID = 'zoom_bot_jid'
+    FIELD_SECRET_TOKEN = 'zoom_secret_token'
+    FIELD_APPROVALS_CHANNEL_JID = 'zoom_approvals_channel_jid'
+    FIELD_PUBLIC_ENDPOINT_URL = 'zoom_public_endpoint_url'
+
+    FIELD_COMMAND_REQUEST_RECORD_ID = 'chat_command_request_record_id'
+    FIELD_COMMAND_REQUEST_FOLDER_ID = 'chat_command_request_folder_id'
+    FIELD_COMMAND_EXTERNAL_SHARE_ID = 'chat_command_external_share_id'
+    FIELD_COMMAND_CREATE_SECRET_ID = 'chat_command_create_secret_id'
+    FIELD_PEDM_ENABLED = 'pedm_enabled'
+    FIELD_PEDM_POLLING_INTERVAL = 'pedm_polling_interval'
+    FIELD_DEVICE_APPROVAL_ENABLED = 'device_approval_enabled'
+    FIELD_DEVICE_APPROVAL_POLLING_INTERVAL = 'device_approval_polling_interval'
+
+    DEFAULT_COMMAND_REQUEST_RECORD_ID = '1'
+    DEFAULT_COMMAND_REQUEST_FOLDER_ID = '2'
+    DEFAULT_COMMAND_EXTERNAL_SHARE_ID = '3'
+    DEFAULT_COMMAND_CREATE_SECRET_ID = '4'
+
+    # Zoom Chat bot container port used by the integration service.
+    BOT_PORT = 3000
+    DEFAULT_HOST_BOT_PORT = 3000
+
+
 @dataclass
 class GChatConfig:
     google_service_account_json: str
@@ -194,3 +227,24 @@ class GChatConfig:
     @property
     def chat_approvals_space_id(self) -> str:
         return self.approvals.single_channel_id
+
+
+@dataclass
+class ZoomConfig:
+    """Zoom Chat app configuration stored in the Keeper integration record."""
+
+    client_id: str
+    client_secret: str
+    bot_jid: str
+    secret_token: str
+    approvals_channel_jid: str
+    public_endpoint_url: str
+    host_bot_port: int = ZoomConstants.DEFAULT_HOST_BOT_PORT
+    chat_command_request_record_id: str = ZoomConstants.DEFAULT_COMMAND_REQUEST_RECORD_ID
+    chat_command_request_folder_id: str = ZoomConstants.DEFAULT_COMMAND_REQUEST_FOLDER_ID
+    chat_command_external_share_id: str = ZoomConstants.DEFAULT_COMMAND_EXTERNAL_SHARE_ID
+    chat_command_create_secret_id: str = ZoomConstants.DEFAULT_COMMAND_CREATE_SECRET_ID
+    pedm_enabled: bool = False
+    pedm_polling_interval: int = 120
+    device_approval_enabled: bool = False
+    device_approval_polling_interval: int = 120

@@ -49,6 +49,10 @@ class TestGetProtectedRecordTitleSet(TestCase):
         titles = get_protected_record_title_set()
         self.assertIn('commander service mode sailpoint config', titles)
 
+    def test_contains_zoom_default_title(self):
+        titles = get_protected_record_title_set()
+        self.assertIn('commander service mode zoom chat app config', titles)
+
     def test_contains_terraform_slack_teams_gchat_titles(self):
         titles = get_protected_record_title_set()
         self.assertIn('commander service mode terraform config', titles)
@@ -161,6 +165,20 @@ class TestGetProtectedRecordUids(TestCase):
         with mock.patch.dict(os.environ, {'GCHAT_RECORD': uid}):
             p = _params_with_records({uid: 'My Totally Custom GChat Title'})
             self.assertIn(uid, get_protected_record_uids(p))
+
+    def test_zoom_record_protected_by_uid_even_with_custom_title(self):
+        uid = generate_uid()
+        with mock.patch.dict(os.environ, {'ZOOM_RECORD': uid}):
+            p = _params_with_records({uid: 'My Totally Custom Zoom Title'})
+            self.assertIn(uid, get_protected_record_uids(p))
+
+    def test_zoom_default_title_protected_without_env_var(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            p = _params_with_records({
+                'UID_ZOOM': 'Commander Service Mode Zoom Chat App Config',
+            })
+            result = get_protected_record_uids(p)
+        self.assertIn('UID_ZOOM', result)
 
     def test_no_pinned_env_vars_falls_back_to_title_only(self):
         with mock.patch.dict(os.environ, {}, clear=True):
