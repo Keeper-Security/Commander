@@ -17,6 +17,7 @@ from keepercommander.commands.pam_import.delinea_import import (
     DelineaImportOptions,
     DelineaImportOrchestrator,
     DelineaMappedImport,
+    DelineaPAMImportCommand,
     select_folders,
 )
 
@@ -318,6 +319,17 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         # File is not written when user declines (no --dry-run or --output-file flag)
         self.assertFalse(os.path.exists(DEFAULT_IMPORT_JSON))
 
+    def test_declined_prompt_does_not_create_users_or_teams(self):
+        self.client.auth = mock.Mock()
+        with mock.patch(f'{DELINEA_IMPORT}.ThycoticImporter') as importer_cls, \
+                mock.patch(f'{DELINEA_IMPORT}.user_choice', return_value='n') as prompt, \
+                mock.patch(f'{DELINEA_IMPORT}.run_with_classic_fallback') as fallback:
+            self.run_quiet(self.orchestrator(add_users=True, add_teams=True))
+        self.assertIn('create Keeper users and Keeper teams', prompt.call_args[0][0])
+        fallback.assert_not_called()
+        importer_cls.return_value._migrate_thycotic_users.assert_not_called()
+        importer_cls.return_value._migrate_thycotic_teams.assert_not_called()
+
     def test_import_uses_unredacted_document(self):
         orchestrator = self.orchestrator(yes=True, use_nsf=True)
         with mock.patch(f'{DELINEA_IMPORT}.choose_nsf', return_value=True), \
@@ -361,6 +373,43 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         run_crosswalk.assert_called_once()
         map_.assert_not_called()
         self.assertFalse(os.path.exists(DEFAULT_IMPORT_JSON))
+
+    def test_add_users_and_teams_use_thycotic_importer(self):
+        auth = mock.Mock()
+        self.client.auth = auth
+        cases = (
+            ({'add_users': True, 'dry_run': True}, '_preview_thycotic_users', (auth,)),
+            ({'add_users': True, 'yes': True}, '_migrate_thycotic_users', (auth, self.params)),
+            ({'add_teams': True, 'dry_run': True}, '_preview_thycotic_teams', (auth,)),
+            ({'add_teams': True, 'yes': True}, '_migrate_thycotic_teams', (auth, self.params)),
+        )
+        for options, called, args in cases:
+            with self.subTest(options=options):
+                with mock.patch(f'{DELINEA_IMPORT}.ThycoticImporter') as importer_cls, \
+                        mock.patch(f'{DELINEA_IMPORT}.run_with_classic_fallback', return_value=False):
+                    self.run_quiet(self.orchestrator(**options))
+                getattr(importer_cls.return_value, called).assert_called_once_with(*args)
+                for name in (
+                    '_preview_thycotic_users', '_migrate_thycotic_users',
+                    '_preview_thycotic_teams', '_migrate_thycotic_teams',
+                ):
+                    if name != called:
+                        getattr(importer_cls.return_value, name).assert_not_called()
+
+    def test_user_and_team_flags_default_off(self):
+        options = DelineaImportOptions.from_kwargs({'server': 'ss.example.com'})
+        self.assertFalse(options.add_users)
+        self.assertFalse(options.add_teams)
+        enabled = DelineaImportOptions.from_kwargs({
+            'server': 'ss.example.com', 'add_users': True, 'add_teams': True,
+        })
+        self.assertTrue(enabled.add_users)
+        self.assertTrue(enabled.add_teams)
+        parsed = DelineaPAMImportCommand.parser.parse_args([
+            'ss.example.com', '--add-users', '--add-teams', '--dry-run',
+        ])
+        self.assertTrue(parsed.add_users)
+        self.assertTrue(parsed.add_teams)
 
     def test_report_counts_rotation_from_users(self):
         mapped = DelineaMappedImport(resources=[{'users': [
