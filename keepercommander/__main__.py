@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import __version__
-from . import cli, rest_api, utils
+from . import cli, file_logging, rest_api, utils
 from .params import KeeperParams
 from .config_storage import loader
 from .constants import resolve_server, invalid_server_message
@@ -233,11 +233,11 @@ def main(from_package=False):
     #   2. take the startup --file out of the tokens;
     #   3. parse again, so --file is not left in flags or in opts.options, where it
     #      would be passed on to the shell or the command.
-    startup_opts = cli.parse_startup_command(parser, sys.argv[1:])
+    startup_opts = file_logging.parse_startup_command(parser, sys.argv[1:])
     try:
-        log_file, argv = cli.extract_shell_log_file_arg(
+        log_file, argv = file_logging.extract_shell_log_file_arg(
             sys.argv[1:], startup_opts.command, startup_opts.options)
-    except cli.LogFileOptionError as e:
+    except file_logging.LogFileOptionError as e:
         logging.error('Error: %s', e)
         sys.exit(1)
     opts, flags = parser.parse_known_args(argv)
@@ -305,7 +305,7 @@ def main(from_package=False):
     wants_help = _wants_help(original_args_after_command if opts.command else flags)
     shell_will_start = (
         not wants_help and not opts.version
-        and (opts.command in cli.SHELL_START_COMMANDS or (from_package and not opts.command))
+        and (opts.command in file_logging.SHELL_START_COMMANDS or (from_package and not opts.command))
     )
     if shell_will_start and opts.log_file and not opts.silent:
         log_file_path = cli.debug_manager.attach_log_file(opts.log_file)
@@ -403,7 +403,7 @@ def main(from_package=False):
         # Check if -h/--help is in the arguments for a command
         command_wants_help = _wants_help(original_args_after_command)
 
-        if opts.command in cli.SHELL_START_COMMANDS and not command_wants_help:
+        if opts.command in file_logging.SHELL_START_COMMANDS and not command_wants_help:
             # Special handling for shell/- when NOT asking for help
             if opts.command == '-':
                 params.batch_mode = True

@@ -56,9 +56,7 @@ def _looks_like_path(token):
 def _validate_bare_file_value(tokens, index):
     """Raise LogFileOptionError when the bare --file at index is followed by a path.
 
-    A bare ``--file`` never takes a value, so ``--file my.log`` would log to
-    ``keeper.log`` and then run ``my.log`` as a command. A following command
-    name (``--file login``) is allowed.
+    A bare ``--file`` takes no value; a following command name is allowed.
     """
     if index + 1 >= len(tokens):
         return
@@ -72,12 +70,10 @@ def _validate_bare_file_value(tokens, index):
 
 
 def parse_startup_command(parser, tokens):
-    """Parse ``tokens`` only to find the startup command and its positional arguments.
+    """Parse ``tokens`` to find the startup command and its positional arguments.
 
-    ``--file`` tokens are dropped first. They are not main-parser options, and
-    before Python 3.12 an unknown option between the command and its arguments
-    makes argparse return no ``options`` (``shell --file=a.log import`` gives
-    ``options=[]``). Without them the result is the same on every version.
+    ``--file`` tokens are dropped first: before Python 3.12 an unknown option
+    after the command makes argparse return no ``options``.
     """
     tokens = [t for t in tokens if t != '--file' and not t.startswith('--file=')]
     opts, _ = parser.parse_known_args(tokens)
@@ -85,28 +81,11 @@ def parse_startup_command(parser, tokens):
 
 
 def extract_shell_log_file_arg(tokens, command, options=()):
-    """Take ``--file`` from a shell startup command line.
+    """Take ``--file`` / ``--file=NAME`` from a shell startup command line.
 
-    The flag is honored when this process is starting the shell (``shell`` or
-    ``-``) and when no command is given. ``keeper.py`` starts the shell in that
-    second case. A named command other than the shell keeps the tokens, so a
-    command's own ``--file`` option (``import --file`` and so on) is untouched.
-
-    * ``--file`` uses ``keeper.log``. The following token is not the file name.
-      When that token looks like a path and is not a command, LogFileOptionError
-      is raised so the user is told to write ``--file=PATH`` instead.
-    * ``--file=NAME`` uses NAME. An empty NAME falls back to ``keeper.log``.
-
-    Only the tokens before the shell's sub-command are read, so the
-    sub-command's own ``--file`` (``shell import --file=a.json``) is kept.
-    When the flag is given more than once, the last one wins.
-
-    ``command`` is the startup command found by the main argument parser, or
-    None when no command is given. ``options`` are the positional arguments the
-    parser found after the command; the first one is the shell's sub-command.
-
-    Returns ``(log_file, remaining_tokens)``. ``log_file`` is None
-    when the flag is absent or this command is not a shell start.
+    Honored only when starting the shell (or no command); tokens from the
+    shell's sub-command on are left alone. Bare ``--file`` means keeper.log.
+    Returns ``(log_file, remaining_tokens)``; log_file is None if not used.
     """
     tokens = list(tokens)
     # The parser already told the command and its arguments apart from option values,
@@ -143,30 +122,8 @@ def extract_shell_log_file_arg(tokens, command, options=()):
     return log_file, remaining
 
 
-_ANSI_ESCAPE_RE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-
-
-class PlainLogFormatter(logging.Formatter):
-    """File formatter. Console color codes are removed from the stored line."""
-
-    def format(self, record):
-        return _ANSI_ESCAPE_RE.sub('', super().format(record))
-
-
-class NonEmptyLogFilter(logging.Filter):
-    """Skip blank records. Those calls only add space on the console."""
-
-    def filter(self, record):
-        text = _ANSI_ESCAPE_RE.sub('', record.getMessage())
-        return bool(text.strip())
-
-
 def _session_start_line():
-    """A raw marker that shows where a new shell session was appended.
-
-    The clock time is the machine's local time. The offset says which zone
-    that clock used, without printing the zone name.
-    """
+    """Marker line for a new session, stamped with local time and UTC offset."""
     stamp = datetime.datetime.now().astimezone().isoformat(timespec='seconds')
     return '==================== NEW SESSION STARTED AT : %s ====================' % stamp
 
@@ -179,11 +136,9 @@ _OPTION_NAME_RE = re.compile(r'^--?[A-Za-z][\w-]*')
 
 
 def redact_command_for_log(command_line):
-    """Return the command name and the option names it was run with.
+    """Return the command name and its option names, without any user values.
 
-    Values the user typed (option values, positional arguments, field
-    assignments) are left out, so ``record-add -t x --title=T password=p``
-    becomes ``record-add -t --title``. Words after ``--`` are all arguments.
+    ``record-add -t x --title=T password=p`` becomes ``record-add -t --title``.
     """
     words = _COMMAND_WORD_RE.findall(command_line or '')
     if not words:
@@ -211,18 +166,13 @@ class DebugManager:
         self._log_file_handler = None
 
     def _expand_log_file_path(self, file_path):
-        """Return the path the log file is written to.
-
-        The path is used as given. A leading ``~`` is expanded, and a relative
-        path is taken from the current directory.
-        """
+        """Expand a leading ``~``; relative paths stay relative to the current directory."""
         return os.path.expanduser(file_path)
 
     def _validate_log_file_writable(self, file_path):
         """Raise ValueError when file_path cannot be opened for appending.
 
-        A missing parent folder is allowed; attach_log_file creates it. The
-        nearest folder that already exists must then be writable.
+        A missing parent folder is allowed if the nearest existing one is writable.
         """
         if os.path.isdir(file_path):
             raise ValueError(f"'{file_path}' is a directory, not a file")
@@ -247,11 +197,7 @@ class DebugManager:
         return any(getattr(h, DEBUG_FILE_ATTR, False) for h in self.logger.handlers)
 
     def log_command(self, command_line):
-        """Write the executed command to the log file only. The console does not show it again.
-
-        Only the command name and its option names are written; the values the
-        user typed are not (see redact_command_for_log).
-        """
+        """Write the redacted command line to the log file only, not the console."""
         if self._log_file_handler is None:
             return
         command_line = redact_command_for_log((command_line or '').strip())
@@ -277,22 +223,17 @@ class DebugManager:
             h.setLevel(level)
 
     def attach_log_file(self, file_path, debug=False):
-        """Copy every root-logger record into file_path. Console logging is unchanged.
+        """Copy every root-logger record into file_path; the console is unchanged.
 
-        Used by the shell startup option ``--file`` and by ``debug --file``.
-        With ``debug=True`` the root logger is lowered to DEBUG so DEBUG records
-        reach the file as well; the console keeps its own level.
-
-        Child loggers propagate to the root logger, so this one handler covers
-        logs emitted anywhere in Commander. A custom name and the default name
-        both append to an existing file. Every session, including a new file,
-        starts with a session-start line. Returns the path being written, or
-        None when the file could not be opened.
+        Custom names are appended to; an existing keeper.log gets a new
+        timestamped file instead. ``debug=True`` also writes DEBUG records.
+        Returns the path being written, or None on failure.
         """
-        fh = None
+        file_handler = None
         try:
             expanded = self._expand_log_file_path(file_path)
             validated_path = self._validate_log_file_path(expanded)
+            validated_path = self._timestamped_default_log_file_path(validated_path)
             self._validate_log_file_writable(validated_path)
             # debug --file logs/debug.log has always created the missing folder.
             os.makedirs(os.path.dirname(validated_path), mode=0o750, exist_ok=True)
@@ -301,36 +242,35 @@ class DebugManager:
 
             append_session = self._log_file_has_content(validated_path)
             needs_leading_newline = append_session and self._log_file_missing_trailing_newline(validated_path)
-            fh = logging.FileHandler(validated_path, mode='a', encoding='utf-8')
-            self._write_session_start(fh, needs_leading_newline)
-            fh.setLevel(logging.NOTSET)
-            fh.setFormatter(PlainLogFormatter(
+            file_handler = logging.FileHandler(validated_path, mode='a', encoding='utf-8')
+            self._write_session_start(file_handler, needs_leading_newline)
+            file_handler.setLevel(logging.NOTSET)
+            file_handler.setFormatter(logging.Formatter(
                 '%(asctime)s %(levelname)s %(name)s: %(message)s',
                 datefmt='%Y-%m-%d %H:%M:%S',
             ))
-            fh.addFilter(NonEmptyLogFilter())
-            setattr(fh, KEEPER_LOG_FILE_ATTR, True)
+            setattr(file_handler, KEEPER_LOG_FILE_ATTR, True)
             if debug:
-                setattr(fh, DEBUG_FILE_ATTR, True)
-            self.logger.addHandler(fh)
-            self.command_logger.addHandler(fh)
-            self._log_file_handler = fh
+                setattr(file_handler, DEBUG_FILE_ATTR, True)
+            self.logger.addHandler(file_handler)
+            self.command_logger.addHandler(file_handler)
+            self._log_file_handler = file_handler
             if debug:
                 self.logger.setLevel(logging.DEBUG)
             try:
-                utils.set_file_permissions(fh.baseFilename)
+                utils.set_file_permissions(file_handler.baseFilename)
             except Exception:
-                logging.warning('Failed to set permissions on log file %s', fh.baseFilename)
-            return fh.baseFilename
+                logging.warning('Failed to set permissions on log file %s', file_handler.baseFilename)
+            return file_handler.baseFilename
         except (ValueError, OSError, IOError) as e:
             logging.error('Failed to set up log file: %s', e)
-            if fh is not None:
-                fh.close()
+            if file_handler is not None:
+                file_handler.close()
             return None
         except Exception as e:
             logging.error('Unexpected error setting up log file: %s', e)
-            if fh is not None:
-                fh.close()
+            if file_handler is not None:
+                file_handler.close()
             return None
 
     def _detach_log_files(self):
@@ -344,6 +284,23 @@ class DebugManager:
                 except (OSError, IOError) as close_error:
                     logging.warning('Failed to close log handler: %s', close_error)
         self._log_file_handler = None
+
+    def _timestamped_default_log_file_path(self, file_path, now=None):
+        """Return keeper.<date>.<time>.log when keeper.log exists, else file_path.
+
+        Uses '-' in the time for Windows; adds a numeric suffix if the name is taken.
+        """
+        if os.path.basename(file_path) != DEFAULT_LOG_FILE or not os.path.exists(file_path):
+            return file_path
+        now = now or datetime.datetime.now()
+        stem, ext = os.path.splitext(file_path)
+        base = f"{stem}.{now.strftime('%Y-%m-%d')}.{now.strftime('%H-%M-%S')}"
+        candidate = base + ext
+        counter = 1
+        while os.path.exists(candidate):
+            candidate = f'{base}.{counter}{ext}'
+            counter += 1
+        return candidate
 
     def _log_file_has_content(self, file_path):
         """True when this session will continue an existing log, not a new file."""
@@ -362,11 +319,9 @@ class DebugManager:
             return False
 
     def _write_session_start(self, handler, needs_leading_newline):
-        """Write the session marker directly, so it is not formatted as a log record.
+        """Write the session marker unformatted, straight to handler.stream.
 
-        This writes to handler.stream without taking the handler lock. It is
-        safe only because it runs before the handler is added to any logger,
-        so no other thread can be writing to it yet.
+        Skips the handler lock; safe only before the handler is added to a logger.
         """
         stream = handler.stream
         if stream is None:
@@ -419,24 +374,6 @@ class DebugManager:
         except Exception as e:
             raise ValueError(f"Path validation failed: {e}")
     
-    def _looks_like_filename(self, token):
-        """Check if a token looks like a filename with proper validation."""
-        if not token or not isinstance(token, str):
-            return False
-        
-        token = token.strip()
-        
-        if len(token) < 1:
-            return False
-        
-        has_extension = re.search(r'\.[a-zA-Z0-9]{1,10}$', token)
-        
-        has_path_separator = '/' in token or '\\' in token
-        
-        looks_like_name = len(token) > 2 and re.match(r'^[a-zA-Z0-9._-]+$', token)
-        
-        return bool(has_extension or has_path_separator or looks_like_name)
-    
     def toggle_console_debug(self, batch_mode):
         """Toggle console debug on/off."""
         current = self.is_console_debug_on(batch_mode)
@@ -486,7 +423,7 @@ class DebugManager:
             if len(tokens) > 1:
                 for token in tokens[1:]:
                     # Check if token looks like a filename
-                    if not token.startswith('-') and self._looks_like_filename(token):
+                    if not token.startswith('-') and _looks_like_path(token):
                         print(f"Please specify the --file flag for logging to file: debug --file {token}")
                         return False
             

@@ -45,11 +45,7 @@ from .command_categories import COMMAND_CATEGORIES
 from .error import CommandError, Error
 from .params import KeeperParams
 from .subfolder import BaseFolderNode
-from .file_logging import (  # noqa: F401  re-exported for existing cli.X callers
-    DEFAULT_LOG_FILE, KEEPER_LOG_FILE_ATTR, DEBUG_FILE_ATTR, COMMAND_LOGGER_NAME, SHELL_START_COMMANDS,
-    LogFileOptionError, parse_startup_command, extract_shell_log_file_arg,
-    PlainLogFormatter, NonEmptyLogFilter, redact_command_for_log, DebugManager, debug_manager,
-)
+from .file_logging import debug_manager
 
 NESTED_SHARE_FOLDER_COMMANDS = COMMAND_CATEGORIES.get('Nested Share Folder Commands', set())
 
