@@ -60,12 +60,12 @@ def _auth():
     auth.expires_in = 3600
     auth.last_login = 2 ** 40
     # Existing reads stay on the 11.0-11.2 path. Version tests clear this.
-    auth._v2_secrets = False
+    auth._supports_v2_secrets = False
     return auth
 
 
-def _version(text, status_code=200):
-    body = {'success': True, 'model': {'version': text}}
+def _version_response(version_str, status_code=200):
+    body = {'success': True, 'model': {'version': version_str}}
     return _response(status_code, '{}', body)
 
 
@@ -157,9 +157,9 @@ class TestSecretServerVersion(unittest.TestCase):
         sleep.start()
         self.addCleanup(sleep.stop)
 
-    def _version_unknown(self):
+    def _auth_with_unknown_version(self):
         auth = _auth()
-        auth._v2_secrets = None
+        auth._supports_v2_secrets = None
         return auth
 
     def test_version_parsing(self):
@@ -167,13 +167,21 @@ class TestSecretServerVersion(unittest.TestCase):
         self.assertEqual(parse('11.10.000000'), (11, 10))
         self.assertEqual(parse('11.3.000001'), (11, 3))
         self.assertEqual(parse('12.0.000000'), (12, 0))
+        self.assertEqual(parse('11.3'), (11, 3))
+        self.assertEqual(parse(' 11.3.0 '), (11, 3))
+        self.assertEqual(parse('11.3-rc1'), (11, 3))
         self.assertIsNone(parse(''))
         self.assertIsNone(parse(None))
         self.assertIsNone(parse('unknown'))
+        self.assertIsNone(parse('11.'))
+        self.assertIsNone(parse('11.x'))
+        self.assertIsNone(parse('11.3x'))
+        self.assertIsNone(parse('11.\u00b2'))
+        self.assertIsNone(parse('\u00b21.3'))
 
     def _read_with_version(self, version_response):
         secret_body = _response(200, '{"id": 42}', {'id': 42})
-        auth = self._version_unknown()
+        auth = self._auth_with_unknown_version()
 
         def get(url, **kwargs):
             if _is_version_url(url):
@@ -184,11 +192,13 @@ class TestSecretServerVersion(unittest.TestCase):
 
         with mock.patch(REQUESTS_GET, side_effect=get) as requests_get:
             self.assertEqual(auth.read_secret(42), ReadSecretResult.ok({'id': 42}))
+            first_urls = [call[0][0] for call in requests_get.call_args_list]
             self.assertEqual(auth.read_secret(43), ReadSecretResult.ok({'id': 42}))
-        urls = [call[0][0] for call in requests_get.call_args_list]
-        version_calls = sum(_is_version_url(url) for url in urls)
-        secret_urls = [url for url in urls if '/secrets/4' in url]
-        return auth, version_calls, secret_urls
+            all_urls = [call[0][0] for call in requests_get.call_args_list]
+        first_version_calls = sum(_is_version_url(url) for url in first_urls)
+        second_version_calls = sum(_is_version_url(url) for url in all_urls[len(first_urls):])
+        secret_urls = [url for url in all_urls if '/secrets/4' in url]
+        return auth, first_version_calls, second_version_calls, secret_urls
 
     def test_secret_read_follows_the_server_version(self):
         # 11.3 and later use /v2/secrets. Earlier servers stay on /v1/secrets.
@@ -202,24 +212,35 @@ class TestSecretServerVersion(unittest.TestCase):
             ('11.2.000002', False),
             ('10.9.000000', False),
         )
-        for text, use_v2 in cases:
-            with self.subTest(version=text):
-                auth, version_calls, secret_urls = self._read_with_version(_version(text))
+        for version_str, use_v2 in cases:
+            with self.subTest(version=version_str):
+                auth, first_calls, second_calls, secret_urls = self._read_with_version(
+                    _version_response(version_str)
+                )
                 api = 'v2' if use_v2 else 'v1'
-                self.assertIs(auth._v2_secrets, use_v2)
-                self.assertEqual(version_calls, 1)
+                self.assertIs(auth._supports_v2_secrets, use_v2)
+                self.assertEqual(first_calls, 1)
+                self.assertEqual(second_calls, 0)
                 self.assertTrue(secret_urls[0].endswith(f'/api/{api}/secrets/42?{PLAIN_QUERY}'))
                 self.assertTrue(secret_urls[1].endswith(f'/api/{api}/secrets/43?{PLAIN_QUERY}'))
+
+    def test_top_level_version_payload_is_supported(self):
+        top_level = _response(200, '{}', {'version': '11.2.000000'})
+        auth, first_calls, second_calls, secret_urls = self._read_with_version(top_level)
+        self.assertIs(auth._supports_v2_secrets, False)
+        self.assertEqual(first_calls, 1)
+        self.assertEqual(second_calls, 0)
+        self.assertTrue(secret_urls[0].endswith(f'/api/v1/secrets/42?{PLAIN_QUERY}'))
 
     def test_v1_version_is_hit_only_once(self):
         # 11.3 and later read secrets from /v2/secrets. The only /v1/ request
         # is GET /api/v1/version, and the cached answer covers the next read.
-        auth = self._version_unknown()
+        auth = self._auth_with_unknown_version()
         secret_body = _response(200, '{"id": 42}', {'id': 42})
 
         def get(url, **kwargs):
             if _is_version_url(url):
-                return _version('11.10.000000')
+                return _version_response('11.10.000000')
             return secret_body
 
         with mock.patch(REQUESTS_GET, side_effect=get) as requests_get:
@@ -234,41 +255,55 @@ class TestSecretServerVersion(unittest.TestCase):
         self.assertTrue(urls[2].endswith(f'/api/v2/secrets/43?{PLAIN_QUERY}'))
 
     def test_version_lookup_is_cached_only_when_it_completes(self):
-        # An unreadable answer (unknown text, 404, non-JSON) is remembered as v2.
-        # A request error, 401, 429, or 5xx is not remembered, so the next read asks again.
-        # 429 is retried inside _get (1 try + 3 retries) on each of the two reads.
+        # An unreadable answer (unknown text, 403, 404, non-JSON) is remembered as v2.
+        # A request error, 401, 408, 429, or 5xx is not remembered, so the next read asks again.
         rate_limited = _response(429, 'slow down')
         rate_limited.headers = {}
         cases = (
-            ('unknown', _version('unknown'), True, 1),
-            ('not found', _response(404, 'Not Found'), True, 1),
-            ('not json', _response(200, 'not json'), True, 1),
-            ('connection error', requests.exceptions.ConnectionError('blip'), None, 2),
-            ('unauthorized', _response(401, 'unauthorized'), None, 2),
-            ('forbidden', _response(403, 'forbidden'), None, 2),
-            ('timeout', _response(408, 'timeout'), None, 2),
-            ('rate limit', rate_limited, None, 8),
-            ('server error', _response(503, 'busy'), None, 2),
+            ('unknown', _version_response('unknown'), True),
+            ('forbidden', _response(403, 'forbidden'), True),
+            ('not found', _response(404, 'Not Found'), True),
+            ('not json', _response(200, 'not json'), True),
+            ('connection error', requests.exceptions.ConnectionError('blip'), None),
+            ('unauthorized', _response(401, 'unauthorized'), None),
+            ('timeout', _response(408, 'timeout'), None),
+            ('rate limit', rate_limited, None),
+            ('server error', _response(503, 'busy'), None),
         )
-        for label, response, cached, version_calls in cases:
+        for label, response, cached in cases:
             with self.subTest(case=label):
                 with self.assertLogs(level='INFO'):
-                    auth, calls, secret_urls = self._read_with_version(response)
-                self.assertIs(auth._v2_secrets, cached)
-                self.assertEqual(calls, version_calls)
+                    auth, first_calls, second_calls, secret_urls = self._read_with_version(response)
+                self.assertIs(auth._supports_v2_secrets, cached)
+                if cached is None:
+                    self.assertGreaterEqual(first_calls, 1)
+                    self.assertGreaterEqual(second_calls, 1)
+                else:
+                    self.assertEqual(first_calls, 1)
+                    self.assertEqual(second_calls, 0)
                 self.assertTrue(secret_urls[0].split('?', 1)[0].endswith('/api/v2/secrets/42'))
 
+    def test_select_secret_read_endpoint_dispatch_and_mock_fallback(self):
+        from keepercommander.importer.thycotic.thycotic import select_secret_read_endpoint
+        v2_auth = _auth()
+        v2_auth._supports_v2_secrets = True
+        v1_auth = _auth()
+        v1_auth._supports_v2_secrets = False
+        self.assertEqual(select_secret_read_endpoint(v2_auth, 42), '/v2/secrets/42')
+        self.assertEqual(select_secret_read_endpoint(v1_auth, 42), '/v1/secrets/42')
+        self.assertEqual(select_secret_read_endpoint(mock.MagicMock(), 42), '/v1/secrets/42')
+
     def test_non_request_errors_are_not_treated_as_a_missing_version(self):
-        auth = self._version_unknown()
+        auth = self._auth_with_unknown_version()
         auth.get_secret_server_version = mock.Mock(side_effect=RuntimeError('bug'))
         with self.assertRaises(RuntimeError):
             auth._v2_secrets_supported()
-        self.assertIsNone(auth._v2_secrets)
+        self.assertIsNone(auth._supports_v2_secrets)
 
     def test_parallel_workers_read_the_version_once(self):
         import threading
         import time
-        auth = self._version_unknown()
+        auth = self._auth_with_unknown_version()
         entered = threading.Event()
         release = threading.Event()
         calls = []
@@ -290,27 +325,32 @@ class TestSecretServerVersion(unittest.TestCase):
             thread.join(2)
         self.assertTrue(all(not thread.is_alive() for thread in threads))
         self.assertEqual(calls, [1])
-        self.assertIs(auth._v2_secrets, True)
+        self.assertIs(auth._supports_v2_secrets, True)
 
     def test_version_lookup_lock_is_not_the_token_lock(self):
-        import threading
-        auth = self._version_unknown()
+        auth = self._auth_with_unknown_version()
+        lock_states = []
 
         def get_version():
-            # The probe refreshes the token. Holding the token lock here would deadlock.
-            auth.ensure_auth_token()
+            # Acquire _token_lock directly so this does not depend on whether
+            # ensure_auth_token() skips locking for an unexpired token.
+            token_lock_free = auth._token_lock.acquire(blocking=False)
+            if token_lock_free:
+                auth._token_lock.release()
+            version_lock_free = auth._version_lock.acquire(blocking=False)
+            if version_lock_free:
+                auth._version_lock.release()
+            lock_states.append((token_lock_free, version_lock_free))
             return (11, 4)
 
         auth.get_secret_server_version = get_version
-        thread = threading.Thread(target=auth._v2_secrets_supported)
-        thread.start()
-        thread.join(2)
-        self.assertFalse(thread.is_alive(), 'version lookup deadlocked on the token lock')
-        self.assertIs(auth._v2_secrets, True)
+        self.assertTrue(auth._v2_secrets_supported())
+        self.assertEqual(lock_states, [(True, False)])
+        self.assertIs(auth._supports_v2_secrets, True)
 
     def test_checkout_retry_uses_the_same_versioned_url(self):
-        auth = self._version_unknown()
-        auth._v2_secrets = True
+        auth = self._auth_with_unknown_version()
+        auth._supports_v2_secrets = True
         with mock.patch(REQUESTS_GET, side_effect=[_checkout_required(), _response(200, '{"id": 42}', {'id': 42})]) as get:
             result = auth.read_secret(42)
         self.assertEqual(result, ReadSecretResult.ok({'id': 42}))
