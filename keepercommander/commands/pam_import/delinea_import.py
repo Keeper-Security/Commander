@@ -26,6 +26,7 @@ from ...importer.thycotic.pam import (
     AccessGrant, Crosswalk, DelineaPamClient, FindingLog, LauncherMapper, PermissionMapper, Principal,
     PrincipalKind, RotationMapper, RotationPolicy, SecretGrantTarget,     SecretMapper, SecretPolicyResolver,
 )
+from ...importer.thycotic.thycotic import ThycoticImporter
 from .cyberark_import import SecureTempFileStore
 from .delinea_access import COMMAND, apply_secret_grants, choose_nsf, run_with_classic_fallback
 
@@ -79,6 +80,8 @@ class DelineaImportOptions:
     crosswalk_out: str = ''
     crosswalk_check: int = 0
     user_map_file: str = ''
+    add_users: bool = False
+    add_teams: bool = False
 
     @classmethod
     def from_kwargs(cls, kwargs: dict) -> 'DelineaImportOptions':
@@ -105,6 +108,8 @@ class DelineaImportOptions:
             crosswalk_out=kwargs.get('crosswalk_out') or '',
             crosswalk_check=check,
             user_map_file=kwargs.get('user_map') or '',
+            add_users=kwargs.get('add_users') is True,
+            add_teams=kwargs.get('add_teams') is True,
         )
 
 
@@ -130,6 +135,20 @@ class DelineaImportOrchestrator:
 
     def run(self) -> None:
         opts = self.options
+        # Pre-activate users before secrets are imported so later migration steps
+        # can share data to accounts that already exist.
+        if opts.add_users is True:
+            if opts.dry_run is True:
+                self._preview_thycotic_users(self.client)
+            else:
+                self._migrate_thycotic_users(self.client, self.params)
+
+        # Teams are created after users so members provisioned above can be added.
+        if opts.add_teams is True:
+            if opts.dry_run is True:
+                self._preview_thycotic_teams(self.client)
+            else:
+                self._migrate_thycotic_teams(self.client, self.params)
         try:
             crosswalk = Crosswalk.load(opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
         except (OSError, ValueError) as e:
@@ -169,6 +188,22 @@ class DelineaImportOrchestrator:
                                           used_nsf, self.keeper_email, self.findings)
             print(f'Secret permissions applied: {applied}')
         self.report(mapped, used_nsf=used_nsf)
+
+    def _preview_thycotic_users(self, client: DelineaPamClient) -> None:
+        """Print Secret Server users. Does not create Keeper users."""
+        ThycoticImporter()._preview_thycotic_users(client.auth)
+
+    def _migrate_thycotic_users(self, client: DelineaPamClient, params) -> None:
+        """Provision Secret Server users as pre-activated Keeper enterprise users."""
+        ThycoticImporter()._migrate_thycotic_users(client.auth, params)
+
+    def _preview_thycotic_teams(self, client: DelineaPamClient) -> None:
+        """Print Secret Server groups. Does not create Keeper teams."""
+        ThycoticImporter()._preview_thycotic_teams(client.auth)
+
+    def _migrate_thycotic_teams(self, client: DelineaPamClient, params) -> None:
+        """Create Keeper teams from Secret Server groups and add existing members."""
+        ThycoticImporter()._migrate_thycotic_teams(client.auth, params)
 
     def run_crosswalk(self, crosswalk: Crosswalk) -> None:
         """``--crosswalk-out``: discover and write the template. ``--crosswalk-check N``: validate and print."""
@@ -478,6 +513,9 @@ Examples:
 
   # Import into Nested Share Folders (falls back to classic if NSF is unavailable)
   pam project delinea-import ss.example.com --name "PAM Migration" --gateway "GW1" --nsf
+
+  # Pre-activate Secret Server users, then create teams from groups
+  pam project delinea-import ss.example.com --add-users --add-teams
         ''')
     parser.add_argument('server', action='store',
                         help='Secret Server host or URL')
@@ -507,6 +545,11 @@ Examples:
                         help='Write every password changer, protocol and port to this CSV and exit')
     parser.add_argument('--crosswalk-check', dest='crosswalk_check', action='store', type=int, default=0,
                         help='Validate the crosswalk against N sample secrets per changer and exit')
+    parser.add_argument('--add-users', dest='add_users', action='store_true',
+                           help='provision source users as pre-activated Keeper enterprise users')
+    parser.add_argument('--add-teams', dest='add_teams', action='store_true',
+                           help='create Keeper teams from source groups and add members '
+                                'who already exist as Keeper users')
 
     def get_parser(self):
         return DelineaPAMImportCommand.parser
