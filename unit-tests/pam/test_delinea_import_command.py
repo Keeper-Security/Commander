@@ -319,6 +319,17 @@ class TestDelineaImportOrchestrator(unittest.TestCase):
         # File is not written when user declines (no --dry-run or --output-file flag)
         self.assertFalse(os.path.exists(DEFAULT_IMPORT_JSON))
 
+    def test_declined_prompt_does_not_create_users_or_teams(self):
+        self.client.auth = mock.Mock()
+        with mock.patch(f'{DELINEA_IMPORT}.ThycoticImporter') as importer_cls, \
+                mock.patch(f'{DELINEA_IMPORT}.user_choice', return_value='n') as prompt, \
+                mock.patch(f'{DELINEA_IMPORT}.run_with_classic_fallback') as fallback:
+            self.run_quiet(self.orchestrator(add_users=True, add_teams=True))
+        self.assertIn('create Keeper users and Keeper teams', prompt.call_args[0][0])
+        fallback.assert_not_called()
+        importer_cls.return_value._migrate_thycotic_users.assert_not_called()
+        importer_cls.return_value._migrate_thycotic_teams.assert_not_called()
+
     def test_import_uses_unredacted_document(self):
         orchestrator = self.orchestrator(yes=True, use_nsf=True)
         with mock.patch(f'{DELINEA_IMPORT}.choose_nsf', return_value=True), \

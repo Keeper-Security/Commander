@@ -135,20 +135,6 @@ class DelineaImportOrchestrator:
 
     def run(self) -> None:
         opts = self.options
-        # Pre-activate users before secrets are imported so later migration steps
-        # can share data to accounts that already exist.
-        if opts.add_users:
-            if opts.dry_run:
-                self._preview_thycotic_users(self.client)
-            else:
-                self._migrate_thycotic_users(self.client, self.params)
-
-        # Teams are created after users so members provisioned above can be added.
-        if opts.add_teams:
-            if opts.dry_run:
-                self._preview_thycotic_teams(self.client)
-            else:
-                self._migrate_thycotic_teams(self.client, self.params)
         try:
             crosswalk = Crosswalk.load(opts.crosswalk_file) if opts.crosswalk_file else Crosswalk()
         except (OSError, ValueError) as e:
@@ -169,12 +155,26 @@ class DelineaImportOrchestrator:
             self.write_output(document)
         if opts.dry_run:
             self.print_dry_run(mapped, document)
+            if opts.add_users:
+                self._preview_thycotic_users(self.client)
+            if opts.add_teams:
+                self._preview_thycotic_teams(self.client)
             return
         if opts.output_file:
             return
+        provision = [label for flag, label in ((opts.add_users, 'Keeper users'), (opts.add_teams, 'Keeper teams'))
+                     if flag]
+        provision_note = f' and create {" and ".join(provision)}' if provision else ''
         if not opts.yes and user_choice(f'Import {len(mapped.resources)} resources and {len(users)} users '
-                                        f'into "{opts.project_name}"?', 'yn', 'n').lower() != 'y':
+                                        f'into "{opts.project_name}"{provision_note}?', 'yn', 'n').lower() != 'y':
             return
+
+        # Provisioned only after confirmation. Users first so later steps can share to existing
+        # accounts; teams after users so newly provisioned members can be added.
+        if opts.add_users:
+            self._migrate_thycotic_users(self.client, self.params)
+        if opts.add_teams:
+            self._migrate_thycotic_teams(self.client, self.params)
 
         # Rebuilt per attempt: permission entries differ between NSF and classic mode.
         # build_import_json() never mutates ``mapped``, so reusing it here is safe.
