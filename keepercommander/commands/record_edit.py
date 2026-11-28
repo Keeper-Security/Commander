@@ -78,6 +78,15 @@ record_update_parser.add_argument('fields', nargs='*', type=str,
                                   help='load record type data from strings with dot notation')
 
 
+record_duplicate_parser = argparse.ArgumentParser(prog='record-duplicate', description='Duplicate a record.')
+record_duplicate_parser.add_argument('record', type=str, nargs='*', action='store', help='record title or UID')
+record_duplicate_parser.add_argument('--folder', dest='folder', action='store', help='Folder to move the duplicate into. Defaults to the same folder as the original, set "/" for root vault.')
+record_duplicate_parser.add_argument('-f', '--force', dest='force', action='store_true', help='ignore warnings')
+record_duplicate_parser.add_argument('-t', '--title', dest='title', action='store', help='modify record title')
+record_duplicate_parser.add_argument('-rt', '--record-type', dest='record_type', action='store', help='record type')
+record_duplicate_parser.add_argument('-n', '--notes', dest='notes', action='store', help='append/modify record notes')
+
+
 append_parser = argparse.ArgumentParser(prog='append-notes', description='Append notes to an existing record')
 append_parser.add_argument('--notes', dest='notes', action='store', help='notes')
 append_parser.add_argument('record', nargs='?', type=str, action='store', help='record path or UID')
@@ -1493,6 +1502,123 @@ class RecordUpdateCommand(Command, RecordEditMixin, RecordMixin):
 
         record_management.update_record(params, record)
         params.sync_data = True
+
+
+def _generate_duplicate_title(params, title):
+    core_title = title
+    all_titles = [json.loads(params.record_cache[record]['data_unencrypted'].decode('utf-8'))['title'] for record in params.record_cache]
+
+    if title[-1] == ')' and '(' in title:
+        number = title.split('(')[-1][:-1]
+        if number.isdecimal():
+            core_title = title[:-(len(number)+2)].rstrip()
+            
+    duplicate_number = 1
+    while True:
+        new_title = f'{core_title} ({duplicate_number})'
+        if new_title not in all_titles:
+            return new_title
+        duplicate_number += 1
+        
+
+class RecordDuplicateCommand(Command, RecordEditMixin):
+    def __init__(self):
+        super(RecordDuplicateCommand, self).__init__()
+        self.warnings = []
+
+    def get_parser(self):
+        return record_duplicate_parser
+
+    def execute(self, params, **kwargs):
+        self.warnings.clear()
+        records = kwargs.get('record')
+        record_name = records[0] if isinstance(records, list) and records else None
+        if not record_name or not isinstance(record_name, str):
+            raise CommandError('record-duplicate', 'Record parameter is required.')
+            
+        if record_name is None:
+            raise CommandError('record-duplicate', 'Record parameter is required.')
+        
+        from ..enforcement import MasterPasswordReentryEnforcer
+        if not MasterPasswordReentryEnforcer.check_and_enforce(params, "record_level"):
+            raise CommandError('record-duplicate', 'Operation cancelled: Re-authentication failed')
+
+        # Resolve record
+        record = params.record_cache.get(record_name)
+        if not record:
+            matches = [
+                params.record_cache[record] for record in params.record_cache
+                if json.loads(params.record_cache[record]['data_unencrypted'].decode('utf-8'))['title'] == record_name
+            ]
+            if not matches:
+                raise CommandError('record-duplicate', f'No matches found for {record_name}')
+            if len(matches)>1:
+                raise CommandError('record-duplicate', f'Too many matches found for {record_name}, use the record UID to disambiguate')
+            record = matches[0]
+
+        record_data = json.loads(record['data_unencrypted'].decode('utf-8'))
+        title = kwargs.get('title') or None
+        
+        # Change title
+        if title is None:
+            title = _generate_duplicate_title(params, record_data['title'])
+        record_data['title'] = title if isinstance(title, str) else None
+        
+        folder = kwargs.get('folder') or None
+        # Resolve parent folder (if shortcut, will select the first in the list)
+        if folder is None:
+            matches = [subfolder for subfolder in params.subfolder_record_cache if record['record_uid'] in params.subfolder_record_cache[subfolder]]
+            if matches:
+                resolved_folders = []
+                for f in matches:
+                    # Resolve the root vault for classic and NSF
+                    if f == '' or f not in params.subfolder_cache:
+                        f = '/'
+                    resolved_folders.append(f)
+                if len(resolved_folders) > 1:
+                    folder_name = 'root vault' if resolved_folders[0] == '/' else f'folder {resolved_folders[0]}'
+                    logging.warning(f'Record has multiple locations (shortcut). Creating the duplicate in {folder_name}. Use the --folder argument to disambiguate')
+                folder = resolved_folders[0]
+        if folder == '/' or not isinstance(folder, str):
+            folder = None
+            
+        # Reject NSF folders
+        if folder in params.nested_share_folders:
+            raise CommandError('record-duplicate', 'Records within Nested Shared Folders are not supported for this command')
+        
+        # Change record type
+        record_type = kwargs.get('record_type') or None
+        if isinstance(record_type, str):
+            RecordTypeEnforcer.enforce(params, record_type, 'record-update')
+            rt_fields = self.get_record_type_fields(params, record_type)
+            if not rt_fields:
+                raise CommandError('record-duplicate', f'Record type \"{record_type}\" cannot be found.')
+            record_data['type'] = record_type
+            
+        # Change/append notes
+        notes = kwargs.get('notes')
+        if isinstance(notes, str):
+            notes = self.validate_notes(notes)
+            append_notes = False
+            if notes.startswith('+'):
+                append_notes = True
+                notes = notes[1:].strip()
+            if append_notes:
+                if record_data['notes']:
+                    record_data['notes'] += '\n'
+                record_data['notes'] += notes
+            else:
+                record_data['notes'] = notes
+        
+        # Remove attachments, addresses, paymentCards and pamScripts
+        fields = record_data.get('fields', [])
+        if any(f.get('type') in ['fileRef','addressRef','cardRef','script'] and f.get('value') for f in fields):
+            logging.warning('Warning: Attachments, Addresses, Payment Cards and Rotation Scripts are not duplicated')
+        record_data['fields'] = [f for f in fields if f.get('type') not in ['fileRef','addressRef','cardRef','script']]
+
+        uid = recordv3.RecordAddCommand().execute(params,data=json.dumps(record_data),folder=folder,force=kwargs.get('force'))
+        params.sync_data = True       
+        return uid
 
 
 class RecordAppendNotesCommand(Command):

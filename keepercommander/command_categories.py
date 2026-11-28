@@ -10,7 +10,7 @@ COMMAND_CATEGORIES = {
         'record-history', 'totp', 'download-attachment', 'upload-attachment', 'delete-attachment',
         'file-report', 'list-sf', 'list-team', 'add', 'edit', 'rm', 'find-duplicate',
         'shortcut', 'trash', 'transform-folder', 'password-report', 'find-ownerless',
-        'rmdir', 'rndir', 'record-add', 'mv', 'mkdir', 'record-update', 'append-notes',
+        'rmdir', 'rndir', 'record-add', 'record-duplicate', 'mv', 'mkdir', 'record-update', 'append-notes',
         'verify-records', 'verify-shared-folders', 'delete-all', 'blank-records', 'delete-corrupted',
         'ln'
     },
